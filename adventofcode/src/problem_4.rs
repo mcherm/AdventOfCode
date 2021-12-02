@@ -66,30 +66,14 @@ fn parse_movement(s: &str) -> Result<Movement, InputError> {
         ).unwrap();
     }
 
-    let maybe_captures = MOVEMENT_REGEX.captures(s);
-    match maybe_captures {
-        Some(captures) => {
-            match captures.get(1) {
-                Some(direction) => {
-                    match captures.get(2) {
-                        Some(distance) => {
-                            match distance.as_str().parse() {
-                                Ok(dist) => match direction.as_str() {
-                                    "forward" => Ok(Movement::Forward(dist)),
-                                    "down" => Ok(Movement::Down(dist)),
-                                    "up" => Ok(Movement::Up(dist)),
-                                    _ => Err(InputError::BadDirection)
-                                }
-                                Err(err) => Err(InputError::BadInt(err)),
-                            }
-                        },
-                        None => panic!("Regex guarantees a distance")
-                    }
-                },
-                None => panic!("Regex guarantees a direction"),
-            }
-        },
-        None => Err(InputError::BadLine),
+    let captures: regex::Captures = MOVEMENT_REGEX.captures(s).ok_or_else(|| InputError::BadLine)?;
+    let direction: &str = captures.get(1).unwrap().as_str(); // unwrap() is OK because the regex guarantees there is a direction
+    let distance: isize = captures.get(2).unwrap().as_str().parse()?; // unwrap() is OK because the regex guarantees there is a distance
+    match direction {
+        "forward" => Ok(Movement::Forward(distance)),
+        "down"    => Ok(Movement::Down(distance)),
+        "up"      => Ok(Movement::Up(distance)),
+        _         => Err(InputError::BadDirection)
     }
 }
 
@@ -100,15 +84,8 @@ fn read_file_of_movements() -> Result<Vec<Movement>, InputError>  {
     let lines = BufReader::new(file).lines();
     let mut movements = Vec::new();
     for line in lines {
-        match line {
-            Ok(text) => {
-                match parse_movement(&text) {
-                    Ok(movement) => movements.push(movement),
-                    Err(err) => return Err(err)
-                }
-            }
-            Err(err) => return Err(InputError::IoError(err))
-        }
+        let movement = parse_movement(&line?)?;
+        movements.push(movement)
     }
     Ok(movements)
 }
