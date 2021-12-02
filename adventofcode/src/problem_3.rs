@@ -119,7 +119,7 @@ pub fn main() {
         Ok(movements) => {
             let end_position = update_position(movements, Position{x: 0, depth: 0});
             match end_position {
-                Ok(p) => println!("It ends up at: {:#?}", p),
+                Ok(p) => println!("It ends up at: {:#?} which has 'area' of {}", p, p.x * p.depth),
                 Err(err) => println!("Error: {}", err),
             }
         },
