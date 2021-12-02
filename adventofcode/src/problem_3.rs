@@ -11,42 +11,43 @@ pub enum Movement {
     Up(isize),
 }
 
-fn invalid_movement_error() -> Error {
-    Error::new(ErrorKind::InvalidData, "Invalid Movement")
+fn invalid_movement_error() -> Result<Movement, Error> {
+    Err(Error::new(ErrorKind::InvalidData, "Invalid Movement"))
 }
 
 
-fn parse_movement(s: &str) -> Option<Movement> {
+fn parse_movement(s: &str) -> Result<Movement, Error> {
     lazy_static! {
         static ref MOVEMENT_REGEX: Regex = Regex::new(
             r"^(forward|down|up) ([1-9][0-9]*)$"
         ).unwrap();
     }
+
     let maybe_captures = MOVEMENT_REGEX.captures(s);
-    maybe_captures.and_then(|captures| {
-        let maybe_direction = captures.get(1);
-        match maybe_direction {
-            Some(direction) => {
-                let maybe_distance = captures.get(2);
-                match maybe_distance {
-                    Some(distance) => {
-                        let dist: isize = match distance.as_str().parse() {
-                            Ok(value) => value,
-                            Err(_) => return None,
-                        };
-                        match direction.as_str() {
-                            "forward" => Some(Movement::Forward(dist)),
-                            "down" => Some(Movement::Down(dist)),
-                            "up" => Some(Movement::Up(dist)),
-                            _ => None
-                        }
-                    },
-                    None => return None
-                }
-            },
-            None => return None,
-        }
-    })
+    match maybe_captures {
+        Some(captures) => {
+            match captures.get(1) {
+                Some(direction) => {
+                    match captures.get(2) {
+                        Some(distance) => {
+                            match distance.as_str().parse() {
+                                Ok(dist) => match direction.as_str() {
+                                    "forward" => Ok(Movement::Forward(dist)),
+                                    "down" => Ok(Movement::Down(dist)),
+                                    "up" => Ok(Movement::Up(dist)),
+                                    _ => invalid_movement_error()
+                                }
+                                Err(_) => invalid_movement_error(),
+                            }
+                        },
+                        None => invalid_movement_error()
+                    }
+                },
+                None => invalid_movement_error(),
+            }
+        },
+        None => invalid_movement_error(),
+    }
 }
 
 
@@ -59,8 +60,8 @@ fn read_file_of_movements() -> Result<Vec<Movement>, Error>  {
         match line {
             Ok(text) => {
                 match parse_movement(&text) {
-                    Some(movement) => movements.push(movement),
-                    None => return Err(invalid_movement_error())
+                    Ok(movement) => movements.push(movement),
+                    Err(err) => return Err(err)
                 }
             }
             Err(err) => return Err(err)
