@@ -29,8 +29,8 @@ impl fmt::Display for MovementError {
 /// An error that we can encounter when reading the input.
 pub enum InputError {
     IoError(std::io::Error),
-    BadLine,
-    BadDirection,
+    BadLine(isize),
+    BadDirection(isize),
     BadInt(ParseIntError),
 }
 
@@ -49,31 +49,31 @@ impl From<std::io::Error> for InputError {
 impl fmt::Display for InputError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            InputError::IoError(err) => write!(f, "{}", err),
-            InputError::BadLine      => write!(f, "Invalid line"),
-            InputError::BadDirection => write!(f, "Invalid direction"),
-            InputError::BadInt(err) => write!(f, "Invalid number: {}", err),
+            InputError::IoError(err)           => write!(f, "{}", err),
+            InputError::BadLine(line_num)      => write!(f, "Invalid line on line {}", line_num),
+            InputError::BadDirection(line_num) => write!(f, "Invalid direction on line {}", line_num),
+            InputError::BadInt(err)            => write!(f, "Invalid number: {}", err),
         }
     }
 }
 
 
 
-fn parse_movement(s: &str) -> Result<Movement, InputError> {
+fn parse_movement(s: &str, line_num: &isize) -> Result<Movement, InputError> {
     lazy_static! {
         static ref MOVEMENT_REGEX: Regex = Regex::new(
-            r"^(forward|down|up) ([1-9][0-9]*)$"
+            r"^([a-z]+) ([1-9][0-9]*)$"
         ).unwrap();
     }
 
-    let captures: regex::Captures = MOVEMENT_REGEX.captures(s).ok_or_else(|| InputError::BadLine)?;
+    let captures: regex::Captures = MOVEMENT_REGEX.captures(s).ok_or_else(|| InputError::BadLine(*line_num))?;
     let direction: &str = captures.get(1).unwrap().as_str(); // unwrap() is OK because the regex guarantees there is a direction
     let distance: isize = captures.get(2).unwrap().as_str().parse()?; // unwrap() is OK because the regex guarantees there is a distance
     match direction {
         "forward" => Ok(Movement::Forward(distance)),
         "down"    => Ok(Movement::Down(distance)),
         "up"      => Ok(Movement::Up(distance)),
-        _         => Err(InputError::BadDirection)
+        _         => Err(InputError::BadDirection(*line_num))
     }
 }
 
@@ -83,9 +83,11 @@ fn read_file_of_movements() -> Result<Vec<Movement>, InputError>  {
     let file = File::open(filename)?;
     let lines = BufReader::new(file).lines();
     let mut movements = Vec::new();
+    let mut line_num: isize = 0;
     for line in lines {
-        let movement = parse_movement(&line?)?;
-        movements.push(movement)
+        line_num += 1;
+        let movement = parse_movement(&line?, &line_num)?;
+        movements.push(movement);
     }
     Ok(movements)
 }
