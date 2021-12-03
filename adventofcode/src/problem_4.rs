@@ -6,13 +6,6 @@ use std::fmt;
 use std::num::ParseIntError;
 
 
-#[derive(Debug)]
-pub enum Movement {
-    Forward(isize),
-    Down(isize),
-    Up(isize),
-}
-
 /// An error that can occur when a sub is moving.
 pub enum MovementError {
     FlyingSubError,
@@ -25,6 +18,7 @@ impl fmt::Display for MovementError {
         }
     }
 }
+
 
 /// An error that we can encounter when reading the input.
 pub enum InputError {
@@ -58,7 +52,17 @@ impl fmt::Display for InputError {
 }
 
 
+/// Object that represents a movement that can be made.
+#[derive(Debug)]
+pub enum Movement {
+    Forward(isize),
+    Down(isize),
+    Up(isize),
+}
 
+/// This creates a Movement object from the string description of it. It accepts
+/// a line_num argument which will be used in error messages if the Movement
+/// cannot be created.
 fn parse_movement(s: &str, line_num: &isize) -> Result<Movement, InputError> {
     lazy_static! {
         static ref MOVEMENT_REGEX: Regex = Regex::new(
@@ -78,6 +82,7 @@ fn parse_movement(s: &str, line_num: &isize) -> Result<Movement, InputError> {
 }
 
 
+/// This reads the file of movements and returns it as a vector of Movement objects.
 fn read_file_of_movements() -> Result<Vec<Movement>, InputError>  {
     let filename = "data/2021/day/2/input.txt";
     let file = File::open(filename)?;
@@ -93,6 +98,7 @@ fn read_file_of_movements() -> Result<Vec<Movement>, InputError>  {
 }
 
 
+/// An object to track the current state of the submarine. It is immutable.
 #[derive(Debug)]
 struct SubmarineState {
     x: isize,
@@ -100,6 +106,8 @@ struct SubmarineState {
     aim: isize,
 }
 
+// Applies a movement and returns the new SubmarineState obtained by applying
+/// that movement.
 impl SubmarineState {
     fn move_by(&self, movement: Movement) -> Result<SubmarineState, MovementError> {
         match movement {
@@ -118,6 +126,8 @@ impl SubmarineState {
 }
 
 
+/// Applies a whole vector of movements. Could return an error in cases
+/// where the submarine attempts to fly.
 fn apply_movements(movements: Vec<Movement>, start: SubmarineState) -> Result<SubmarineState, MovementError> {
     let mut position = start;
     for movement in movements {
