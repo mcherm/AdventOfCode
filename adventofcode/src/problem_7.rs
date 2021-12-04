@@ -45,9 +45,59 @@ impl fmt::Display for InputError {
 
 type Draws = Vec<u8>;
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 struct BingoCard {
     cells: [[u8; BOARD_SIZE]; BOARD_SIZE],
+    marks: [[bool; BOARD_SIZE]; BOARD_SIZE],
+    last_marked: Option<u8>,
+}
+
+impl BingoCard {
+
+    fn new(cells: [[u8; BOARD_SIZE];BOARD_SIZE]) -> BingoCard {
+        let marks = [[false; BOARD_SIZE]; BOARD_SIZE];
+        let last_marked = None;
+        BingoCard{cells, marks, last_marked}
+    }
+
+    fn is_winner(&self) -> bool {
+        for i in 0..BOARD_SIZE {
+            if self.marks[i].iter().all(|x| *x) {
+                return true;
+            }
+            if self.marks.iter().all(|row| row[i]) {
+                return true;
+            }
+        }
+        false
+    }
+
+    fn mark(&mut self, value: u8) {
+        for i in 0..BOARD_SIZE {
+            for j in 0..BOARD_SIZE {
+                if self.cells[i][j] == value {
+                    self.marks[i][j] = true;
+                    self.last_marked = Some(value);
+                }
+            }
+        }
+    }
+
+    fn score(&self) -> Option<u32> {
+        if let Some(last_marked) = self.last_marked {
+            let mut sum: u32 = 0;
+            for i in 0..BOARD_SIZE {
+                for j in 0..BOARD_SIZE {
+                    if !self.marks[i][j] {
+                        sum += self.cells[i][j] as u32;
+                    }
+                }
+            }
+            Some(sum * (last_marked as u32))
+        } else {
+            None
+        }
+    }
 }
 
 
@@ -92,7 +142,7 @@ fn read_bingo_file() -> Result<(Draws, Vec<BingoCard>), InputError>  {
             return Err(InputError::WrongBoardSize)
         }
         let cells = rows_vec.try_into().unwrap();
-        cards.push(BingoCard{cells});
+        cards.push(BingoCard::new(cells));
     }
 
     // --- Return Result ---
@@ -100,12 +150,48 @@ fn read_bingo_file() -> Result<(Draws, Vec<BingoCard>), InputError>  {
 }
 
 
+/// Marks draws from draws onto the cards until there are one or more
+/// winners, then returns the winners. If there are no winners after
+/// all the draws it returns an empty vector.
+fn score_bingo_cards(draws: Draws, mut cards: Vec<BingoCard>) -> Vec<BingoCard> {
+    fn get_winners(cards: &Vec<BingoCard>) -> Option<Vec<BingoCard>> {
+        let mut winners: Vec<BingoCard> = Vec::new();
+        for card in cards {
+            if card.is_winner() {
+                winners.push(*card);
+            }
+        }
+        if winners.len() > 0 {
+            return Some(winners);
+        } else {
+            return None;
+        }
+    }
+
+    for value in draws {
+        if let Some(winners) = get_winners(&cards) {
+            return winners;
+        }
+        for card in &mut cards {
+            card.mark(value);
+        }
+    }
+    return Vec::new(); // no winners!
+}
+
+
 
 pub fn main() {
     match read_bingo_file() {
         Ok((draws, cards)) => {
-            println!("Draws: {:#?}", draws);
-            println!("Cards: {:#?}", cards);
+            let winners = score_bingo_cards(draws, cards);
+            if winners.len() == 0 {
+                println!("There were no winners.");
+            } else if winners.len() > 1 {
+                println!("There were multiple winners.");
+            } else {
+                println!("There was a single winner with score {}", winners[0].score().unwrap());
+            }
         },
         Err(err) => println!("Error: {}", err),
     }
