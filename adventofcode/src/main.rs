@@ -7,10 +7,11 @@ mod problem_6;
 mod problem_7;
 mod problem_8;
 mod problem_9;
+mod problem_10;
 
 
 fn main() {
-    match 9 {
+    match 10 {
         1 => problem_1::main(),
         2 => problem_2::main(),
         3 => problem_3::main(),
@@ -20,6 +21,7 @@ fn main() {
         7 => problem_7::main(),
         8 => problem_8::main(),
         9 => problem_9::main(),
+        10 => problem_10::main(),
         _ => panic!("Not a valid problem.")
     }
 }
