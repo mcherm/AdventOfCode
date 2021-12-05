@@ -195,48 +195,34 @@ impl fmt::Display for CountMatrix {
 }
 
 
+fn signum(x: i64) -> i64 {
+    match x {
+        0 => 0,
+        x if x < 0 => -1,
+        _ => 1,
+    }
+}
+
 
 // Generates a CountMatrix with the count of each point based on the vent_lines.
 fn mark_matrix(vent_lines: &Vec<VentLine>) -> CountMatrix {
     let mut count_matrix = CountMatrix::new();
     for vent_line in vent_lines {
-        match vent_line.vent_type {
-            VentType::Horizontal => {
-                let y = vent_line.coordinates.0.1;
-                let start_x = min(vent_line.coordinates.0.0, vent_line.coordinates.1.0);
-                let end_x =   max(vent_line.coordinates.0.0, vent_line.coordinates.1.0);
-                for x in start_x..=end_x {
-                    count_matrix.mark((x,y));
-                }
-            },
-            VentType::Vertical => {
-                let x = vent_line.coordinates.0.0;
-                let start_y = min(vent_line.coordinates.0.1, vent_line.coordinates.1.1);
-                let end_y =   max(vent_line.coordinates.0.1, vent_line.coordinates.1.1);
-                for y in start_y..=end_y {
-                    count_matrix.mark((x,y));
-                }
-            },
-            VentType::Positive45 => {
-                let steps = abs_diff(vent_line.coordinates.0.0, vent_line.coordinates.1.0);
-                let start_x = min(vent_line.coordinates.0.0, vent_line.coordinates.1.0);
-                let start_y = min(vent_line.coordinates.0.1, vent_line.coordinates.1.1);
-                for step in 0..=steps {
-                    let x = start_x + step;
-                    let y = start_y + step;
-                    count_matrix.mark((x,y));
-                }
-            },
-            VentType::Negative45 => {
-                let steps = abs_diff(vent_line.coordinates.0.0, vent_line.coordinates.1.0);
-                let start_x = min(vent_line.coordinates.0.0, vent_line.coordinates.1.0);
-                let end_y =   max(vent_line.coordinates.0.1, vent_line.coordinates.1.1);
-                for step in 0..=steps {
-                    let x = start_x + step;
-                    let y = end_y - step;
-                    count_matrix.mark((x,y));
-                }
-            },
+        let ((x1,y1),(x2,y2)) = vent_line.coordinates;
+        let delta_x: i64 = (x2 as i64) - (x1 as i64);
+        let delta_y: i64 = (y2 as i64) - (y1 as i64);
+        assert!( delta_x == 0 || delta_y == 0 || delta_x == delta_y || delta_x == -delta_y ); // horizontal, vertical, or diagonal
+        assert!( delta_x != 0 || delta_y != 0 ); // not a point
+        let steps: i64 = max(delta_x.abs(), delta_y.abs());
+        let dx = signum(delta_x);
+        let dy = signum(delta_y);
+        for step in 0..=steps {
+            let x_64: i64 = (x1 as i64) + step * dx;
+            let y_64: i64 = (y1 as i64) + step * dy;
+            assert!( x_64 >= 0 && y_64 >= 0 );
+            let x: u32 = x_64 as u32;
+            let y: u32 = y_64 as u32;
+            count_matrix.mark((x,y));
         }
     }
     count_matrix
