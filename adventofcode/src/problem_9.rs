@@ -5,6 +5,7 @@ use std::num::ParseIntError;
 use lazy_static::lazy_static;
 use regex::{Captures, Regex};
 use std::collections::HashMap;
+use std::cmp::{min, max};
 
 
 
@@ -75,7 +76,7 @@ impl fmt::Debug for VentLine {
 fn read_vent_file() -> Result<Vec<VentLine>, InputError>  {
     lazy_static! {
         static ref VENT_REGEX: Regex = Regex::new(
-            r"^([1-9][0-9]*),([1-9][0-9]*) -> ([1-9][0-9]*),([1-9][0-9]*)$"
+            r"^(\d*),(\d*) -> (\d*),(\d*)$"
         ).unwrap();
     }
 
@@ -95,9 +96,9 @@ fn read_vent_file() -> Result<Vec<VentLine>, InputError>  {
         if x1 == x2 && y1 == y2 {
             return Err(InputError::ZeroLengthLine);
         } else if x1 == x2 {
-            vent_lines.push(VentLine{vent_type: VentType::HORIZONTAL, coordinates});
-        } else if y1 == y2 {
             vent_lines.push(VentLine{vent_type: VentType::VERTICAL, coordinates});
+        } else if y1 == y2 {
+            vent_lines.push(VentLine{vent_type: VentType::HORIZONTAL, coordinates});
         } else {
             // Left blank because we're ignoring diagonal lines
         }
@@ -139,14 +140,63 @@ impl CountMatrix {
             self.max_y = point.1;
         }
     }
+
+    fn count_overlaps(&self) -> u32 {
+        let mut overlaps: u32 = 0;
+        for y in 0..=self.max_y {
+            for x in 0..=self.max_x {
+                if let Some(count) = self.counts.get(&(x,y)) {
+                    if count >= &2 {
+                        overlaps += 1;
+                    }
+                }
+            }
+        }
+        overlaps
+    }
 }
+
+impl fmt::Display for CountMatrix {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        for y in 0..=self.max_y {
+            for x in 0..=self.max_x {
+                let digit: char = match self.counts.get(&(x,y)) {
+                    Some(count) if count <= &9 => count.to_string().chars().next().unwrap(),
+                    Some(_count) => '+',
+                    None => '.',
+                };
+                write!(f, "{}", digit)?;
+            }
+            write!(f, "\n")?;
+        };
+        Ok(())
+    }
+}
+
 
 
 // Generates a CountMatrix with the count of each point based on the vent_lines.
 fn mark_matrix(vent_lines: &Vec<VentLine>) -> CountMatrix {
     let mut count_matrix = CountMatrix::new();
     for vent_line in vent_lines {
-        count_matrix.mark(vent_line.coordinates.0); // FIXME: Mark start point
+        match vent_line.vent_type {
+            VentType::HORIZONTAL => {
+                let y = vent_line.coordinates.0.1;
+                let start_x = min(vent_line.coordinates.0.0, vent_line.coordinates.1.0);
+                let end_x =   max(vent_line.coordinates.0.0, vent_line.coordinates.1.0);
+                for x in start_x..=end_x {
+                    count_matrix.mark((x,y));
+                }
+            },
+            VentType::VERTICAL => {
+                let x = vent_line.coordinates.0.0;
+                let start_y = min(vent_line.coordinates.0.1, vent_line.coordinates.1.1);
+                let end_y =   max(vent_line.coordinates.0.1, vent_line.coordinates.1.1);
+                for y in start_y..=end_y {
+                    count_matrix.mark((x,y));
+                }
+            },
+        }
     }
     count_matrix
 }
@@ -156,7 +206,9 @@ pub fn main() {
     match read_vent_file() {
         Ok(vent_lines) => {
             let count_matrix = mark_matrix(&vent_lines);
-            println!("Counts: {:#?}", count_matrix);
+            let overlaps = count_matrix.count_overlaps();
+            println!("Counts: \n{}", count_matrix);
+            println!("Overlaps: {}", overlaps);
         },
         Err(err) => println!("Error: {}", err),
     }
