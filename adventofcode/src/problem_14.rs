@@ -48,26 +48,23 @@ pub fn main() {
             if crab_positions.len() == 0 {
                 println!("Error: no crabs");
             } else {
-                let count: i32 = crab_positions.len() as i32;
-                let total: i32 = crab_positions.iter().sum();
-                println!("There are {} crabs with a total of {}.", count, total);
-                let divides_evenly = total % count == 0;
-                println!("It {} evenly.", match divides_evenly {true=>"divides", false=>"does not divide"});
-                let lower_value = total / count;
-                let upper_value = lower_value + 1;
-                println!("Consider positions {} and {}.", lower_value, upper_value);
                 fn get_fuel(crab_positions: &Vec<i32>, destination: i32) -> i32 {
                     let mut fuel = 0;
                     for val in crab_positions {
                         let distance = (val - destination).abs();
-                        fuel += distance * distance;
+                        fuel += (distance * (distance + 1)) / 2;
                     }
                     fuel
                 }
-                let lower_fuel = get_fuel(&crab_positions, lower_value);
-                let upper_fuel = get_fuel(&crab_positions, upper_value);
-                println!("They would cost fuel {} and {}.", lower_fuel, upper_fuel);
-                println!("So the answer is {}", std::cmp::min(lower_fuel, upper_fuel));
+                let min_position: i32 = *crab_positions.iter().min().unwrap();
+                let max_position: i32 = *crab_positions.iter().max().unwrap();
+                let mut least_fuel = i32::MAX;
+                for position in min_position..=max_position {
+                    let fuel = get_fuel(&crab_positions, position);
+                    println!("At position {} it costs {} fuel.", position, fuel);
+                    least_fuel = std::cmp::min(least_fuel, fuel);
+                }
+                println!("Least fuel: {}", least_fuel);
             }
         },
         Err(err) => println!("Error: {}", err),
