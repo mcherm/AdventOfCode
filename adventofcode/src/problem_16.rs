@@ -70,19 +70,6 @@ impl WireSet {
         count
     }
 
-    fn _to_id(&self) -> u8 {
-        let mut id = 0;
-        for i in 0..7 {
-            if i != 0 {
-                id *= 2;
-            }
-            if self.contains[i] {
-                id += 1;
-            }
-        }
-        id
-    }
-
     fn minus(&self, other: &WireSet) -> WireSet {
         let mut new_contains: [bool; 7] = self.contains.clone();
         for i in 0..7 {
@@ -164,65 +151,74 @@ fn read_seven_seg_display_file() -> Result<Vec<SevenSegData>, InputError> {
 
 
 fn break_code(combos: [WireSet; 10]) -> [WireSet; 10] {
-    let mut mappings: [Option<WireSet>; 10] = [None, None, None, None, None, None, None, None, None, None];
     let mut size5_combos: Vec<WireSet> = Vec::new();
     let mut size6_combos: Vec<WireSet> = Vec::new();
+    let mut mapping_1_opt = None;
+    let mut mapping_7_opt = None;
+    let mut mapping_4_opt = None;
+    let mut mapping_8_opt = None;
     for combo in combos {
         match combo.size() {
-            2 => mappings[1] = Some(combo),
-            3 => mappings[7] = Some(combo),
-            4 => mappings[4] = Some(combo),
+            2 => mapping_1_opt = Some(combo),
+            3 => mapping_7_opt = Some(combo),
+            4 => mapping_4_opt = Some(combo),
             5 => size5_combos.push(combo),
             6 => size6_combos.push(combo),
-            7 => mappings[8] = Some(combo),
+            7 => mapping_8_opt = Some(combo),
             _ => panic!("Combo of an invalid size: {}", combo)
         }
     }
-    let mapping_1 = mappings[1].unwrap();
-    let mapping_7 = mappings[7].unwrap();
-    let mapping_4 = mappings[4].unwrap();
-    let mapping_8 = mappings[8].unwrap();
+    let mapping_1 = mapping_1_opt.unwrap();
+    let mapping_7 = mapping_7_opt.unwrap();
+    let mapping_4 = mapping_4_opt.unwrap();
+    let mapping_8 = mapping_8_opt.unwrap();
     assert!(size5_combos.len() == 3 && size6_combos.len() == 3);
+    let mut mapping_3_opt = None;
     for combo in &size5_combos {
         if combo.minus(&mapping_1).size() == 3 {
-            mappings[3] = Some(*combo);
+            mapping_3_opt = Some(*combo);
         }
     }
-    let mapping_3 = mappings[3].unwrap();
+    let mapping_3 = mapping_3_opt.unwrap();
+    let mut mapping_6_opt = None;
     for combo in &size6_combos {
         if combo.minus(&mapping_1).size() == 5 {
-            mappings[6] = Some(*combo);
+            mapping_6_opt = Some(*combo);
         }
     }
-    let mapping_6 = mappings[6].unwrap();
+    let mapping_6 = mapping_6_opt.unwrap();
     let just_true_c = mapping_7.minus(&mapping_6);
     let just_true_f = mapping_1.minus(&just_true_c);
+    let mut mapping_2_opt = None;
     for combo in &size5_combos {
         if combo.minus(&just_true_f).size() == 5 {
-            mappings[2] = Some(*combo);
+            mapping_2_opt = Some(*combo);
         }
     }
-    let mapping_2 = mappings[2].unwrap();
+    let mapping_2 = mapping_2_opt.unwrap();
+    let mut mapping_5_opt = None;
     for combo in &size5_combos {
         if *combo != mapping_2 && *combo != mapping_3 {
-            mappings[5] = Some(*combo);
+            mapping_5_opt = Some(*combo);
         }
     }
-    let mapping_5 = mappings[5].unwrap();
+    let mapping_5 = mapping_5_opt.unwrap();
     let partial = mapping_2.minus(&mapping_4);
     let just_true_e = partial.minus(&mapping_5);
+    let mut mapping_9_opt = None;
     for combo in &size6_combos {
         if combo.minus(&just_true_e).size() == 6 {
-            mappings[9] = Some(*combo);
+            mapping_9_opt = Some(*combo);
         }
     }
-    let mapping_9 = mappings[9].unwrap();
+    let mapping_9 = mapping_9_opt.unwrap();
+    let mut mapping_0_opt = None;
     for combo in &size6_combos {
         if *combo != mapping_6 && *combo != mapping_9 {
-            mappings[0] = Some(*combo);
+            mapping_0_opt = Some(*combo);
         }
     }
-    let mapping_0 = mappings[0].unwrap();
+    let mapping_0 = mapping_0_opt.unwrap();
     [mapping_0, mapping_1, mapping_2, mapping_3, mapping_4, mapping_5, mapping_6, mapping_7, mapping_8, mapping_9]
 }
 
@@ -247,7 +243,6 @@ pub fn main() {
                 let dd_1 = to_display_digit(&data_mapping, &seven_seg_data.digits[1]).unwrap();
                 let dd_2 = to_display_digit(&data_mapping, &seven_seg_data.digits[2]).unwrap();
                 let dd_3 = to_display_digit(&data_mapping, &seven_seg_data.digits[3]).unwrap();
-//                assert!(dd_0 != 0);
                 println!("digits: {}{}{}{}", dd_0, dd_1, dd_2, dd_3);
                 sum += dd_0 * 1000 + dd_1 * 100 + dd_2 * 10 + dd_3;
             }
