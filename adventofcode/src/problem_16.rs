@@ -35,6 +35,7 @@ impl fmt::Display for InputError {
 }
 
 
+// A struct used to represent a set of "wires" (letters a through g).
 #[derive(Copy, Clone)]
 struct WireSet {
     contains: [bool; 7]
@@ -132,6 +133,7 @@ fn split_into_n_strings<'a, const N: usize>(s: &'a str, delim: &'a str) -> [&'a 
 }
 
 
+/// Read in the input file.
 fn read_seven_seg_display_file() -> Result<Vec<SevenSegData>, InputError> {
     let filename = "data/2021/day/8/input.txt";
     let file = File::open(filename)?;
@@ -150,75 +152,54 @@ fn read_seven_seg_display_file() -> Result<Vec<SevenSegData>, InputError> {
 }
 
 
+/// Searches through this collection of WireSets and finds the single
+/// one that makes the condition true. Panics if none or more than one
+/// meets the condition.
+fn find_sole_match<'a, I, F>(wire_sets: I, cond: F) -> WireSet
+    where
+        I: Iterator<Item = &'a WireSet>,
+        F: Fn(&WireSet) -> bool,
+{
+    let mut result_opt: Option<WireSet> = None;
+    let mut num_found = 0;
+    for wire_set in wire_sets {
+        if cond(wire_set) {
+            result_opt = Some(*wire_set);
+            num_found += 1;
+        }
+    }
+    assert!(num_found == 1);
+    result_opt.unwrap()
+}
+
+
+
 fn break_code(combos: [WireSet; 10]) -> [WireSet; 10] {
     let mut size5_combos: Vec<WireSet> = Vec::new();
     let mut size6_combos: Vec<WireSet> = Vec::new();
-    let mut mapping_1_opt = None;
-    let mut mapping_7_opt = None;
-    let mut mapping_4_opt = None;
-    let mut mapping_8_opt = None;
     for combo in combos {
         match combo.size() {
-            2 => mapping_1_opt = Some(combo),
-            3 => mapping_7_opt = Some(combo),
-            4 => mapping_4_opt = Some(combo),
+            2 | 3 | 4 | 7 => {},
             5 => size5_combos.push(combo),
             6 => size6_combos.push(combo),
-            7 => mapping_8_opt = Some(combo),
             _ => panic!("Combo of an invalid size: {}", combo)
         }
     }
-    let mapping_1 = mapping_1_opt.unwrap();
-    let mapping_7 = mapping_7_opt.unwrap();
-    let mapping_4 = mapping_4_opt.unwrap();
-    let mapping_8 = mapping_8_opt.unwrap();
     assert!(size5_combos.len() == 3 && size6_combos.len() == 3);
-    let mut mapping_3_opt = None;
-    for combo in &size5_combos {
-        if combo.minus(&mapping_1).size() == 3 {
-            mapping_3_opt = Some(*combo);
-        }
-    }
-    let mapping_3 = mapping_3_opt.unwrap();
-    let mut mapping_6_opt = None;
-    for combo in &size6_combos {
-        if combo.minus(&mapping_1).size() == 5 {
-            mapping_6_opt = Some(*combo);
-        }
-    }
-    let mapping_6 = mapping_6_opt.unwrap();
+
+    let mapping_1 = find_sole_match(combos.iter(), |x| x.size() == 2);
+    let mapping_7 = find_sole_match(combos.iter(), |x| x.size() == 3);
+    let mapping_4 = find_sole_match(combos.iter(), |x| x.size() == 4);
+    let mapping_8 = find_sole_match(combos.iter(), |x| x.size() == 7);
+    let mapping_3 = find_sole_match(size5_combos.iter(), |x| x.minus(&mapping_1).size() == 3);
+    let mapping_6 = find_sole_match(size6_combos.iter(), |x| x.minus(&mapping_1).size() == 5);
     let just_true_c = mapping_7.minus(&mapping_6);
     let just_true_f = mapping_1.minus(&just_true_c);
-    let mut mapping_2_opt = None;
-    for combo in &size5_combos {
-        if combo.minus(&just_true_f).size() == 5 {
-            mapping_2_opt = Some(*combo);
-        }
-    }
-    let mapping_2 = mapping_2_opt.unwrap();
-    let mut mapping_5_opt = None;
-    for combo in &size5_combos {
-        if *combo != mapping_2 && *combo != mapping_3 {
-            mapping_5_opt = Some(*combo);
-        }
-    }
-    let mapping_5 = mapping_5_opt.unwrap();
-    let partial = mapping_2.minus(&mapping_4);
-    let just_true_e = partial.minus(&mapping_5);
-    let mut mapping_9_opt = None;
-    for combo in &size6_combos {
-        if combo.minus(&just_true_e).size() == 6 {
-            mapping_9_opt = Some(*combo);
-        }
-    }
-    let mapping_9 = mapping_9_opt.unwrap();
-    let mut mapping_0_opt = None;
-    for combo in &size6_combos {
-        if *combo != mapping_6 && *combo != mapping_9 {
-            mapping_0_opt = Some(*combo);
-        }
-    }
-    let mapping_0 = mapping_0_opt.unwrap();
+    let mapping_2 = find_sole_match(size5_combos.iter(), |x| x.minus(&just_true_f).size() == 5);
+    let mapping_5 = find_sole_match(size5_combos.iter(), |x| *x != mapping_2 && *x != mapping_3);
+    let just_true_e = mapping_2.minus(&mapping_4).minus(&mapping_5);
+    let mapping_9 = find_sole_match(size6_combos.iter(), |x| x.minus(&just_true_e).size() == 6);
+    let mapping_0 = find_sole_match(size6_combos.iter(), |x| *x != mapping_6 && *x != mapping_9);
     [mapping_0, mapping_1, mapping_2, mapping_3, mapping_4, mapping_5, mapping_6, mapping_7, mapping_8, mapping_9]
 }
 
