@@ -23,7 +23,7 @@ mod problem_22;
 
 
 fn main() {
-    match 21 {
+    match 22 {
         1 => problem_1::main(),
         2 => problem_2::main(),
         3 => problem_3::main(),
