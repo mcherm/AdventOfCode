@@ -101,16 +101,75 @@ impl fmt::Display for Cavern {
 }
 
 
+// An immutable LinkedList of Cavern objects
+enum LinkedListOfCavern<'a> {
+    Start {
+        data: Cavern
+    },
+    Node {
+        data: Cavern,
+        next: &'a LinkedListOfCavern<'a>
+    },
+}
+impl<'a> LinkedListOfCavern<'a> {
+    fn new(c: &Cavern) -> Self {
+        LinkedListOfCavern::Start{data: c.clone()}
+    }
+
+    fn append(&'a self, c: &Cavern) -> Self {
+        LinkedListOfCavern::Node{data: c.clone(), next: self}
+    }
+
+    fn contains(&'a self, c: &Cavern) -> bool {
+        match self {
+            LinkedListOfCavern::Start{data} => {
+                data == c
+            },
+            LinkedListOfCavern::Node{data, next} => {
+                data == c || next.contains(c)
+            }
+        }
+    }
+
+    fn last(&'a self) -> &'a Cavern {
+        match self {
+            LinkedListOfCavern::Start{data} => {
+                data
+            },
+            LinkedListOfCavern::Node{data, next: _} => {
+                data
+            }
+        }
+    }
+}
+impl<'a> fmt::Display for LinkedListOfCavern<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            LinkedListOfCavern::Start{data} => {
+                write!(f, "{}", data)
+            },
+            LinkedListOfCavern::Node{data,next} => {
+                write!(f, "{}", next)?;
+                write!(f, "->{}", data)
+            },
+        }
+    }
+}
+
+
 struct Path {
     steps: Vec<Cavern>,
     small_cave_revisits: usize,
 }
 
 impl Path {
+//impl<'a> Path<'a> {
     // Creates a new Path. The argument must be the start cavern.
     fn new(start: &Cavern) -> Self {
         assert!(start.is_start());
         Path{steps: Vec::from([start.clone()]), small_cave_revisits: 0}
+        // let caverns: LinkedListOfCavern = LinkedListOfCavern::Start{data: start.clone()};
+        // Path{caverns, small_cave_revisits: 0}
     }
 
     // Attempt to create a new Path by adding the given Cavern onto this path.
@@ -164,6 +223,62 @@ impl fmt::Display for Path {
 }
 
 
+struct Path2<'a> {
+    caverns: LinkedListOfCavern<'a>,
+    small_cave_revisits: usize,
+}
+
+impl<'a> Path2<'a> {
+    // Creates a new Path. The argument must be the start cavern.
+    fn new(start: &Cavern) -> Self {
+        assert!(start.is_start());
+        let caverns: LinkedListOfCavern = LinkedListOfCavern::Start{data: start.clone()};
+        Path2{caverns, small_cave_revisits: 0}
+    }
+
+    // Attempt to create a new Path by adding the given Cavern onto this path.
+    // Returns None if such a Path would be illegal.
+    fn add(&'a self, c: &Cavern) -> Option<Path2<'a>> {
+        if c.is_start() {
+            return None;
+        }
+        let small_cave_revisits;
+        if c.is_small() && self.caverns.contains(c) {
+            if c.is_end() {
+                return None;
+            }
+            small_cave_revisits = self.small_cave_revisits + 1;
+        } else {
+            small_cave_revisits = self.small_cave_revisits;
+        }
+        if small_cave_revisits > 1 {
+            return None;
+        }
+        let caverns: LinkedListOfCavern<'a> = self.caverns.append(&c);
+        let result: Path2 = Path2{caverns, small_cave_revisits};
+        Some(result)
+    }
+
+    // Returns the last Cavern in the path. Since paths always include
+    // at least one Cavern, this returns a Cavern, not an Option<Cavern>.
+    fn last(&self) -> Cavern {
+        self.caverns.last().clone()
+    }
+
+    // Returns true if the Path ends at an "end" cavern.
+    fn terminates(&self) -> bool {
+        self.last().is_end()
+    }
+}
+
+impl<'a> fmt::Display for Path2<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self.caverns)
+    }
+}
+
+
+
 #[derive(Debug)]
 struct CavernMap {
     neighbors: MultiMap<Cavern,Cavern>,
@@ -201,7 +316,6 @@ impl CavernMap {
             .filter_map(|x| initial_path.add(x));
         for path in legal_paths {
             if path.terminates() {
-                println!("Terminal: {}", path);
                 path_count += 1;
             } else {
                 path_count += self.wander_from(&path); // Recurse
@@ -214,16 +328,78 @@ impl CavernMap {
         let path: Path = Path::new(&self.start);
         self.wander_from(&path)
     }
+
+    fn wander_from2(&self, initial_path: &Path2) -> u32 {
+        let mut path_count: u32 = 0;
+        let legal_paths = self.neighbors.get_vec(&initial_path.last())
+            .unwrap()
+            .iter()
+            .filter_map(|x| initial_path.add(x));
+        for path in legal_paths {
+            if path.terminates() {
+                path_count += 1;
+            } else {
+                path_count += self.wander_from2(&path); // Recurse
+            }
+        }
+        path_count
+    }
+
+    fn wander2(&self) -> u32 {
+        let path: Path2 = Path2::new(&self.start);
+        self.wander_from2(&path)
+    }
 }
 
 
 
+
+fn run_test() -> Result<(),InputError> {
+    let start = Cavern::new("start".to_string())?;
+    let llc: LinkedListOfCavern = LinkedListOfCavern::new(&start);
+    let c1 = Cavern::new("ab".to_string())?;
+    let llc: LinkedListOfCavern = llc.append(&c1);
+    let c2 = Cavern::new("RR".to_string())?;
+    let llc: LinkedListOfCavern = llc.append(&c2);
+    let last = llc.last();
+    println!("llc = {} and contains ab is {} and last is {}", llc, llc.contains(&c1), last);
+
+    let p1 = Path2::new(&start);
+    println!("p1 = {} ", p1);
+    let p2 = p1.add(&c1).unwrap();
+    println!("p2 = {} ", p2);
+    let p3 = p2.add(&c2).unwrap();
+    println!("p3 = {} last={} terminates={}", p3, p3.last(), p3.terminates());
+    Ok(())
+}
+
 pub fn main() {
+    match run_test() {
+        Ok(_) => {
+            println!("Ok");
+        },
+        Err(_) => {
+            println!("Err");
+        },
+    }
+
+
     match read_cavernmap_file() {
         Ok(cavern_map) => {
+            let start = std::time::Instant::now();
             let path_count = cavern_map.wander();
-            println!("path count = {}", path_count);
+            let duration = start.elapsed();
+            println!("path count = {} which took {:?}", path_count, duration);
+
+            let start = std::time::Instant::now();
+            let path_count = cavern_map.wander2();
+            let duration = start.elapsed();
+            println!("path count = {} which took {:?}", path_count, duration);
+
         },
         Err(err) => println!("Error: {}", err),
     }
 }
+
+// path count = 128506 which took 2.793934083s
+// path count = 128506 which took 1.000018196s
