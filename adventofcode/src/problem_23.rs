@@ -1,7 +1,6 @@
 use std::fmt;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
-// use std::collections::HashMap;
 use multimap::MultiMap;
 
 
@@ -95,6 +94,76 @@ impl Cavern {
     }
 }
 
+impl fmt::Display for Cavern {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self.name)
+    }
+}
+
+
+struct Path {
+    steps: Vec<Cavern>,
+}
+
+impl Path {
+    // Creates a new Path. The argument must be the start cavern.
+    fn new(start: &Cavern) -> Self {
+        assert!(start.is_start());
+        Path{steps: Vec::from([start.clone()])}
+    }
+
+    // Create a new Path by adding the given Cavern onto this path.
+    fn add(&self, c: &Cavern) -> Path {
+        let mut steps = self.steps.clone();
+        steps.push(c.clone());
+        Path{steps}
+    }
+
+    // Returns the last Cavern in the path. Since paths always include
+    // at least one Cavern, this returns a Cavern, not an Option<Cavern>.
+    fn last(&self) -> &Cavern {
+        &self.steps.last().unwrap()
+    }
+
+    // Returns true if the last step in the path is legal (doesn't re-visit
+    // any cavern that isn't big).
+    fn last_step_legal(&self) -> bool {
+        if self.last().is_big() {
+            true
+        } else {
+            for (i, cavern) in self.steps.iter().enumerate() {
+                if cavern == self.last() {
+                    if i < self.steps.len() - 1 {
+                        return false
+                    } else {
+                        return true
+                    }
+                }
+            }
+            panic!("Can't get here, last() is IN the vector!");
+        }
+    }
+
+    // Returns true if the Path ends at an "end" cavern.
+    fn terminates(&self) -> bool {
+        self.last().is_end()
+    }
+}
+
+impl fmt::Display for Path {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        if self.steps.len() == 0 {
+            return write!(f, "[]")
+        }
+        let mut steps_iter = self.steps.iter();
+        write!(f, "{}", steps_iter.next().unwrap())?;
+        for step in steps_iter {
+            write!(f, "->{}", step)?;
+        }
+        Ok(())
+    }
+}
+
 
 #[derive(Debug)]
 struct CavernMap {
@@ -124,6 +193,29 @@ impl CavernMap {
         let end = end_opt.ok_or(InputError::NoEnd)?;
         Ok(CavernMap{neighbors, start, end})
     }
+
+    fn wander_from(&self, initial_path: &Path) -> u32 {
+        let mut path_count: u32 = 0;
+        let possible_paths = self.neighbors.get_vec(initial_path.last())
+            .unwrap()
+            .iter()
+            .map(|x| initial_path.add(x));
+        for path in possible_paths {
+            if path.last_step_legal() {
+                if path.terminates() {
+                    path_count += 1;
+                } else {
+                    path_count += self.wander_from(&path); // Recurse
+                }
+            }
+        }
+        path_count
+    }
+
+    fn wander(&self) -> u32 {
+        let path: Path = Path::new(&self.start);
+        self.wander_from(&path)
+    }
 }
 
 
@@ -131,7 +223,8 @@ impl CavernMap {
 pub fn main() {
     match read_cavernmap_file() {
         Ok(cavern_map) => {
-            println!("Cavern Map: {:#?}", cavern_map);
+            let path_count = cavern_map.wander();
+            println!("path count = {}", path_count);
         },
         Err(err) => println!("Error: {}", err),
     }
