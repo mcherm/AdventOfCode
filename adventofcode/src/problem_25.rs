@@ -135,7 +135,7 @@ impl FoldedPaper {
         self.grid[y][x]
     }
 
-    fn count_dots(&self) -> usize {
+    fn _count_dots(&self) -> usize {
         self.grid.iter().map(
             |row| row.iter().map(
                 |b| if *b {1} else {0}
@@ -208,10 +208,11 @@ impl fmt::Display for FoldedPaper {
 
 fn run() -> Result<(), InputError> {
     let origami_data =  read_origami_file()?;
-    let folded_paper = FoldedPaper::new(&origami_data);
-    // println!("Initial: {} ({})\n", folded_paper, folded_paper.count_dots());
-    let folded_paper = folded_paper.fold(origami_data.folds[0])?;
-    println!("After folding there are {} dots\n", folded_paper.count_dots());
+    let mut folded_paper = FoldedPaper::new(&origami_data);
+    for fold_instruction in origami_data.folds {
+        folded_paper = folded_paper.fold(fold_instruction)?;
+    }
+    println!("After folding here is the image:\n{}", folded_paper);
     Ok(())
 }
 
