@@ -222,7 +222,6 @@ impl FoldedPaper {
     }
 
     fn fold_up(&self, position: usize) -> Result<Self,InputError> {
-        println!("Folding up on {}", position); // FIXME: Remove
         if position < self.y_size / 2 {
             return Err(InputError::IllegalFoldLocation)
         };
@@ -238,7 +237,6 @@ impl FoldedPaper {
     }
 
     fn fold_left(&self, position: usize) -> Result<Self,InputError> {
-        println!("Folding left on {}", position); // FIXME: Remove
         if position < self.x_size / 2 {
             return Err(InputError::IllegalFoldLocation)
         };
@@ -298,18 +296,18 @@ impl FoldedPaper2 {
         }
         let orig_x_size = origami_data.dots.iter().map(|d| d[0]).max().unwrap() + 1;
         let orig_y_size = origami_data.dots.iter().map(|d| d[1]).max().unwrap() + 1;
-        let folds = single_linked_list::List::new(); // This leaves it unfolded
-        let folds = folds.prepend(origami_data.folds[0]); // This applies the first fold
+
+        let mut folds: single_linked_list::List<FoldInstruction> = single_linked_list::List::new();
+        for fold_instruction in &origami_data.folds {
+            folds = folds.prepend(*fold_instruction)
+        }
         FoldedPaper2{dots, folds, orig_x_size, orig_y_size}
     }
 
     fn x_size(&self) -> usize {
         for fold_instruction in self.folds.iter() {
-            match fold_instruction {
-                FoldInstruction::LeftAlongX(pos) => {
-                    return *pos;
-                },
-                _ => {},
+            if let FoldInstruction::LeftAlongX(pos) = fold_instruction {
+                return *pos;
             }
         }
         self.orig_x_size
@@ -317,22 +315,34 @@ impl FoldedPaper2 {
 
     fn y_size(&self) -> usize {
         for fold_instruction in self.folds.iter() {
-            match fold_instruction {
-                FoldInstruction::UpAlongY(pos) => {
-                    return *pos;
-                },
-                _ => {},
+            if let FoldInstruction::UpAlongY(pos) = fold_instruction {
+                return *pos;
             }
         }
         self.orig_y_size
     }
 
     fn dot_at(&self, x: usize, y: usize) -> bool {
-        if self.folds.is_empty() {
-            self.dots.contains(&[x,y])
-        } else {
-            panic!("Not written yet!") // FIXME: add this code
+
+        fn has_dot(dots: &HashSet<[usize;2]>, point: &[usize;2], folds: &single_linked_list::List<FoldInstruction>) -> bool {
+            match folds.head() {
+                None => dots.contains(point),
+                Some(fold_instruction) => {
+                    let other_point: [usize;2] = match fold_instruction {
+                        FoldInstruction::LeftAlongX(fold_pos) => {
+                            [2 * fold_pos - point[0],point[1]]
+                        },
+                        FoldInstruction::UpAlongY(fold_pos) => {
+                            [point[0],2 * fold_pos - point[1]]
+                        },
+                    };
+                    let tail = folds.tail();
+                    has_dot(dots, point, &tail) || has_dot(dots, &other_point, &tail)
+                },
+            }
         }
+
+        has_dot(&self.dots, &[x,y], &self.folds)
     }
 }
 
@@ -360,18 +370,21 @@ fn run() -> Result<(), InputError> {
     let origami_data_2 =  read_origami_file()?;
 
     println!("Beginning original code...");
+    let start = std::time::Instant::now();
     let mut folded_paper = FoldedPaper::new(&origami_data_1);
     for fold_instruction in origami_data_1.folds {
         folded_paper = folded_paper.fold(fold_instruction)?;
     }
+    let duration = start.elapsed();
     println!("After folding here is the image:\n{}", folded_paper);
+    println!("time: {:?}", duration);
 
     println!("\nBeginning updated algorithm...");
+    let start = std::time::Instant::now();
     let folded_paper = FoldedPaper2::new(&origami_data_2);
-    // for fold_instruction in origami_data.folds {
-    //     folded_paper = folded_paper.fold(fold_instruction)?;
-    // }
+    let duration = start.elapsed();
     println!("After folding here is the image:\n{}", folded_paper);
+    println!("time: {:?}", duration);
 
     Ok(())
 }
