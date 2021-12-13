@@ -3,6 +3,7 @@ use std::fs::File;
 use std::io::{BufRead, BufReader};
 use lazy_static::lazy_static;
 use regex::{Captures, Regex};
+use std::collections::HashSet;
 
 
 /// An error that we can encounter when reading the input.
@@ -188,6 +189,42 @@ impl FoldedPaper {
 }
 
 impl fmt::Display for FoldedPaper {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        for y in 0..self.y_size {
+            write!(f, "\n")?;
+            for x in 0..self.x_size {
+                let char = match self.dot_at(x, y) {
+                    true => "#",
+                    false => ".",
+                };
+                write!(f, "{}", char)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+
+
+#[derive(Debug)]
+struct FoldedPaper2 {
+    dots: HashSet<[usize;2]>,
+    folds: Vec<FoldInstruction>,
+}
+
+impl FoldedPaper2 {
+    fn new(origami_data: &OrigamiData) -> Self {
+        let mut dots = HashSet::new();
+        for dot in origami_data.dots {
+            dots.insert(dot)
+        }
+        let folds = origami_data.folds.clone(); // This would fold it fully
+        let folds = Vec::new(); // This leaves it unfolded
+        FoldedPaper2{dots, folds}
+    }
+}
+
+impl fmt::Display for FoldedPaper2 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         for y in 0..self.y_size {
             write!(f, "\n")?;
