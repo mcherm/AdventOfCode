@@ -163,13 +163,10 @@ struct Path {
 }
 
 impl Path {
-//impl<'a> Path<'a> {
     // Creates a new Path. The argument must be the start cavern.
     fn new(start: &Cavern) -> Self {
         assert!(start.is_start());
         Path{steps: Vec::from([start.clone()]), small_cave_revisits: 0}
-        // let caverns: LinkedListOfCavern = LinkedListOfCavern::Start{data: start.clone()};
-        // Path{caverns, small_cave_revisits: 0}
     }
 
     // Attempt to create a new Path by adding the given Cavern onto this path.
@@ -232,7 +229,7 @@ impl<'a> Path2<'a> {
     // Creates a new Path. The argument must be the start cavern.
     fn new(start: &Cavern) -> Self {
         assert!(start.is_start());
-        let caverns: LinkedListOfCavern = LinkedListOfCavern::Start{data: start.clone()};
+        let caverns: LinkedListOfCavern = LinkedListOfCavern::new(&start);
         Path2{caverns, small_cave_revisits: 0}
     }
 
@@ -353,37 +350,7 @@ impl CavernMap {
 
 
 
-
-fn run_test() -> Result<(),InputError> {
-    let start = Cavern::new("start".to_string())?;
-    let llc: LinkedListOfCavern = LinkedListOfCavern::new(&start);
-    let c1 = Cavern::new("ab".to_string())?;
-    let llc: LinkedListOfCavern = llc.append(&c1);
-    let c2 = Cavern::new("RR".to_string())?;
-    let llc: LinkedListOfCavern = llc.append(&c2);
-    let last = llc.last();
-    println!("llc = {} and contains ab is {} and last is {}", llc, llc.contains(&c1), last);
-
-    let p1 = Path2::new(&start);
-    println!("p1 = {} ", p1);
-    let p2 = p1.add(&c1).unwrap();
-    println!("p2 = {} ", p2);
-    let p3 = p2.add(&c2).unwrap();
-    println!("p3 = {} last={} terminates={}", p3, p3.last(), p3.terminates());
-    Ok(())
-}
-
 pub fn main() {
-    match run_test() {
-        Ok(_) => {
-            println!("Ok");
-        },
-        Err(_) => {
-            println!("Err");
-        },
-    }
-
-
     match read_cavernmap_file() {
         Ok(cavern_map) => {
             let start = std::time::Instant::now();
