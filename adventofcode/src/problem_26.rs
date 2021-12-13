@@ -5,6 +5,83 @@ use lazy_static::lazy_static;
 use regex::{Captures, Regex};
 use std::collections::HashSet;
 
+#[allow(dead_code)]
+mod single_linked_list {
+    // Source: https://rust-unofficial.github.io/too-many-lists/third-final.html
+    use std::rc::Rc;
+
+    pub struct List<T> {
+        head: Link<T>,
+    }
+
+    type Link<T> = Option<Rc<Node<T>>>;
+
+    struct Node<T> {
+        elem: T,
+        next: Link<T>,
+    }
+
+    impl<T> List<T> {
+        pub fn new() -> Self {
+            List { head: None }
+        }
+
+        pub fn is_empty(&self) -> bool {
+            match self.head {
+                None => true,
+                Some(_) => false,
+            }
+        }
+
+        pub fn prepend(&self, elem: T) -> List<T> {
+            List { head: Some(Rc::new(Node {
+                elem: elem,
+                next: self.head.clone(),
+            }))}
+        }
+
+        pub fn tail(&self) -> List<T> {
+            List { head: self.head.as_ref().and_then(|node| node.next.clone()) }
+        }
+
+        pub fn head(&self) -> Option<&T> {
+            self.head.as_ref().map(|node| &node.elem)
+        }
+
+        pub fn iter(&self) -> Iter<'_, T> {
+            Iter { next: self.head.as_deref() }
+        }
+    }
+
+    impl<T> Drop for List<T> {
+        fn drop(&mut self) {
+            let mut head = self.head.take();
+            while let Some(node) = head {
+                if let Ok(mut node) = Rc::try_unwrap(node) {
+                    head = node.next.take();
+                } else {
+                    break;
+                }
+            }
+        }
+    }
+
+    pub struct Iter<'a, T> {
+        next: Option<&'a Node<T>>,
+    }
+
+    impl<'a, T> Iterator for Iter<'a, T> {
+        type Item = &'a T;
+
+        fn next(&mut self) -> Option<Self::Item> {
+            self.next.map(|node| {
+                self.next = node.next.as_deref();
+                &node.elem
+            })
+        }
+    }
+}
+
 
 /// An error that we can encounter when reading the input.
 enum InputError {
@@ -206,29 +283,64 @@ impl fmt::Display for FoldedPaper {
 
 
 
-#[derive(Debug)]
 struct FoldedPaper2 {
     dots: HashSet<[usize;2]>,
-    folds: Vec<FoldInstruction>,
+    folds: single_linked_list::List<FoldInstruction>, // folds, with most recent fold FIRST
+    orig_x_size: usize,
+    orig_y_size: usize,
 }
 
 impl FoldedPaper2 {
     fn new(origami_data: &OrigamiData) -> Self {
-        let mut dots = HashSet::new();
-        for dot in origami_data.dots {
-            dots.insert(dot)
+        let mut dots: HashSet<[usize;2]> = HashSet::new();
+        for dot in &origami_data.dots {
+            dots.insert(*dot);
         }
-        let folds = origami_data.folds.clone(); // This would fold it fully
-        let folds = Vec::new(); // This leaves it unfolded
-        FoldedPaper2{dots, folds}
+        let orig_x_size = origami_data.dots.iter().map(|d| d[0]).max().unwrap() + 1;
+        let orig_y_size = origami_data.dots.iter().map(|d| d[1]).max().unwrap() + 1;
+        let folds = single_linked_list::List::new(); // This leaves it unfolded
+        let folds = folds.prepend(origami_data.folds[0]); // This applies the first fold
+        FoldedPaper2{dots, folds, orig_x_size, orig_y_size}
+    }
+
+    fn x_size(&self) -> usize {
+        for fold_instruction in self.folds.iter() {
+            match fold_instruction {
+                FoldInstruction::LeftAlongX(pos) => {
+                    return *pos;
+                },
+                _ => {},
+            }
+        }
+        self.orig_x_size
+    }
+
+    fn y_size(&self) -> usize {
+        for fold_instruction in self.folds.iter() {
+            match fold_instruction {
+                FoldInstruction::UpAlongY(pos) => {
+                    return *pos;
+                },
+                _ => {},
+            }
+        }
+        self.orig_y_size
+    }
+
+    fn dot_at(&self, x: usize, y: usize) -> bool {
+        if self.folds.is_empty() {
+            self.dots.contains(&[x,y])
+        } else {
+            panic!("Not written yet!") // FIXME: add this code
+        }
     }
 }
 
 impl fmt::Display for FoldedPaper2 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        for y in 0..self.y_size {
+        for y in 0..self.y_size() {
             write!(f, "\n")?;
-            for x in 0..self.x_size {
+            for x in 0..self.x_size() {
                 let char = match self.dot_at(x, y) {
                     true => "#",
                     false => ".",
@@ -244,12 +356,23 @@ impl fmt::Display for FoldedPaper2 {
 
 
 fn run() -> Result<(), InputError> {
-    let origami_data =  read_origami_file()?;
-    let mut folded_paper = FoldedPaper::new(&origami_data);
-    for fold_instruction in origami_data.folds {
+    let origami_data_1 =  read_origami_file()?;
+    let origami_data_2 =  read_origami_file()?;
+
+    println!("Beginning original code...");
+    let mut folded_paper = FoldedPaper::new(&origami_data_1);
+    for fold_instruction in origami_data_1.folds {
         folded_paper = folded_paper.fold(fold_instruction)?;
     }
     println!("After folding here is the image:\n{}", folded_paper);
+
+    println!("\nBeginning updated algorithm...");
+    let folded_paper = FoldedPaper2::new(&origami_data_2);
+    // for fold_instruction in origami_data.folds {
+    //     folded_paper = folded_paper.fold(fold_instruction)?;
+    // }
+    println!("After folding here is the image:\n{}", folded_paper);
+
     Ok(())
 }
 
