@@ -25,6 +25,8 @@ mod problem_24;
 mod problem_25;
 mod problem_26;
 
+mod learn_list;
+
 
 fn main() {
     match 26 {
