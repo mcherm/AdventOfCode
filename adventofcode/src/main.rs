@@ -1,3 +1,5 @@
+mod learn_list;
+
 mod problem_1;
 mod problem_2;
 mod problem_3;
@@ -24,12 +26,12 @@ mod problem_23;
 mod problem_24;
 mod problem_25;
 mod problem_26;
-
-mod learn_list;
+mod problem_27;
+mod problem_28;
 
 
 fn main() {
-    match 26 {
+    match 27 {
         1 => problem_1::main(),
         2 => problem_2::main(),
         3 => problem_3::main(),
@@ -56,6 +58,8 @@ fn main() {
         24 => problem_24::main(),
         25 => problem_25::main(),
         26 => problem_26::main(),
+        27 => problem_27::main(),
+        28 => problem_28::main(),
         _ => panic!("Not a valid problem.")
     }
 }
