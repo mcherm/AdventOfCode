@@ -4,6 +4,7 @@ use std::io::{BufRead, BufReader};
 use lazy_static::lazy_static;
 use regex::{Captures, Regex};
 use std::collections::HashMap;
+use std::collections::hash_map;
 use itertools::Itertools;
 
 
@@ -87,55 +88,99 @@ fn read_polymer_file() -> Result<(Vec<char>, HashMap<(char,char),char>), InputEr
 }
 
 
+#[derive(Debug)]
+struct PairCounts {
+    counts: HashMap<(char,char),usize>,
+}
 
-fn apply_rules(
-    input: &Vec<char>,
-    insertion_rules: &HashMap<(char,char), char>
-) -> Result<Vec<char>,InputError> {
-    if input.len() == 0 {
-        return Ok(Vec::new());
+impl PairCounts {
+    fn new() -> Self {
+        PairCounts{counts: HashMap::new()}
     }
-    let mut result: Vec<char> = Vec::new();
-    let mut char_iter = input.iter();
-    let mut leading: &char = char_iter.next().unwrap();
-    result.push(*leading);
-    while let Some(trailing) = char_iter.next() {
-        let inserted: &char = insertion_rules.get(&(*leading,*trailing))
-            .ok_or(InputError::MappingMissing(*leading, *trailing))?;
-        result.push(*inserted);
-        result.push(*trailing);
-        leading = trailing;
+
+    fn get_count(&self, pair: &(char,char)) -> usize {
+        match self.counts.get(pair) {
+            None => 0,
+            Some(old) => *old,
+        }
     }
-    Ok(result)
+
+    fn add_counts(&mut self, pair: (char,char), count: usize) {
+        self.counts.insert(pair, self.get_count(&pair) + count);
+    }
+}
+
+impl<'a> IntoIterator for &'a PairCounts {
+    type Item = (&'a (char,char), &'a usize);
+    type IntoIter = hash_map::Iter<'a,(char,char),usize>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.counts.iter()
+    }
+}
+
+impl fmt::Display for PairCounts {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Pairs<")?;
+        for stuff in self {
+            write!(f, "{:?}", stuff)?;
+        }
+        write!(f, ">")
+    }
 }
 
 
-fn score(polymer: &Vec<char>) -> usize {
-    let mut frequencies: HashMap<char,usize> = HashMap::new();
-    for c in polymer {
-        let new_val = match frequencies.get(c) {
-            None => 1,
-            Some(count) => count + 1,
-        };
-        frequencies.insert(*c, new_val);
+
+fn apply_rules(
+    old_pair_counts: &PairCounts,
+    insertion_rules: &HashMap<(char,char), char>
+) -> Result<PairCounts,InputError> {
+    let mut new_pair_counts: PairCounts = PairCounts::new();
+    for ((leading,trailing), count) in old_pair_counts {
+        let inserted: &char = insertion_rules.get(&(*leading,*trailing))
+            .ok_or(InputError::MappingMissing(*leading, *trailing))?;
+        new_pair_counts.add_counts((*leading, *inserted), *count);
+        new_pair_counts.add_counts((*inserted, *trailing), *count);
     }
-    assert!(!frequencies.is_empty());
-    if frequencies.len() == 1 {
-        return 0;
+    Ok(new_pair_counts)
+}
+
+
+
+fn score(template: &Vec<char>, pair_counts: &PairCounts) -> usize {
+    let mut letter_counts: HashMap<char,usize> = HashMap::new();
+    letter_counts.insert(template[0], 1); // count the first item in the string
+    for ((_, trailing), count) in pair_counts {
+        // for each pair-count, add to the count for the trailing character
+        let old_count = *letter_counts.get(trailing).unwrap_or(&0);
+        letter_counts.insert(*trailing, old_count + count);
     }
-    let mut sorted_counts = frequencies.values().sorted();
-    let smallest: &usize = sorted_counts.next().unwrap();
-    let biggest: &usize = sorted_counts.last().unwrap();
+
+    let mut sorted_counts = letter_counts.values().sorted();
+    let smallest = sorted_counts.next().unwrap(); // Safe as there is at least one letter
+    let biggest = sorted_counts.last().unwrap_or(smallest); // if there are none left, then biggest==smallest
     biggest - smallest
 }
 
 
 fn run() -> Result<(),InputError> {
-    let (mut polymer, insertion_rules) = read_polymer_file()?;
-    for _i in 0..40 {
-        polymer = apply_rules(&polymer, &insertion_rules)?;
+    let (template, insertion_rules) = read_polymer_file()?;
+    assert!(template.len() > 1);
+
+    // --- initalize pair_counts ---
+    let mut pair_counts: PairCounts = PairCounts::new();
+    let mut char_iter = template.iter();
+    let mut leading: &char = char_iter.next().unwrap();
+    while let Some(trailing) = char_iter.next() {
+        pair_counts.add_counts((*leading, *trailing), 1);
+        leading = trailing;
     }
-    let score = score(&polymer);
+
+    // --- apply rules ---
+    for _i in 0..40 {
+        pair_counts = apply_rules(&pair_counts, &insertion_rules)?;
+    }
+    let score = score(&template, &pair_counts);
     println!("score: {}",score);
     Ok(())
 }
