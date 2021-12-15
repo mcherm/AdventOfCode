@@ -12,13 +12,13 @@
 use std::fmt;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
-use crate::learn_list::List;
 use std::cmp::min;
+use std::collections::HashMap;
 
 
-const PRINT_LEVEL: PrintLevel = PrintLevel::AllDetails;
-const MAX_SIZE: Option<usize> = Some(4); // cut things off at this size
-const ALLOW_BACKTRACKING: bool = false;
+const PRINT_LEVEL: PrintLevel = PrintLevel::NewBestValue;
+const MAX_SIZE: Option<usize> = None; // cut things off at this size
+const ALLOW_BACKTRACKING: bool = true;
 
 
 /// An error that we can encounter when reading the input.
@@ -90,6 +90,7 @@ fn read_grid_file() -> Result<Vec<Vec<u8>>, InputError> {
 type EntryCost = u8;
 type Grid = Vec<Vec<EntryCost>>;
 type PathCost = u32;
+const WORST_PATH_COST: PathCost = u32::MAX;
 type Coord = (usize,usize);
 
 
@@ -123,44 +124,8 @@ fn neighbors(grid: &Grid, from: &Coord) -> Vec<Coord> {
 }
 
 
-fn contains<T: Eq>(list: &List<T>, item: &T) -> bool {
-    match list.head() {
-        None => false,
-        Some(head) => {
-            if head == item {
-                true
-            } else {
-                contains(&list.tail(), item)
-            }
-        }
-    }
-}
 
-impl fmt::Display for List<Coord> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        fn recurse(f: &mut fmt::Formatter, list: List<Coord>) -> fmt::Result {
-            match list.head() {
-                None => write!(f, "]"),
-                Some(head) => {
-                    write!(f, ", ({},{})", head.0, head.1)?;
-                    recurse(f, list.tail())
-                },
-            }
-        }
-
-        match self.head() {
-            None => write!(f, "[]"),
-            Some(head) => {
-                write!(f, "[")?;
-                write!(f, "({},{})", head.0, head.1)?;
-                recurse(f, self.tail())?;
-                Ok(())
-            },
-        }
-    }
-}
-
-
+#[allow(dead_code)]
 fn show_cost(cost: &Option<PathCost>) -> String {
     match cost {
         None => "None".to_string(),
@@ -199,49 +164,108 @@ impl PrintLevel {
 // already seen.
 fn find_best_path_exhaustively(grid: &Grid) -> PathCost {
 
-    // Returns the total cost for the cheapest path from here to the end that is cheaper than
-    // best_cost OR None if there isn't one.
+    struct MemoData {
+        best_cost: PathCost,
+        arrival_cost: PathCost,
+        resulting_best: Option<PathCost>,
+    }
+    type MemoCache = HashMap<Coord, MemoData>;
+
+    // Returns the cost for the cheapest path from here to the end is less than max_cost, or
+    // None if there isn't one.
     //
-    // grid is the grid we're navigating,
-    // previous is the path BEFORE the last step,
-    // last_step is the most recent step taken,
-    // leading_cost is the cost of all steps up and including last_step
+    // grid is the grid we're navigating. It doesn't change as we recurse.
+    // memo_cache is the data we're using to memoize the function. The object is modified as we pass it around.
+    // best_cost is the best overall PathCost we have seen, or None if we haven't seen one ever.
+    // start_coord is the location we are starting from.
+    // arrival_cost is the cost of all steps up and including arriving on start_coord.
     //
-    // It can return None because it isn't possible to get to the end from here or because all
+    // This can return None because it isn't possible to get to the end from here or because all
     // such paths are more expensive than best_cost.
-    fn best_path_from(print: &PrintLevel, grid: &Grid, best_cost: Option<PathCost>, previous: List<Coord>, last_coord: &Coord, leading_cost: PathCost, indent: &str) -> Option<PathCost> {
-        if print.all() {println!("{}best_path_from(_, _, {}, ({},{}), {}, {})", indent, show_cost(&best_cost), last_coord.0, last_coord.1, previous, leading_cost);}
-        if *last_coord == (max_size(grid), max_size(grid)) {
-            if print.best_val() {println!("{}  cost is {} for path {}", indent, leading_cost, previous.prepend(*last_coord));}
-            assert!(best_cost.is_none() || best_cost.unwrap() > leading_cost); // We shouldn't get here unless it's going to be better
-            Some(leading_cost)
-        } else {
-            let mut best_known_cost: Option<PathCost> = best_cost;
-            let mut best_neighbor_cost: Option<PathCost> = None;
-            for neighbor in neighbors(grid, &last_coord) {
-                let cost_to_last_coord = leading_cost + (grid[neighbor.1][neighbor.0] as u32);
-                // recuse ONLY if it's got a chance of improving on what we know about
-                if best_known_cost.is_none() || best_known_cost.unwrap() > cost_to_last_coord {
-                    if !contains(&previous, &neighbor) {
-                        let new_indent = format!("{}  ", indent);
-                        let better_cost = best_path_from(print, grid, best_known_cost, previous.prepend(*last_coord), &neighbor, cost_to_last_coord, &new_indent);
-                        assert!(best_cost.is_none() || better_cost.is_none() ||  better_cost.unwrap() < best_cost.unwrap()); // has to be better!
-                        if better_cost.is_some() {
-                            best_neighbor_cost = better_cost;
-                            best_known_cost = better_cost
+    //
+    fn best_path_from(
+        grid: &Grid,
+        memo_cache: &mut MemoCache,
+        best_cost: PathCost,
+        start_coord: &Coord,
+        arrival_cost: PathCost,
+        indent: &str
+    ) -> Option<PathCost> {
+        if PRINT_LEVEL.all() {println!("{}best_path_from(_, _, best:{}, at:({},{}), arrival:{})", indent, best_cost, start_coord.0, start_coord.1, arrival_cost);}
+
+        match memo_cache.get(start_coord) {
+            Some(memo_data) => {
+//                println!("{}  YES found in cache: with bound of {} and arrival_cost of {} we had {}", indent, memo_data.best_cost, memo_data.arrival_cost, show_cost(&memo_data.resulting_best));
+                assert!(best_cost <= memo_data.best_cost);
+                if arrival_cost >= memo_data.arrival_cost {
+                    // We know this path must be worse
+                    return None;
+                }
+                let arrival_delta = memo_data.arrival_cost - arrival_cost;
+//                let best_delta = memo_data.best_cost - best_cost;
+//                println!("{}  MEMO_ANALYZE: arrival_delta = {}; best_delta = {}", indent, arrival_delta, best_delta);
+//                if arrival_delta > best_delta {
+//                    println!("{}  * Have to do it over as arival_delta > best_delta", indent);
+//                } else {
+//                    println!("{}  * We should be able to use the memo.", indent);
+//                }
+                match memo_data.resulting_best {
+                    None => {
+//                        println!("{}  MEMO-FAIL: The memo couldn't find an answer, but this time we have a lower target.", indent);
+                    },
+                    Some(memo_result) => {
+                        let new_result = memo_result - arrival_delta;
+                        if new_result < best_cost {
+                            if PRINT_LEVEL.best_val() {println!("{}  cost is {}", indent, new_result);}
+                            return Some(new_result)
+                        } else {
+//                            println!("{}  MEMO: Quick return it's no better.", indent); // FIXME: Debug
+                            return None;
                         }
-                    } else {
-                        if print.all() {println!("{}  ({},{}) already visited.", indent, neighbor.0, neighbor.1);}
-                    }
-                } else {
-                    if print.all() {println!("{}  ({},{}) is no better.", indent, neighbor.0, neighbor.1);}
+                    },
                 }
             }
-            best_neighbor_cost
+            None => {
+//                println!("{}  Not found in cache.", indent);
+            },
         }
+
+        let resulting_best: Option<PathCost>;
+        if *start_coord == (max_size(grid), max_size(grid)) {
+            if PRINT_LEVEL.best_val() {println!("{}  cost is {}", indent, arrival_cost);}
+            assert!(best_cost > arrival_cost); // We shouldn't get here unless it's going to be better
+            resulting_best = Some(arrival_cost);
+        } else {
+            let mut best_known_cost: PathCost = best_cost;
+            let mut neighbor_cost_beating_best_known: Option<PathCost> = None;
+            for neighbor in neighbors(grid, &start_coord) {
+                let cost_to_last_coord = arrival_cost + (grid[neighbor.1][neighbor.0] as u32);
+                // recuse ONLY if it's got a chance of improving on what we know about
+                if best_known_cost > cost_to_last_coord {
+                    let new_indent = format!("{}  ", indent);
+                    let better_cost = best_path_from(grid, memo_cache, best_known_cost, &neighbor, cost_to_last_coord, &new_indent);
+                    assert!(better_cost.is_none() ||  better_cost.unwrap() < best_cost); // has to be better!
+                    // FIXME: This assignment could me made simpler
+                    if better_cost.is_some() {
+                        neighbor_cost_beating_best_known = better_cost;
+                        best_known_cost = better_cost.unwrap();
+                    }
+                } else {
+                    if PRINT_LEVEL.all() {println!("{}  ({},{}) is no better.", indent, neighbor.0, neighbor.1);}
+                }
+            }
+            resulting_best = neighbor_cost_beating_best_known;
+        }
+
+//        println!("{}  Memoizing ({},{}) -> best:{}, arrive:{}, result:{}", indent, start_coord.0, start_coord.1, best_cost, arrival_cost, show_cost(&resulting_best));
+        memo_cache.insert(*start_coord, MemoData{best_cost, arrival_cost, resulting_best});
+
+        resulting_best
     }
 
-    let cost = best_path_from(&PRINT_LEVEL, &grid, None, List::new(), &(0,0), 0, "");
+
+    let mut memo_cache: MemoCache = HashMap::new();
+    let cost = best_path_from(&grid, &mut memo_cache, WORST_PATH_COST, &(0,0), 0, "");
     assert!(cost.is_some()); // there must be SOME best path
     cost.unwrap()
 }
@@ -274,30 +298,6 @@ mod test {
     use super::List;
     use super::Coord;
     use super::show_cost;
-
-    #[test]
-    fn display_list() {
-        let list0: List<Coord> = List::new();
-        let list1: List<Coord> = list0.prepend((3,5));
-        let list2: List<Coord> = list1.prepend((7,7));
-        let list3: List<Coord> = list2.prepend((12,14));
-
-        let mut output0 = String::new();
-        write!(&mut output0, "{}", list0).expect("Error writing to String.");
-        assert_eq!(output0, "[]");
-
-        let mut output1 = String::new();
-        write!(&mut output1, "{}", list1).expect("Error writing to String.");
-        assert_eq!(output1, "[(3,5)]");
-
-        let mut output2 = String::new();
-        write!(&mut output2, "{}", list2).expect("Error writing to String.");
-        assert_eq!(output2, "[(7,7), (3,5)]");
-
-        let mut output3 = String::new();
-        write!(&mut output3, "{}", list3).expect("Error writing to String.");
-        assert_eq!(output3, "[(12,14), (7,7), (3,5)]");
-    }
 
     #[test]
     fn test_show_cost() {
