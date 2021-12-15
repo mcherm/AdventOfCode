@@ -1,3 +1,14 @@
+//
+// NOTES
+//
+// OK, I learned a few things:
+//   * I need to memoize my function.
+//   * I might not need to avoid going back to items I've used before, because if I go
+//       down-and-to-the-right first I'll find at least one solution at first and after
+//       that looping paths will get pruned due to having worse scores.
+//
+
+
 use std::fmt;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
@@ -5,8 +16,9 @@ use crate::learn_list::List;
 use std::cmp::min;
 
 
-const PRINT_LEVEL: PrintLevel = PrintLevel::NewBestValue;
-const MAX_SIZE: Option<usize> = Some(20); // cut things off at this size
+const PRINT_LEVEL: PrintLevel = PrintLevel::AllDetails;
+const MAX_SIZE: Option<usize> = Some(4); // cut things off at this size
+const ALLOW_BACKTRACKING: bool = false;
 
 
 /// An error that we can encounter when reading the input.
@@ -99,11 +111,13 @@ fn neighbors(grid: &Grid, from: &Coord) -> Vec<Coord> {
     if y < max_size(grid) {
         result.push((x, y+1))
     }
-    if x > 0 {
-        result.push((x-1,y))
-    }
-    if y > 0 {
-        result.push((x,y-1))
+    if ALLOW_BACKTRACKING {
+        if x > 0 {
+            result.push((x-1,y))
+        }
+        if y > 0 {
+            result.push((x,y-1))
+        }
     }
     result
 }
@@ -205,10 +219,10 @@ fn find_best_path_exhaustively(grid: &Grid) -> PathCost {
             let mut best_known_cost: Option<PathCost> = best_cost;
             let mut best_neighbor_cost: Option<PathCost> = None;
             for neighbor in neighbors(grid, &last_coord) {
-                if !contains(&previous, &neighbor) {
-                    let cost_to_last_coord = leading_cost + (grid[neighbor.1][neighbor.0] as u32);
-                    // recuse ONLY if it's got a chance of improving on what we know about
-                    if best_known_cost.is_none() || best_known_cost.unwrap() > cost_to_last_coord {
+                let cost_to_last_coord = leading_cost + (grid[neighbor.1][neighbor.0] as u32);
+                // recuse ONLY if it's got a chance of improving on what we know about
+                if best_known_cost.is_none() || best_known_cost.unwrap() > cost_to_last_coord {
+                    if !contains(&previous, &neighbor) {
                         let new_indent = format!("{}  ", indent);
                         let better_cost = best_path_from(print, grid, best_known_cost, previous.prepend(*last_coord), &neighbor, cost_to_last_coord, &new_indent);
                         assert!(best_cost.is_none() || better_cost.is_none() ||  better_cost.unwrap() < best_cost.unwrap()); // has to be better!
@@ -216,9 +230,11 @@ fn find_best_path_exhaustively(grid: &Grid) -> PathCost {
                             best_neighbor_cost = better_cost;
                             best_known_cost = better_cost
                         }
+                    } else {
+                        if print.all() {println!("{}  ({},{}) already visited.", indent, neighbor.0, neighbor.1);}
                     }
                 } else {
-                    if print.all() {println!("{}  ({},{}) already visited.", indent, neighbor.0, neighbor.1);}
+                    if print.all() {println!("{}  ({},{}) is no better.", indent, neighbor.0, neighbor.1);}
                 }
             }
             best_neighbor_cost
