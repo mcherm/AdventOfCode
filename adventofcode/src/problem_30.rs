@@ -285,30 +285,20 @@ fn coords_in_tail_order(grid: &Grid) -> Vec<Coord> {
 }
 
 
+
 fn find_best_path_more_quickly(grid: &Grid) -> PathCost {
 
-    struct CostToEndData {
-        best_known_cost: Option<PathCost>,
-    }
-    impl CostToEndData {
-        fn new(cost: PathCost) -> Self {
-            CostToEndData{best_known_cost: Some(cost)}
-        }
-        fn unknown() -> Self {
-            CostToEndData{best_known_cost: None}
-        }
-    }
-    type CostToEnd = Vec<Vec<CostToEndData>>;
+    type CostToEnd = Vec<Vec<Option<PathCost>>>;
     let mut cost_to_end: CostToEnd = grid.iter().map(|row| {
         row.iter().map(|_| {
-            CostToEndData::unknown()
+            None
         }).collect()
     }).collect();
 
     fn print_known(cost_to_end: &CostToEnd) {
         for y in 0..cost_to_end.len() {
             for x in 0..cost_to_end.len() {
-                match cost_to_end[y][x].best_known_cost {
+                match cost_to_end[y][x] {
                     None => print!("(*),"),
                     Some(x) => print!("{:3},", x),
                 };
@@ -324,11 +314,11 @@ fn find_best_path_more_quickly(grid: &Grid) -> PathCost {
         if PRINT_LEVEL.best_val() {println!("\nfind_cost({},{}): ", coord.0, coord.1);}
         let max_c = max_coord(grid);
         cost_to_end[coord.1][coord.0] = if *coord == (max_c, max_c) {
-            CostToEndData::new(0)
+            Some(0) // there's no cost to get from the end to the end!
         } else {
-            let mut new_cost_from_here: Option<CostToEndData> = None;
+            let mut new_cost_from_here_2: Option<PathCost> = None;
             for neighbor in neighbors(grid, coord) {
-                match cost_to_end[neighbor.1][neighbor.0].best_known_cost {
+                match cost_to_end[neighbor.1][neighbor.0] {
                     None => {
                         // This neighbor isn't known. Skip them.
                         if PRINT_LEVEL.all() {println!("Neighbor: ({},{}) isn't known.",neighbor.0, neighbor.1);}
@@ -338,15 +328,15 @@ fn find_best_path_more_quickly(grid: &Grid) -> PathCost {
                         let neighbor_risk: EntryCost = grid[neighbor.1][neighbor.0];
                         let cost_via_neighbor = neighbor_known_cost + neighbor_risk as PathCost;
                         if PRINT_LEVEL.all() {println!("Neighbor: ({},{}) has cost {} and needs {} totaling {}",neighbor.0, neighbor.1, cost_via_neighbor, neighbor_risk, cost_via_neighbor);}
-                        new_cost_from_here = match new_cost_from_here {
+                        new_cost_from_here_2 = match new_cost_from_here_2 {
                             None => {
                                 // This is the first usable neighbor. Use this one
-                                Some(CostToEndData::new(cost_via_neighbor))
+                                Some(cost_via_neighbor)
                             }
                             Some(known_new_cost) => {
                                 // This isn't the first usable neighbor. Use the better one
-                                if cost_via_neighbor < known_new_cost.best_known_cost.unwrap() {
-                                    Some(CostToEndData::new(cost_via_neighbor))
+                                if cost_via_neighbor < known_new_cost {
+                                    Some(cost_via_neighbor)
                                 } else {
                                     Some(known_new_cost)
                                 }
@@ -355,8 +345,8 @@ fn find_best_path_more_quickly(grid: &Grid) -> PathCost {
                     },
                 }
             }
-            assert!(new_cost_from_here.is_some()); // Given how we walk the grid, there's always SOME path
-            new_cost_from_here.unwrap()
+            assert!(new_cost_from_here_2.is_some()); // Given how we walk the grid, there's always SOME path
+            new_cost_from_here_2
         };
 
 
@@ -366,17 +356,17 @@ fn find_best_path_more_quickly(grid: &Grid) -> PathCost {
         /// better_path_cost: the new (better) path cost
         fn rework(grid: &Grid, cost_to_end: &mut CostToEnd, coord: &Coord) {
             let my_risk: EntryCost = grid[coord.1][coord.0];
-            let my_cost: PathCost = cost_to_end[coord.1][coord.0].best_known_cost.unwrap();
+            let my_cost: PathCost = cost_to_end[coord.1][coord.0].unwrap();
             let cost_to_get_there_via_me: PathCost = my_cost + (my_risk as PathCost);
             for neighbor in neighbors(grid, coord) {
-                match cost_to_end[neighbor.1][neighbor.0].best_known_cost {
+                match cost_to_end[neighbor.1][neighbor.0] {
                     None => {}, // Neighbor isn't populated yet
                     Some(neighbor_current_cost) => {
                         // Neighbor IS populated... is going via us better?
                         if PRINT_LEVEL.all() {println!("Considering neighbor ({},{}): its cost is {} and going via me is {}", neighbor.0, neighbor.1, neighbor_current_cost, cost_to_get_there_via_me);}
                         if cost_to_get_there_via_me < neighbor_current_cost {
                             if PRINT_LEVEL.all() {println!("Should definitely rework neighbor ({},{}). It used {} but going via me is only {}", neighbor.0, neighbor.1, neighbor_current_cost, cost_to_get_there_via_me);}
-                            cost_to_end[neighbor.1][neighbor.0] = CostToEndData::new(cost_to_get_there_via_me);
+                            cost_to_end[neighbor.1][neighbor.0] = Some(cost_to_get_there_via_me);
                             // Recurse because neighbor changed
                             rework(grid, cost_to_end, &neighbor);
                         }
@@ -392,12 +382,11 @@ fn find_best_path_more_quickly(grid: &Grid) -> PathCost {
     if PRINT_LEVEL.all() {print_known(&cost_to_end);}
 
     for coord in coords_in_tail_order(&grid) {
-        // cost_to_end[coord.1][coord.0] =
         find_cost(&grid, &mut cost_to_end, &coord);
         if PRINT_LEVEL.all() {print_known(&cost_to_end);}
     }
 
-    cost_to_end[0][0].best_known_cost.unwrap()
+    cost_to_end[0][0].unwrap() // Return the answer in the start location
 }
 
 
@@ -508,5 +497,3 @@ mod test {
     }
 
 }
-
-// FIXME: Maybe I only need to check downward and rightward neighbors when filling in with the quickly approach?
