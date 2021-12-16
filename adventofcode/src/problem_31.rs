@@ -373,7 +373,7 @@ mod test {
         ];
         for (hex, sum) in test_cases {
             let packet: Packet = BinaryStream::new(hex).read_packet();
-            let version_sum = sum_up_versions(packet);
+            let version_sum = sum_up_versions(&packet);
             assert_eq!(version_sum, sum);
         }
     }
