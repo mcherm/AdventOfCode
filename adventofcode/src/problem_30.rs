@@ -16,7 +16,7 @@ use std::cmp::min;
 use std::collections::HashMap;
 
 
-const PRINT_LEVEL: PrintLevel = PrintLevel::NewBestValue;
+const PRINT_LEVEL: PrintLevel = PrintLevel::Nothing;
 const MAX_SIZE: Option<usize> = None; // cut things off at this size
 const ALLOW_BACKTRACKING: bool = true;
 
@@ -94,8 +94,8 @@ const WORST_PATH_COST: PathCost = u32::MAX;
 type Coord = (usize,usize);
 
 
-
-fn max_size(grid: &Grid) -> usize {
+/// Returns the size of largest coordinate (one less than the size of the grid).
+fn max_coord(grid: &Grid) -> usize {
     match MAX_SIZE {
         None => grid.len() - 1,
         Some(max_size) => min(max_size, grid.len()) - 1
@@ -106,10 +106,10 @@ fn max_size(grid: &Grid) -> usize {
 fn neighbors(grid: &Grid, from: &Coord) -> Vec<Coord> {
     let (x,y): Coord = *from;
     let mut result = Vec::new();
-    if x < max_size(grid) {
+    if x < max_coord(grid) {
         result.push((x+1, y))
     }
-    if y < max_size(grid) {
+    if y < max_coord(grid) {
         result.push((x, y+1))
     }
     if ALLOW_BACKTRACKING {
@@ -219,7 +219,7 @@ fn find_best_path_exhaustively(grid: &Grid) -> PathCost {
         }
 
         let resulting_best: Option<PathCost>;
-        if *start_coord == (max_size(grid), max_size(grid)) {
+        if *start_coord == (max_coord(grid), max_coord(grid)) {
             if PRINT_LEVEL.best_val() {println!("{}  cost is {}", indent, arrival_cost);}
             assert!(best_cost > arrival_cost); // We shouldn't get here unless it's going to be better
             resulting_best = Some(arrival_cost);
@@ -258,6 +258,150 @@ fn find_best_path_exhaustively(grid: &Grid) -> PathCost {
 }
 
 
+// produces coordinates, but in the order we want to traverse them (starting from
+// the biggest coordinates and sweeping diagonally
+fn coords_in_tail_order(grid: &Grid) -> Vec<Coord> {
+    let max_c = max_coord(grid);
+    let mut result = Vec::new();
+    let mut sum_this_diagonal = max_c * 2;
+    loop {
+        let mut x = if sum_this_diagonal > max_c {sum_this_diagonal - max_c} else {0};
+        loop {
+            let y = sum_this_diagonal - x;
+            result.push((x, y));
+            if x == max_c || x == sum_this_diagonal {
+                break;
+            } else {
+                x += 1;
+            }
+        }
+        if sum_this_diagonal == 0 {
+            break;
+        } else {
+            sum_this_diagonal -= 1;
+        }
+    }
+    result
+}
+
+
+fn find_best_path_more_quickly(grid: &Grid) -> PathCost {
+
+    struct CostToEndData {
+        best_known_cost: Option<PathCost>,
+    }
+    impl CostToEndData {
+        fn new(cost: PathCost) -> Self {
+            CostToEndData{best_known_cost: Some(cost)}
+        }
+        fn unknown() -> Self {
+            CostToEndData{best_known_cost: None}
+        }
+    }
+    type CostToEnd = Vec<Vec<CostToEndData>>;
+    let mut cost_to_end: CostToEnd = grid.iter().map(|row| {
+        row.iter().map(|_| {
+            CostToEndData::unknown()
+        }).collect()
+    }).collect();
+
+    fn print_known(cost_to_end: &CostToEnd) {
+        for y in 0..cost_to_end.len() {
+            for x in 0..cost_to_end.len() {
+                match cost_to_end[y][x].best_known_cost {
+                    None => print!("(*),"),
+                    Some(x) => print!("{:3},", x),
+                };
+            }
+            println!();
+        }
+    }
+
+    /// This updates cost_to_end for a given coord, using only the data already populated
+    /// It ALSO (recursively) updates any neighbors who now have a better path because
+    /// of this one.
+    fn find_cost(grid: &Grid, cost_to_end: &mut CostToEnd, coord: &Coord) -> () {
+        if PRINT_LEVEL.best_val() {println!("\nfind_cost({},{}): ", coord.0, coord.1);}
+        let max_c = max_coord(grid);
+        cost_to_end[coord.1][coord.0] = if *coord == (max_c, max_c) {
+            CostToEndData::new(0)
+        } else {
+            let mut new_cost_from_here: Option<CostToEndData> = None;
+            for neighbor in neighbors(grid, coord) {
+                match cost_to_end[neighbor.1][neighbor.0].best_known_cost {
+                    None => {
+                        // This neighbor isn't known. Skip them.
+                        if PRINT_LEVEL.all() {println!("Neighbor: ({},{}) isn't known.",neighbor.0, neighbor.1);}
+                    },
+                    Some(neighbor_known_cost) => {
+                        // This neighbor is known; consider them as an option
+                        let neighbor_risk: EntryCost = grid[neighbor.1][neighbor.0];
+                        let cost_via_neighbor = neighbor_known_cost + neighbor_risk as PathCost;
+                        if PRINT_LEVEL.all() {println!("Neighbor: ({},{}) has cost {} and needs {} totaling {}",neighbor.0, neighbor.1, cost_via_neighbor, neighbor_risk, cost_via_neighbor);}
+                        new_cost_from_here = match new_cost_from_here {
+                            None => {
+                                // This is the first usable neighbor. Use this one
+                                Some(CostToEndData::new(cost_via_neighbor))
+                            }
+                            Some(known_new_cost) => {
+                                // This isn't the first usable neighbor. Use the better one
+                                if cost_via_neighbor < known_new_cost.best_known_cost.unwrap() {
+                                    Some(CostToEndData::new(cost_via_neighbor))
+                                } else {
+                                    Some(known_new_cost)
+                                }
+                            }
+                        };
+                    },
+                }
+            }
+            assert!(new_cost_from_here.is_some()); // Given how we walk the grid, there's always SOME path
+            new_cost_from_here.unwrap()
+        };
+
+
+        /// Recursively update folks because of a better path
+        ///
+        /// coord: the location that will get reworked. This MUST have a known cost.
+        /// better_path_cost: the new (better) path cost
+        fn rework(grid: &Grid, cost_to_end: &mut CostToEnd, coord: &Coord) {
+            let my_risk: EntryCost = grid[coord.1][coord.0];
+            let my_cost: PathCost = cost_to_end[coord.1][coord.0].best_known_cost.unwrap();
+            let cost_to_get_there_via_me: PathCost = my_cost + (my_risk as PathCost);
+            for neighbor in neighbors(grid, coord) {
+                match cost_to_end[neighbor.1][neighbor.0].best_known_cost {
+                    None => {}, // Neighbor isn't populated yet
+                    Some(neighbor_current_cost) => {
+                        // Neighbor IS populated... is going via us better?
+                        if PRINT_LEVEL.all() {println!("Considering neighbor ({},{}): its cost is {} and going via me is {}", neighbor.0, neighbor.1, neighbor_current_cost, cost_to_get_there_via_me);}
+                        if cost_to_get_there_via_me < neighbor_current_cost {
+                            if PRINT_LEVEL.all() {println!("Should definitely rework neighbor ({},{}). It used {} but going via me is only {}", neighbor.0, neighbor.1, neighbor_current_cost, cost_to_get_there_via_me);}
+                            cost_to_end[neighbor.1][neighbor.0] = CostToEndData::new(cost_to_get_there_via_me);
+                            // Recurse because neighbor changed
+                            rework(grid, cost_to_end, &neighbor);
+                        }
+                    },
+                }
+            }
+        }
+        rework(grid, cost_to_end, coord);
+
+    }
+
+    if PRINT_LEVEL.all() {println!("BEFORE:");}
+    if PRINT_LEVEL.all() {print_known(&cost_to_end);}
+
+    for coord in coords_in_tail_order(&grid) {
+        // cost_to_end[coord.1][coord.0] =
+        find_cost(&grid, &mut cost_to_end, &coord);
+        if PRINT_LEVEL.all() {print_known(&cost_to_end);}
+    }
+
+    cost_to_end[0][0].best_known_cost.unwrap()
+}
+
+
+
 fn make_big_grid(grid: &Grid) -> Grid {
     let mut big_grid: Grid = Vec::new();
     for big_y in 0..5 {
@@ -281,9 +425,16 @@ fn make_big_grid(grid: &Grid) -> Grid {
 
 fn run() -> Result<(),InputError> {
     let grid: Grid = read_grid_file()?;
-    let big_grid: Grid = make_big_grid(&grid);
-    let result = find_best_path_exhaustively(&big_grid);
-    println!("Result: {}", result);
+    let orig_version = false;
+    if orig_version {
+        let big_grid: Grid = make_big_grid(&grid);
+        let result = find_best_path_exhaustively(&big_grid);
+        println!("Result: {}", result);
+    } else {
+        let big_grid: Grid = make_big_grid(&grid);
+        let result = find_best_path_more_quickly(&big_grid);
+        println!("Result: {}", result);
+    }
     Ok(())
 }
 
@@ -301,10 +452,12 @@ pub fn main() {
 
 #[cfg(test)]
 mod test {
-    use std::fmt::Write;
-    use super::List;
-    use super::Coord;
+    // use super::Coord;
+    use super::coords_in_tail_order;
+    use super::Grid;
     use super::show_cost;
+    use super::find_best_path_exhaustively;
+    use super::find_best_path_more_quickly;
 
     #[test]
     fn test_show_cost() {
@@ -312,4 +465,48 @@ mod test {
         assert_eq!(show_cost(&Some(3)), "3");
     }
 
+    #[test]
+    fn test_tail_order() {
+        let grid: Grid = vec![
+            vec![1,2,3],
+            vec![4,5,6],
+            vec![7,8,9],
+        ];
+        let coords = coords_in_tail_order(&grid);
+        assert_eq!(coords, vec![
+            (2,2), (1,2), (2,1), (0,2), (1,1), (2,0), (0,1), (1,0), (0,0)
+        ])
+    }
+
+    #[test]
+    fn test_simple_grid() {
+        let grid: Grid = vec![
+            vec![1,2,3],
+            vec![4,5,6],
+            vec![9,8,7],
+        ];
+        let result_exh = find_best_path_exhaustively(&grid);
+        assert_eq!(result_exh, 18);
+        let result_qck = find_best_path_more_quickly(&grid);
+        assert_eq!(result_qck, 18);
+    }
+
+
+    #[test]
+    fn test_with_backtracking() {
+        let grid: Grid = vec![
+            vec![1,1,1,1,9],
+            vec![9,9,9,1,9],
+            vec![9,1,1,1,9],
+            vec![9,1,9,9,9],
+            vec![9,1,1,1,1],
+        ];
+        let result_exh = find_best_path_exhaustively(&grid);
+        assert_eq!(result_exh, 12);
+        let result_qck = find_best_path_more_quickly(&grid);
+        assert_eq!(result_qck, 12);
+    }
+
 }
+
+// FIXME: Maybe I only need to check downward and rightward neighbors when filling in with the quickly approach?

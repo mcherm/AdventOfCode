@@ -294,9 +294,6 @@ pub fn main() {
 
 #[cfg(test)]
 mod test {
-    use std::fmt::Write;
-    use super::List;
-    use super::Coord;
     use super::show_cost;
 
     #[test]
