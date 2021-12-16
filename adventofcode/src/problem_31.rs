@@ -38,9 +38,9 @@ impl fmt::Display for InputError {
 }
 
 
-enum LengthTypeEncoding { // FIXME: Both of these need to take a numeric argument
+enum LengthTypeEncoding {
     TotalLength(usize),
-    NumberOfSubpackets,
+    NumberOfSubpackets(usize),
 }
 
 struct OperatorPacketFields {
@@ -60,14 +60,40 @@ struct Packet {
 }
 impl fmt::Display for Packet {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Packet[{}, {}, {}]", self.version, self.type_id, self.fields)
+        write!(f, "Packet{{{}, {}, {}}}", self.version, self.type_id, self.fields)
     }
 }
 impl fmt::Display for PacketFields {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            PacketFields::LiteralValue(value) => write!(f, "Literal: {}", value),
-            PacketFields::OperatorPacket(_) => write!(f, "Operator"),
+            PacketFields::LiteralValue(value) => {
+                write!(f, "Literal: {}", value)
+            },
+            PacketFields::OperatorPacket(OperatorPacketFields{length_type, subpackets}) => {
+                write!(f, "Operator: {} [", length_type)?;
+                let mut first_one = true;
+                for subpacket in subpackets {
+                    if first_one {
+                        first_one = false;
+                    } else {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}", subpacket)?;
+                }
+                write!(f, "]")
+            },
+        }
+    }
+}
+impl fmt::Display for LengthTypeEncoding {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            LengthTypeEncoding::TotalLength(size) => {
+                write!(f, "({} bits)", size)
+            },
+            LengthTypeEncoding::NumberOfSubpackets(num) => {
+                write!(f, "({} pkts)", num)
+            },
         }
     }
 }
@@ -77,17 +103,24 @@ impl fmt::Display for PacketFields {
 #[derive(Debug)]
 struct BinaryStream {
     data: Vec<bool>, // FIXME: Could be massively more efficient as an iterator
+    pos: usize,
 }
 
 impl BinaryStream {
     fn new(hex: &str) -> BinaryStream {
         let data: Vec<bool> = hex.chars().flat_map(hex_to_bin).collect();
-        BinaryStream{data}
+        BinaryStream{data, pos: 0}
     }
 
     // Pops off the first bit. Panics if the array is empty.
     fn pop(&mut self) -> bool {
+        self.pos += 1;
         self.data.remove(0)
+    }
+
+    // Returns the position in the stream
+    fn get_pos(&self) -> usize {
+        self.pos
     }
 
     fn read_bits_as_number<T>(&mut self, num_bits: usize) -> T
@@ -131,18 +164,55 @@ impl BinaryStream {
     }
 
     fn read_operator_packet_fields(&mut self) -> PacketFields {
-        let length_type_encoding: LengthTypeEncoding = match self.pop() {
+        let length_type: LengthTypeEncoding = match self.pop() {
             false => {
                 let total_length: usize = self.read_bits_as_number(15);
                 LengthTypeEncoding::TotalLength(total_length)
             },
-            true => LengthTypeEncoding::NumberOfSubpackets,
+            true => {
+                let num_packets: usize = self.read_bits_as_number(11);
+                LengthTypeEncoding::NumberOfSubpackets(num_packets)
+            },
         };
+
+        // --- Read child packets ---
+        let subpackets = match length_type {
+            LengthTypeEncoding::TotalLength(size) => {
+                let start_pos = self.get_pos();
+                let end_pos = start_pos + size;
+                let mut packets: Vec<Packet> = Vec::new();
+                while self.get_pos() < end_pos {
+                    packets.push(self.read_packet());
+                }
+                packets
+            }
+            LengthTypeEncoding::NumberOfSubpackets(num) => {
+                let mut packets: Vec<Packet> = Vec::new();
+                for _ in 0..num {
+                    packets.push(self.read_packet());
+                }
+                packets
+            }
+        };
+
+        // --- Return the result ---
         PacketFields::OperatorPacket(OperatorPacketFields {
-            length_type: length_type_encoding,
-            subpackets: Vec::new(),
+            length_type,
+            subpackets,
         })
     }
+}
+
+
+fn sum_up_versions(packet: &Packet) -> u32 {
+    let mut sum = 0;
+    sum += packet.version;
+    if let PacketFields::OperatorPacket(OperatorPacketFields{ref subpackets, ..}) = packet.fields {
+        for subpacket in subpackets {
+            sum += sum_up_versions(&subpacket)
+        }
+    }
+    sum
 }
 
 
@@ -194,9 +264,10 @@ fn read_packet_file() -> Result<String, InputError> {
 fn run() -> Result<(),InputError> {
     let hex_chars: String = read_packet_file()?;
     let mut binary_stream = BinaryStream::new(&hex_chars);
-    println!("DATA = {:?}", binary_stream);
     let packet: Packet = binary_stream.read_packet();
+    let sum = sum_up_versions(&packet);
     println!("packet = {}", packet);
+    println!("sum = {}", sum);
     Ok(())
 }
 
@@ -224,12 +295,6 @@ mod test {
     }
 
     #[test]
-    #[should_panic]
-    fn test_bad_hex_to_bin() {
-        hex_to_bin('G');
-    }
-
-    #[test]
     fn test_parse_literal_value() {
         let packet: Packet = BinaryStream::new("D2FE28").read_packet();
         assert!(matches!(packet, Packet{
@@ -242,13 +307,74 @@ mod test {
     #[test]
     fn test_parse_operator_1() {
         let packet: Packet = BinaryStream::new("38006F45291200").read_packet();
-        assert!(matches!(packet, Packet{
-            version: 1,
-            type_id: 6,
-            fields: PacketFields::OperatorPacket(OperatorPacketFields{
-                length_type: LengthTypeEncoding::TotalLength(27),
-                subpackets: _,
-            }),
-        }));
+        assert!(matches!(packet,
+            Packet{
+                version: 1,
+                type_id: 6,
+                fields: PacketFields::OperatorPacket(OperatorPacketFields{
+                    length_type: LengthTypeEncoding::TotalLength(27),
+                    subpackets,
+                }),
+            }
+            if matches!(subpackets.as_slice(), [
+                Packet{
+                    version: 6,
+                    type_id: 4,
+                    fields: PacketFields::LiteralValue(10)
+                },
+                Packet{
+                    version: 2,
+                    type_id: 4,
+                    fields: PacketFields::LiteralValue(20)
+                },
+            ])
+        ));
+    }
+
+    #[test]
+    fn test_parse_operator_2() {
+        let packet: Packet = BinaryStream::new("EE00D40C823060").read_packet();
+        assert!(matches!(packet,
+            Packet{
+                version: 7,
+                type_id: 3,
+                fields: PacketFields::OperatorPacket(OperatorPacketFields{
+                    length_type: LengthTypeEncoding::NumberOfSubpackets(3),
+                    subpackets,
+                }),
+            }
+            if matches!(subpackets.as_slice(), [
+                Packet{
+                    version: 2,
+                    type_id: 4,
+                    fields: PacketFields::LiteralValue(1)
+                },
+                Packet{
+                    version: 4,
+                    type_id: 4,
+                    fields: PacketFields::LiteralValue(2)
+                },
+                Packet{
+                    version: 1,
+                    type_id: 4,
+                    fields: PacketFields::LiteralValue(3)
+                },
+            ])
+        ));
+    }
+
+    #[test]
+    fn test_sum_up_versions() {
+        let test_cases = [
+            ("8A004A801A8002F478", 16),
+            ("620080001611562C8802118E34", 12),
+            ("C0015000016115A2E0802F182340", 23),
+            ("A0016C880162017C3686B18A3D4780", 31),
+        ];
+        for (hex, sum) in test_cases {
+            let packet: Packet = BinaryStream::new(hex).read_packet();
+            let version_sum = sum_up_versions(packet);
+            assert_eq!(version_sum, sum);
+        }
     }
 }
