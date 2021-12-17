@@ -32,10 +32,12 @@ mod problem_29;
 mod problem_30;
 mod problem_31;
 mod problem_32;
+mod problem_33;
+mod problem_34;
 
 
 fn main() {
-    match 32 {
+    match 33 {
         1 => problem_1::main(),
         2 => problem_2::main(),
         3 => problem_3::main(),
@@ -68,6 +70,8 @@ fn main() {
         30 => problem_30::main(),
         31 => problem_31::main(),
         32 => problem_32::main(),
+        33 => problem_33::main(),
+        34 => problem_34::main(),
         _ => panic!("Not a valid problem.")
     }
 }
