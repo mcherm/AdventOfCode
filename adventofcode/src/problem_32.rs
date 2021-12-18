@@ -1,4 +1,5 @@
 use std::fmt;
+use std::fmt::Formatter;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::ops::{AddAssign, MulAssign};
@@ -169,22 +170,21 @@ impl fmt::Display for OperatorType {
 
 
 
-#[derive(Debug)]
-struct BinaryStream {
-    data: Vec<bool>, // FIXME: Could be massively more efficient as an iterator
+struct BinaryStream<'a> {
+    iter: Box<dyn Iterator<Item=bool> + 'a>,
     pos: usize,
 }
 
-impl BinaryStream {
-    fn new(hex: &str) -> BinaryStream {
-        let data: Vec<bool> = hex.chars().flat_map(hex_to_bin).collect();
-        BinaryStream{data, pos: 0}
+impl<'a> BinaryStream<'a> {
+    fn new(hex: &'a str) -> BinaryStream<'a> {
+        let iter: Box<dyn Iterator<Item=bool>> = Box::new(hex.chars().flat_map(hex_to_bin));
+        BinaryStream{iter, pos: 0}
     }
 
     // Pops off the first bit. Panics if the array is empty.
     fn pop(&mut self) -> bool {
         self.pos += 1;
-        self.data.remove(0)
+        self.iter.next().unwrap()
     }
 
     // Returns the position in the stream
@@ -271,6 +271,12 @@ impl BinaryStream {
             operator_type,
             subpackets,
         })
+    }
+}
+
+impl<'a> std::fmt::Debug for BinaryStream<'a> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "BinaryStream(at {})", self.pos)
     }
 }
 
