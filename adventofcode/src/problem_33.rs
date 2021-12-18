@@ -231,6 +231,6 @@ mod test {
 
     #[test]
     fn test_read_file() {
-        read_probe_file();
+        let _ = read_probe_file();
     }
 }

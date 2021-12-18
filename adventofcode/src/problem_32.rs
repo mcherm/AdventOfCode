@@ -432,21 +432,6 @@ mod test {
     }
 
     #[test]
-    fn test_sum_up_versions() {
-        let test_cases = [
-            ("8A004A801A8002F478", 16),
-            ("620080001611562C8802118E34", 12),
-            ("C0015000016115A2E0802F182340", 23),
-            ("A0016C880162017C3686B18A3D4780", 31),
-        ];
-        for (hex, sum) in test_cases {
-            let packet: Packet = BinaryStream::new(hex).read_packet();
-            let version_sum = sum_up_versions(&packet);
-            assert_eq!(version_sum, sum);
-        }
-    }
-
-    #[test]
     fn test_evaluate() {
         let test_cases = [
             ("C200B40A82", 3),
