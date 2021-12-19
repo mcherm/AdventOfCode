@@ -222,7 +222,8 @@ impl SnailfishItem {
                     }
                     return ItemExplodeOutcome::Exploding(going_left, going_right)
                 } else {
-                    match (*rc_pair).explode_once(level + 1) {
+                    let explode_outcome = (*rc_pair).explode_once(level + 1);
+                    match explode_outcome {
                         PairExplodeOutcome::None => {
                             return ItemExplodeOutcome::None
                         },
@@ -267,6 +268,13 @@ impl SnailfishItem {
             },
         }
     }
+
+    fn magnitude(&self) -> u32 {
+        match self {
+            SnailfishItem::RegularNumber(val) => *val,
+            SnailfishItem::Pair(pair) => pair.magnitude(),
+        }
+    }
 }
 
 impl SnailfishPair {
@@ -290,7 +298,7 @@ impl SnailfishPair {
 
     /// Returns a new SnailfishPair whose right-most element has going_left added to it.
     fn add_going_left(&self, going_left: u32) -> Self {
-        SnailfishPair::new(&self.left.clone(), &Rc::new(self.left.add_going_left(going_left)))
+        SnailfishPair::new(&self.left.clone(), &Rc::new(self.right.add_going_left(going_left)))
     }
 
     /// If this pair can be reduced by exploding, returns the single-step
@@ -298,7 +306,8 @@ impl SnailfishPair {
     fn explode_once(&self, level: u32) -> PairExplodeOutcome {
 
         // --- see if the left will explode ---
-        match self.left.explode_once(level) {
+        let explode_outcome = self.left.explode_once(level);
+        match explode_outcome {
             ItemExplodeOutcome::Some(item) => {
                 return PairExplodeOutcome::Some(SnailfishPair::new(&Rc::new(item), &self.right))
             },
@@ -324,7 +333,8 @@ impl SnailfishPair {
         }
 
         // --- see if the right will explode ---
-        match self.right.explode_once(level) {
+        let explode_outcome = self.right.explode_once(level);
+        match explode_outcome {
             ItemExplodeOutcome::Some(item) => {
                 return PairExplodeOutcome::Some(SnailfishPair::new(&self.left, &Rc::new(item)))
             },
@@ -364,6 +374,10 @@ impl SnailfishPair {
             None
         }
     }
+
+    fn magnitude(&self) -> u32 {
+        (*self.left).magnitude() * 3 + (*self.right).magnitude() * 2
+    }
 }
 
 impl SnailfishNumber {
@@ -390,7 +404,8 @@ impl SnailfishNumber {
     /// reduced, or None if it was already fully reduced.
     fn reduce_step(&self) -> Option<SnailfishNumber> {
         // --- Check for exploding ---
-        match (*self.top_pair).explode_once(0) {
+        let explode_outcome = (*self.top_pair).explode_once(0);
+        match explode_outcome {
             PairExplodeOutcome::Some(pair) |
             PairExplodeOutcome::ExplodingLeft(_, pair) |
             PairExplodeOutcome::ExplodingRight(_, pair) => {
@@ -410,18 +425,36 @@ impl SnailfishNumber {
 
     // Fully reduce this SnailfishNumber.
     fn reduce(&self) -> SnailfishNumber {
-        if let Some(s_num) = self.reduce_step() {
-            let mut s_num_best = s_num;
-            loop {
-                if let Some(s_num_2) = self.reduce_step() {
-                    s_num_best = s_num_2;
-                } else {
-                    return s_num_best;
-                }
+        let mut s_num_best = self.clone();
+        loop {
+            if let Some(s_num) = s_num_best.reduce_step() {
+                s_num_best = s_num;
+            } else {
+                return s_num_best;
             }
-        } else {
-            return (*self).clone() // It didn't reduce
         }
+    }
+
+    // This method is terrible which is a symptom of poor object design.
+    fn add(&self, other: &SnailfishNumber) -> SnailfishNumber {
+        let i1: &Rc<SnailfishItem> = &((*self.top_pair).left.clone());
+        let i2: &Rc<SnailfishItem> = &((*self.top_pair).right.clone());
+        let i3: &Rc<SnailfishItem> = &((*other.top_pair).left.clone());
+        let i4: &Rc<SnailfishItem> = &((*other.top_pair).right.clone());
+        let a_pair: SnailfishPair = SnailfishPair::new(i1, i2);
+        let b_pair: SnailfishPair = SnailfishPair::new(i3, i4);
+        let a_item: SnailfishItem = SnailfishItem::new_pair(a_pair);
+        let b_item: SnailfishItem = SnailfishItem::new_pair(b_pair);
+        let top_pair: SnailfishPair = SnailfishPair::new(
+            &Rc::new(a_item),
+            &Rc::new(b_item)
+        );
+        let sum = SnailfishNumber::new(&Rc::new(top_pair));
+        sum.reduce()
+    }
+
+    fn magnitude(&self) -> u32 {
+        (*self.top_pair).magnitude()
     }
 }
 
@@ -475,14 +508,58 @@ impl Clone for SnailfishNumber {
 
 
 fn run() -> Result<(),InputError> {
+    /* FIXME: Remove
+    let a = SnailfishNumber::parse("[[[[4,0],[5,0]],[[[4,5],[2,6]],[9,5]]],[7,[[[3,7],[4,3]],[[6,3],[8,8]]]]]")?;
+
+    let mut c = a;
+    println!("{}", c);
+    let c = c.reduce_step().unwrap();
+    println!("{}", c);
+    let c = c.reduce_step().unwrap();
+    println!("{}", c);
+    let c = c.reduce_step().unwrap();
+    println!("{}", c);
+    let c = c.reduce_step().unwrap();
+    println!("{}", c);
+
+
+    // let mut b = a.clone();
+    // let mut i = 0;
+    // loop {
+    //     i += 1;
+    //     if i > 6 {
+    //         break
+    //     }
+    //     let mut next_step = b.reduce_step();
+    //     if next_step.is_none() {
+    //         break
+    //     }
+    //     let b = next_step.unwrap();
+    //     println!("{}", b);
+    // }
+
+    // let b = SnailfishNumber::parse("[[[5,[2,8]],4],[5,[[9,9],0]]]")?;
+    // let c = a.add(&b);
+    // println!("{}", c);
+*/
+
+
     let lines = read_snailfish_file()?;
-    println!("Lines: {:#?}", lines);
+    let mut running_sum: Option<SnailfishNumber> = None;
     for line in lines {
         let s_num = SnailfishNumber::parse(&line)?;
-        println!("SnailfishNumber: {}", s_num);
-        let reduced = s_num.reduce();
-        println!("That reduced: {}", reduced);
+        match running_sum {
+            None => {
+                running_sum = Some(s_num)
+            },
+            Some(_) => {
+                running_sum = Some(running_sum.unwrap().add(&s_num));
+            }
+        }
+        println!("Running Sum: {}", running_sum.as_ref().unwrap());
     }
+    let mag: u32 = running_sum.as_ref().unwrap().magnitude();
+    println!("Magnitude = {}", mag);
     Ok(())
 }
 
@@ -540,6 +617,14 @@ mod test {
             ("[[[[[9,8],1],2],3],4]", Some("[[[[0,9],2],3],4]")),
             ("[7,[6,[5,[4,[3,2]]]]]", Some("[7,[6,[5,[7,0]]]]")),
             ("[[6,[5,[4,[3,2]]]],1]", Some("[[6,[5,[7,0]]],3]")),
+            (
+                "[[[[4,0],[5,0]],[[[4,5],[2,6]],0]],0]",
+                Some("[[[[4,0],[5,4]],[[0,[7,6]],0]],0]")
+            ),
+            (
+                "[[[[4,0],[5,0]],[[[4,5],[2,6]],[9,5]]],[7,[[[3,7],[4,3]],[[6,3],[8,8]]]]]",
+                Some("[[[[4,0],[5,4]],[[0,[7,6]],[9,5]]],[7,[[[3,7],[4,3]],[[6,3],[8,8]]]]]")
+            )
         ];
         for (input, expected) in test_cases {
             let s_num: SnailfishNumber = SnailfishNumber::parse_unreduced(input).unwrap();
@@ -551,22 +636,73 @@ mod test {
         }
     }
 
-    // #[test]
-    // fn test_reduce_step_explode() {
-    //     let test_cases = [
-    //     ];
-    //     for (input, expected) in test_cases {
-    //         let s_num: SnailfishNumber = SnailfishNumber::parse_unreduced(input).unwrap();
-    //         let step_1 = s_num.reduce_step();
-    //         match expected {
-    //             None => assert!(step_1.is_none()),
-    //             Some(exp) => assert_eq!(step_1.unwrap(), SnailfishNumber::parse_unreduced(exp).unwrap()),
-    //         }
-    //     }
-    // }
 
     #[test]
     fn test_reduce() {
+        let test_cases = [
+            ("[1,2]", "[1,2]"),
+            ("[[[[[4,3],4],4],[7,[[8,4],9]]],[1,1]]", "[[[[0,7],4],[[7,8],[6,0]]],[8,1]]"),
+        ];
+        for (input, expected) in test_cases {
+            let s_num: SnailfishNumber = SnailfishNumber::parse_unreduced(input).unwrap();
+            let reduced = s_num.reduce();
+            assert_eq!(reduced, SnailfishNumber::parse_unreduced(expected).unwrap());
+        }
+    }
 
+    #[test]
+    fn test_magnitude() {
+        let test_cases = [
+            ("[[1,2],[[3,4],5]]", 143),
+            ("[[[[0,7],4],[[7,8],[6,0]]],[8,1]]", 1384),
+            ("[[[[1,1],[2,2]],[3,3]],[4,4]]", 445),
+            ("[[[[3,0],[5,3]],[4,4]],[5,5]]", 791),
+        ];
+        for (input, expected) in test_cases {
+            let s_num = SnailfishNumber::parse(input).unwrap();
+            assert_eq!(s_num.magnitude(), expected)
+        }
+    }
+
+    #[test]
+    fn test_sum() {
+        let test_cases = [
+            (
+                "[[[[4,3],4],4],[7,[[8,4],9]]]",
+                "[1,1]",
+                "[[[[0,7],4],[[7,8],[6,0]]],[8,1]]"
+            ), (
+                "[1,1]",
+                "[2,2]",
+                "[[1,1],[2,2]]"
+            ), (
+                "[[1,1],[2,2]]",
+                "[3,3]",
+                "[[[1,1],[2,2]],[3,3]]"
+            ), (
+                "[[[1,1],[2,2]],[3,3]]",
+                "[4,4]",
+                "[[[[1,1],[2,2]],[3,3]],[4,4]]"
+            ), (
+                "[[[[1,1],[2,2]],[3,3]],[4,4]]",
+                "[5,5]",
+                "[[[[3,0],[5,3]],[4,4]],[5,5]]"
+            ), (
+                "[[[[3,0],[5,3]],[4,4]],[5,5]]",
+                "[6,6]",
+                "[[[[5,0],[7,4]],[5,5]],[6,6]]"
+            ), (
+                "[[[0,[4,5]],[0,0]],[[[4,5],[2,6]],[9,5]]]",
+                "[7,[[[3,7],[4,3]],[[6,3],[8,8]]]]",
+                "[[[[4,0],[5,4]],[[7,7],[6,0]]],[[8,[7,7]],[[7,9],[5,0]]]]"
+            ),
+        ];
+        for (a_str, b_str, expect_str) in test_cases {
+            let a = SnailfishNumber::parse(a_str).unwrap();
+            let b = SnailfishNumber::parse(b_str).unwrap();
+            let expect = SnailfishNumber::parse(expect_str).unwrap();
+            let sum = a.add(&b);
+            assert_eq!(sum, expect)
+        }
     }
 }
