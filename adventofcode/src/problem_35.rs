@@ -508,42 +508,6 @@ impl Clone for SnailfishNumber {
 
 
 fn run() -> Result<(),InputError> {
-    /* FIXME: Remove
-    let a = SnailfishNumber::parse("[[[[4,0],[5,0]],[[[4,5],[2,6]],[9,5]]],[7,[[[3,7],[4,3]],[[6,3],[8,8]]]]]")?;
-
-    let mut c = a;
-    println!("{}", c);
-    let c = c.reduce_step().unwrap();
-    println!("{}", c);
-    let c = c.reduce_step().unwrap();
-    println!("{}", c);
-    let c = c.reduce_step().unwrap();
-    println!("{}", c);
-    let c = c.reduce_step().unwrap();
-    println!("{}", c);
-
-
-    // let mut b = a.clone();
-    // let mut i = 0;
-    // loop {
-    //     i += 1;
-    //     if i > 6 {
-    //         break
-    //     }
-    //     let mut next_step = b.reduce_step();
-    //     if next_step.is_none() {
-    //         break
-    //     }
-    //     let b = next_step.unwrap();
-    //     println!("{}", b);
-    // }
-
-    // let b = SnailfishNumber::parse("[[[5,[2,8]],4],[5,[[9,9],0]]]")?;
-    // let c = a.add(&b);
-    // println!("{}", c);
-*/
-
-
     let lines = read_snailfish_file()?;
     let mut running_sum: Option<SnailfishNumber> = None;
     for line in lines {
