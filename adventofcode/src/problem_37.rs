@@ -82,7 +82,7 @@ fn read_beacon_file() -> Result<Vec<Scanner>, InputError> {
 type Coord = i32;
 type LenSq = u32;
 
-#[derive(Copy, Clone)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
 struct Beacon {
     x: Coord,
     y: Coord,
@@ -234,6 +234,55 @@ impl AxisMapping {
             AxisMapping::make([Axis::Y, Axis::Z, Axis::X], [false, false, false]),
             AxisMapping::make([Axis::Z, Axis::X, Axis::Y], [false, false, false]),
             AxisMapping::make([Axis::Z, Axis::Y, Axis::X], [false, false, false]),
+
+            // AxisMapping::make([Axis::X, Axis::Y, Axis::Z], [false, false,  true]),
+            // AxisMapping::make([Axis::X, Axis::Z, Axis::Y], [false, false,  true]),
+            // AxisMapping::make([Axis::Y, Axis::X, Axis::Z], [false, false,  true]),
+            // AxisMapping::make([Axis::Y, Axis::Z, Axis::X], [false, false,  true]),
+            // AxisMapping::make([Axis::Z, Axis::X, Axis::Y], [false, false,  true]),
+            // AxisMapping::make([Axis::Z, Axis::Y, Axis::X], [false, false,  true]),
+            //
+            // AxisMapping::make([Axis::X, Axis::Y, Axis::Z], [false,  true, false]),
+            // AxisMapping::make([Axis::X, Axis::Z, Axis::Y], [false,  true, false]),
+            // AxisMapping::make([Axis::Y, Axis::X, Axis::Z], [false,  true, false]),
+            // AxisMapping::make([Axis::Y, Axis::Z, Axis::X], [false,  true, false]),
+            // AxisMapping::make([Axis::Z, Axis::X, Axis::Y], [false,  true, false]),
+            // AxisMapping::make([Axis::Z, Axis::Y, Axis::X], [false,  true, false]),
+            //
+            // AxisMapping::make([Axis::X, Axis::Y, Axis::Z], [false,  true,  true]),
+            // AxisMapping::make([Axis::X, Axis::Z, Axis::Y], [false,  true,  true]),
+            // AxisMapping::make([Axis::Y, Axis::X, Axis::Z], [false,  true,  true]),
+            // AxisMapping::make([Axis::Y, Axis::Z, Axis::X], [false,  true,  true]),
+            // AxisMapping::make([Axis::Z, Axis::X, Axis::Y], [false,  true,  true]),
+            // AxisMapping::make([Axis::Z, Axis::Y, Axis::X], [false,  true,  true]),
+            //
+            // AxisMapping::make([Axis::X, Axis::Y, Axis::Z], [ true, false, false]),
+            // AxisMapping::make([Axis::X, Axis::Z, Axis::Y], [ true, false, false]),
+            // AxisMapping::make([Axis::Y, Axis::X, Axis::Z], [ true, false, false]),
+            // AxisMapping::make([Axis::Y, Axis::Z, Axis::X], [ true, false, false]),
+            // AxisMapping::make([Axis::Z, Axis::X, Axis::Y], [ true, false, false]),
+            // AxisMapping::make([Axis::Z, Axis::Y, Axis::X], [ true, false, false]),
+            //
+            // AxisMapping::make([Axis::X, Axis::Y, Axis::Z], [ true, false,  true]),
+            // AxisMapping::make([Axis::X, Axis::Z, Axis::Y], [ true, false,  true]),
+            // AxisMapping::make([Axis::Y, Axis::X, Axis::Z], [ true, false,  true]),
+            // AxisMapping::make([Axis::Y, Axis::Z, Axis::X], [ true, false,  true]),
+            // AxisMapping::make([Axis::Z, Axis::X, Axis::Y], [ true, false,  true]),
+            // AxisMapping::make([Axis::Z, Axis::Y, Axis::X], [ true, false,  true]),
+            //
+            // AxisMapping::make([Axis::X, Axis::Y, Axis::Z], [ true,  true, false]),
+            // AxisMapping::make([Axis::X, Axis::Z, Axis::Y], [ true,  true, false]),
+            // AxisMapping::make([Axis::Y, Axis::X, Axis::Z], [ true,  true, false]),
+            // AxisMapping::make([Axis::Y, Axis::Z, Axis::X], [ true,  true, false]),
+            // AxisMapping::make([Axis::Z, Axis::X, Axis::Y], [ true,  true, false]),
+            // AxisMapping::make([Axis::Z, Axis::Y, Axis::X], [ true,  true, false]),
+            //
+            // AxisMapping::make([Axis::X, Axis::Y, Axis::Z], [ true,  true,  true]),
+            // AxisMapping::make([Axis::X, Axis::Z, Axis::Y], [ true,  true,  true]),
+            // AxisMapping::make([Axis::Y, Axis::X, Axis::Z], [ true,  true,  true]),
+            // AxisMapping::make([Axis::Y, Axis::Z, Axis::X], [ true,  true,  true]),
+            // AxisMapping::make([Axis::Z, Axis::X, Axis::Y], [ true,  true,  true]),
+            // AxisMapping::make([Axis::Z, Axis::Y, Axis::X], [ true,  true,  true]),
         ]
     }
 }
@@ -255,9 +304,9 @@ impl Orient {
         println!("beacon.x = {}", beacon.x);
         println!("self.orients[0].offset = {}", self.orients[0].offset);
         Beacon{
-            x: beacon.x + self.orients[0].offset,
-            y: beacon.y + self.orients[1].offset,
-            z: beacon.z + self.orients[2].offset,
+            x: beacon.get(self.orients[0].maps_to) * if self.orients[0].flip {-1} else {1} + self.orients[0].offset,
+            y: beacon.get(self.orients[1].maps_to) * if self.orients[0].flip {-1} else {1} + self.orients[1].offset,
+            z: beacon.get(self.orients[2].maps_to) * if self.orients[0].flip {-1} else {1} + self.orients[2].offset,
         }
     }
 }
@@ -353,8 +402,8 @@ impl fmt::Display for Axis {
 }
 
 
-/// Given 2 points in s0 and two points in s1 that we believe may be the same points, this
-/// returns a vector of Orients that make this work.
+/// Given 2 points in s0 and two points in s1 that we believe may be the same points in the same
+/// order, this returns a vector (possibly of length 0) of Orients that could make that true.
 fn orient(source_scanner: &Scanner, source_positions: [usize;2], dest_scanner: &Scanner, dest_positions: [usize;2]) -> Vec<Orient> {
     let s0 = source_scanner.beacons[source_positions[0]];
     let s1 = source_scanner.beacons[source_positions[1]];
@@ -463,6 +512,7 @@ mod test {
         let s0 = Scanner{name: "Zero".to_string(), beacons: vec![newb(2,3,0), newb(3,0,0)]};
         let s1 = Scanner{name: "One".to_string(),  beacons: vec![newb(0,1,0), newb(1,-2,0)]};
         let orients: Vec<Orient> = orient(&s0, [0,1], &s1, [0,1]);
+        println!("{}", orients.len()); // FIXME: Remove
         assert!(orients.len() == 1);
         let or = orients[0];
         assert_eq!(or.orients[0].offset, 2); assert_eq!(or.orients[0].maps_to, Axis::X);
@@ -520,6 +570,22 @@ mod test {
     }
 
     #[test]
+    fn test_orient_6() {
+        fn newb(x: Coord, y: Coord, z: Coord) -> Beacon {
+            Beacon{x, y, z}
+        }
+        let s0 = Scanner{name: "Zero".to_string(), beacons: vec![newb(0,2,0), newb(2,0,0)]};
+        let s1 = Scanner{name: "One".to_string(),  beacons: vec![newb(1,0,-2), newb(-1,0,0)]};
+        let orients: Vec<Orient> = orient(&s0, [0,1], &s1, [0,1]);
+        assert_eq!(orients.len(), 1);
+        let or = orients[0];
+        println!("Orient: {:?}", orients[0]);
+        assert_eq!(or.orients[0].offset, 2); assert_eq!(or.orients[0].maps_to, Axis::Z);
+        assert_eq!(or.orients[1].offset, 1); assert_eq!(or.orients[1].maps_to, Axis::X);
+        assert_eq!(or.orients[2].offset, 0); assert_eq!(or.orients[2].maps_to, Axis::Y);
+    }
+
+    #[test]
     fn test_axis_mapping_make() {
         let am = AxisMapping::make([Axis::X, Axis::Y, Axis::Z], [false, false, false]);
         assert_eq!(am.maps_back, [Axis::X, Axis::Y, Axis::Z]);
@@ -529,4 +595,15 @@ mod test {
         assert_eq!(am.maps_back, [Axis::Z, Axis::X, Axis::Y]);
     }
 
+    #[test]
+    fn test_orient_apply() {
+        let or: Orient = Orient{orients: [
+            AxisOrient{maps_to: Axis::Y, flip: false, offset: 1},
+            AxisOrient{maps_to: Axis::X, flip: false, offset: 2},
+            AxisOrient{maps_to: Axis::Z, flip: false, offset: 3},
+        ]};
+        let b = or.apply(Beacon{x: 100, y: 200, z: 300});
+        println!("b: {}", b);
+        assert_eq!(b, Beacon{x: 201, y: 102, z: 303});
+    }
 }
