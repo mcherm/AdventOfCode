@@ -89,6 +89,7 @@ struct Beacon {
     z: Coord
 }
 
+#[derive(Clone)]
 struct Scanner {
     name: String,
     beacons: Vec<Beacon>
@@ -139,37 +140,12 @@ struct AxisMapping {
     flip: [bool;3],
 }
 
-// FIXME: Maybe later? may be overengineered
-// struct PointRef<'a> {
-//     scanner: &'a Scanner,
-//     pos: usize,
-// }
-
-// FIXME: Maybe later? may be overengineered
-// struct PointRefPair<'a> {
-//     a: PointRef<'a>,
-//     b: PointRef<'a>,
-//     dist: LenSq,
-// }
-
-// FIXME: Maybe later? may be overengineered
-// /// A set of point pairs from one scanner
-// #[derive(Debug)]
-// struct PairSet<'a> {
-// }
-
-
-// FIXME: Maybe later? may be overengineered
-// /// Represents a pair of points from two different Scanners
-// /// that might match.
-// struct Pair<'a> {
-//     scanner_1: &'a Scanner,
-//     scanner_2: &'a Scanner,
-//     s1_positions: [usize;2],
-//     s2_positions: [usize;2],
-// }
-
-
+#[derive(Debug, Copy, Clone)]
+struct Overlap {
+    pos_1: usize,
+    pos_2: usize,
+    overlap_count: i32,
+}
 
 fn squared(c: Coord) -> LenSq {
     LenSq::try_from(c * c).unwrap()
@@ -314,77 +290,6 @@ impl Axis {
     }
 }
 
-// FIXME: Remove if not needed
-// impl AxisMapping {
-//     fn make(maps_to: [Axis;3], flip: [bool;3]) -> Self {
-//         let maps_back: [Axis;3] = [
-//             *Axis::all().iter().filter(|v| maps_to[v.index()] == Axis::X).next().unwrap(),
-//             *Axis::all().iter().filter(|v| maps_to[v.index()] == Axis::Y).next().unwrap(),
-//             *Axis::all().iter().filter(|v| maps_to[v.index()] == Axis::Z).next().unwrap(),
-//         ];
-//         AxisMapping{maps_to, maps_back, flip}
-//     }
-//
-//     fn all() -> [AxisMapping;6] {
-//         [
-//             AxisMapping::make([Axis::X, Axis::Y, Axis::Z], [false, false, false]),
-//             AxisMapping::make([Axis::X, Axis::Z, Axis::Y], [false, false, false]),
-//             AxisMapping::make([Axis::Y, Axis::X, Axis::Z], [false, false, false]),
-//             AxisMapping::make([Axis::Y, Axis::Z, Axis::X], [false, false, false]),
-//             AxisMapping::make([Axis::Z, Axis::X, Axis::Y], [false, false, false]),
-//             AxisMapping::make([Axis::Z, Axis::Y, Axis::X], [false, false, false]),
-//
-//             // AxisMapping::make([Axis::X, Axis::Y, Axis::Z], [false, false,  true]),
-//             // AxisMapping::make([Axis::X, Axis::Z, Axis::Y], [false, false,  true]),
-//             // AxisMapping::make([Axis::Y, Axis::X, Axis::Z], [false, false,  true]),
-//             // AxisMapping::make([Axis::Y, Axis::Z, Axis::X], [false, false,  true]),
-//             // AxisMapping::make([Axis::Z, Axis::X, Axis::Y], [false, false,  true]),
-//             // AxisMapping::make([Axis::Z, Axis::Y, Axis::X], [false, false,  true]),
-//             //
-//             // AxisMapping::make([Axis::X, Axis::Y, Axis::Z], [false,  true, false]),
-//             // AxisMapping::make([Axis::X, Axis::Z, Axis::Y], [false,  true, false]),
-//             // AxisMapping::make([Axis::Y, Axis::X, Axis::Z], [false,  true, false]),
-//             // AxisMapping::make([Axis::Y, Axis::Z, Axis::X], [false,  true, false]),
-//             // AxisMapping::make([Axis::Z, Axis::X, Axis::Y], [false,  true, false]),
-//             // AxisMapping::make([Axis::Z, Axis::Y, Axis::X], [false,  true, false]),
-//             //
-//             // AxisMapping::make([Axis::X, Axis::Y, Axis::Z], [false,  true,  true]),
-//             // AxisMapping::make([Axis::X, Axis::Z, Axis::Y], [false,  true,  true]),
-//             // AxisMapping::make([Axis::Y, Axis::X, Axis::Z], [false,  true,  true]),
-//             // AxisMapping::make([Axis::Y, Axis::Z, Axis::X], [false,  true,  true]),
-//             // AxisMapping::make([Axis::Z, Axis::X, Axis::Y], [false,  true,  true]),
-//             // AxisMapping::make([Axis::Z, Axis::Y, Axis::X], [false,  true,  true]),
-//             //
-//             // AxisMapping::make([Axis::X, Axis::Y, Axis::Z], [ true, false, false]),
-//             // AxisMapping::make([Axis::X, Axis::Z, Axis::Y], [ true, false, false]),
-//             // AxisMapping::make([Axis::Y, Axis::X, Axis::Z], [ true, false, false]),
-//             // AxisMapping::make([Axis::Y, Axis::Z, Axis::X], [ true, false, false]),
-//             // AxisMapping::make([Axis::Z, Axis::X, Axis::Y], [ true, false, false]),
-//             // AxisMapping::make([Axis::Z, Axis::Y, Axis::X], [ true, false, false]),
-//             //
-//             // AxisMapping::make([Axis::X, Axis::Y, Axis::Z], [ true, false,  true]),
-//             // AxisMapping::make([Axis::X, Axis::Z, Axis::Y], [ true, false,  true]),
-//             // AxisMapping::make([Axis::Y, Axis::X, Axis::Z], [ true, false,  true]),
-//             // AxisMapping::make([Axis::Y, Axis::Z, Axis::X], [ true, false,  true]),
-//             // AxisMapping::make([Axis::Z, Axis::X, Axis::Y], [ true, false,  true]),
-//             // AxisMapping::make([Axis::Z, Axis::Y, Axis::X], [ true, false,  true]),
-//             //
-//             // AxisMapping::make([Axis::X, Axis::Y, Axis::Z], [ true,  true, false]),
-//             // AxisMapping::make([Axis::X, Axis::Z, Axis::Y], [ true,  true, false]),
-//             // AxisMapping::make([Axis::Y, Axis::X, Axis::Z], [ true,  true, false]),
-//             // AxisMapping::make([Axis::Y, Axis::Z, Axis::X], [ true,  true, false]),
-//             // AxisMapping::make([Axis::Z, Axis::X, Axis::Y], [ true,  true, false]),
-//             // AxisMapping::make([Axis::Z, Axis::Y, Axis::X], [ true,  true, false]),
-//             //
-//             // AxisMapping::make([Axis::X, Axis::Y, Axis::Z], [ true,  true,  true]),
-//             // AxisMapping::make([Axis::X, Axis::Z, Axis::Y], [ true,  true,  true]),
-//             // AxisMapping::make([Axis::Y, Axis::X, Axis::Z], [ true,  true,  true]),
-//             // AxisMapping::make([Axis::Y, Axis::Z, Axis::X], [ true,  true,  true]),
-//             // AxisMapping::make([Axis::Z, Axis::X, Axis::Y], [ true,  true,  true]),
-//             // AxisMapping::make([Axis::Z, Axis::Y, Axis::X], [ true,  true,  true]),
-//         ]
-//     }
-// }
 
 impl AxisOrient {
     /// Returns a new Coord obtained by applying this to the given beacon
@@ -468,9 +373,9 @@ impl LengthSet {
     }
 
     // finds number of matches between 2 lengthsets
-    fn overlaps(&self, other: &Self) -> u32 {
+    fn overlaps(&self, other: &Self) -> i32 {
         // Note: Could exploit sorting to be more efficient if needed.
-        let mut count: u32 = 0;
+        let mut count: i32 = 0;
         for len_1 in &self.lengths {
             for len_2 in &other.lengths {
                 if len_1 == len_2 {
@@ -701,49 +606,71 @@ fn orients_for_unique_seg_length(source: &Scanner, dest: &Scanner, unique_length
 
 
 fn merge_overlapping_scanners(source: &Scanner, dest: &Scanner) -> Scanner {
+    println!("Merging {} and {}", source.name, dest.name); // Keep this for monitoring progress
     let shared_uniques = source.get_lengths().shared_uniques(&dest.get_lengths());
-    println!("shared_uniques: {:?}", shared_uniques);
 
     let mut unique_lengths = shared_uniques.lengths.iter();
     let first_unique_length = unique_lengths.next().expect("There were no unique lengths");
+
     let mut orients = orients_for_unique_seg_length(source, dest, *first_unique_length);
-    println!("The {} orients are {:?}", orients.len(), orients);
-    for orient in &orients {
-        println!("  Orient: {}", orient);
+
+    if orients.len() > 1 {
+        for next_unique_length in unique_lengths {
+            let new_orients = orients_for_unique_seg_length(source, dest, *next_unique_length);
+            orients.retain(|orient| new_orients.contains(orient));
+            if orients.len() <= 1 {
+                break; // once we have just one, we can quit.
+            }
+        }
     }
 
-    for next_unique_length in unique_lengths {
-        let new_orients = orients_for_unique_seg_length(source, dest, *next_unique_length);
-        println!("The NEXT {} orients are {:?}", orients.len(), orients);
-        orients.retain(|orient| new_orients.contains(orient));
-        println!("After filtering, we have:");
-        for orient in &orients {
-            println!("  NEXT Orient: {}", orient);
-        }
-        if orients.len() <= 1 {
-            break; // once we have just one, we can quit.
-        }
-    }
     source.merge_with(dest, orients[0])
 }
 
 
+/// Finds one highly-connected pair of scanners (starting from the front of the list)
+/// and merges them (hopefully... we panic if things go wrong). Then returns a new
+/// list of scanners with the merged one at the front.
+fn merge_once(scanners: Vec<Scanner>) -> Vec<Scanner> {
+    assert!(scanners.len() > 1);
+
+    // --- Review the overlaps and pick one to merge ---
+    let mut overlaps: Vec<Overlap> = Vec::new();
+    for (i, scanner1) in scanners.iter().enumerate() {
+        for (beyond_i, scanner2) in scanners[(i+1)..].iter().enumerate() {
+            let j = i + 1 + beyond_i;
+            let overlap_count = scanner1.get_lengths().overlaps(&scanner2.get_lengths());
+            overlaps.push(Overlap{pos_1: i, pos_2: j, overlap_count});
+        }
+    }
+    overlaps.sort_by_key(|x| -1 * x.overlap_count);
+    assert!(overlaps.len() >= 1);
+    let overlap = overlaps[0];
+
+    // --- Merge it ---
+    let merged_scanner = merge_overlapping_scanners(&scanners[overlap.pos_1], &scanners[overlap.pos_2]);
+
+    let mut new_scanners = Vec::new();
+    new_scanners.push(merged_scanner);
+    for (i, scanner) in scanners.iter().enumerate() {
+        if i != overlap.pos_1 && i != overlap.pos_2 {
+            new_scanners.push(scanner.clone());
+        }
+    }
+    new_scanners
+}
+
 
 
 fn run() -> Result<(),InputError> {
-    let scanners = read_beacon_file()?;
-    for (i, scanner1) in scanners.iter().enumerate() {
-        for scanner2 in &scanners[(i+1)..] {
-            let overlaps = scanner1.get_lengths().overlaps(&scanner2.get_lengths());
-            println!("{} to {}: {}", scanner1.name, scanner2.name, overlaps);
-        }
-    }
-    println!("----------");
-    let s0: &Scanner = &scanners[0];
-    let s1: &Scanner = &scanners[1];
+    let mut scanners = read_beacon_file()?;
 
-    let merged_scanner = merge_overlapping_scanners(s0, s1);
-    println!("merged_scanner: {}", merged_scanner);
+    assert!(scanners.len() > 0);
+    while scanners.len() > 1 {
+        scanners = merge_once(scanners)
+    }
+    println!("IN THE END, scanners: {}", scanners[0]);
+    println!("There are {} beacons.", scanners[0].beacons.len());
 
     Ok(())
 }
