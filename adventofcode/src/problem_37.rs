@@ -106,7 +106,7 @@ enum Axis {X, Y, Z}
 /// Substructure of Orient
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 struct AxisOrient {
-    maps_to: Axis, // tells which axis of scanner_0 this axis of
+    maps_to: Axis, // tells, for whatever axis of scanner_0 we are determining, which axis of scanner_1 to use
     flip: bool,  // if true, then scanner_1 values should be multiplied by -1
     offset: Coord, // add this to a scanner_1 value to get the scanner_0 value.
 }
@@ -122,6 +122,7 @@ struct Orient {
 #[derive(Debug, Copy, Clone)]
 struct AxisMapping {
     maps_to: [Axis;3],
+    maps_back: [Axis;3],
     flip: [bool;3],
 }
 
@@ -216,14 +217,23 @@ impl Axis {
 }
 
 impl AxisMapping {
+    fn make(maps_to: [Axis;3], flip: [bool;3]) -> Self {
+        let maps_back: [Axis;3] = [
+            *Axis::all().iter().filter(|v| maps_to[v.index()] == Axis::X).next().unwrap(),
+            *Axis::all().iter().filter(|v| maps_to[v.index()] == Axis::Y).next().unwrap(),
+            *Axis::all().iter().filter(|v| maps_to[v.index()] == Axis::Z).next().unwrap(),
+        ];
+        AxisMapping{maps_to, maps_back, flip}
+    }
+
     fn all() -> [AxisMapping;6] {
         [
-            AxisMapping{maps_to:[Axis::X, Axis::Y, Axis::Z], flip: [false, false, false]},
-            AxisMapping{maps_to:[Axis::Y, Axis::X, Axis::Z], flip: [false, false, false]},
-            AxisMapping{maps_to:[Axis::X, Axis::Z, Axis::Y], flip: [false, false, false]},
-            AxisMapping{maps_to:[Axis::Y, Axis::Z, Axis::X], flip: [false, false, false]},
-            AxisMapping{maps_to:[Axis::Z, Axis::X, Axis::Y], flip: [false, false, false]},
-            AxisMapping{maps_to:[Axis::Z, Axis::Y, Axis::X], flip: [false, false, false]},
+            AxisMapping::make([Axis::X, Axis::Y, Axis::Z], [false, false, false]),
+            AxisMapping::make([Axis::X, Axis::Z, Axis::Y], [false, false, false]),
+            AxisMapping::make([Axis::Y, Axis::X, Axis::Z], [false, false, false]),
+            AxisMapping::make([Axis::Y, Axis::Z, Axis::X], [false, false, false]),
+            AxisMapping::make([Axis::Z, Axis::X, Axis::Y], [false, false, false]),
+            AxisMapping::make([Axis::Z, Axis::Y, Axis::X], [false, false, false]),
         ]
     }
 }
@@ -239,6 +249,17 @@ impl Orient {
     //     assert_eq!(orient_vec.len(), 3);
     //     Orient{orients: [orient_vec[0], orient_vec[1], orient_vec[2]]}
     // }
+
+    /// Returns a new Beacon obtained by applying the orientation.
+    fn apply(&self, beacon: Beacon) -> Beacon {
+        println!("beacon.x = {}", beacon.x);
+        println!("self.orients[0].offset = {}", self.orients[0].offset);
+        Beacon{
+            x: beacon.x + self.orients[0].offset,
+            y: beacon.y + self.orients[1].offset,
+            z: beacon.z + self.orients[2].offset,
+        }
+    }
 }
 
 
@@ -353,10 +374,10 @@ fn orient(source_scanner: &Scanner, source_positions: [usize;2], dest_scanner: &
         println!("find_offset({}, {:?}, ...)", source_axis, axis_mapping); // FIXME: Remove
         let dest_axis = axis_mapping.maps_to[source_axis.index()];
         let _flip = axis_mapping.flip[source_axis.index()]; // FIXME: Incorporate this later
-        let offset = d0.get(dest_axis) - s0.get(source_axis);
+        let offset = s0.get(dest_axis) - d0.get(source_axis);
         println!("  try {} as offset because {} - {}", offset, d0.get(dest_axis), s0.get(source_axis)); // FIXME: Remove
         println!("  compare to {} because {} - {}", (d1.get(dest_axis) - s1.get(source_axis)), d1.get(dest_axis), s1.get(source_axis)); // FIXME: Remove
-        if (d1.get(dest_axis) - s1.get(source_axis)) == offset {
+        if (s1.get(dest_axis) - d1.get(source_axis)) == offset {
             println!("  Found offset {}", offset); // FIXME: Remove
             Some(offset)
         } else {
@@ -377,9 +398,9 @@ fn orient(source_scanner: &Scanner, source_positions: [usize;2], dest_scanner: &
             let offsets = [x_offset_opt.unwrap(), y_offset_opt.unwrap(), z_offset_opt.unwrap()];
             println!("Found a possible mapping with offsets {} / {} / {}", offsets[0], offsets[1], offsets[2]);
             let orients: [AxisOrient;3] = [
-                AxisOrient{maps_to: ax_map.maps_to[0], flip: ax_map.flip[0], offset: offsets[0]},
-                AxisOrient{maps_to: ax_map.maps_to[1], flip: ax_map.flip[1], offset: offsets[1]},
-                AxisOrient{maps_to: ax_map.maps_to[2], flip: ax_map.flip[2], offset: offsets[2]},
+                AxisOrient{maps_to: ax_map.maps_back[0], flip: ax_map.flip[0], offset: offsets[ax_map.maps_back[0].index()]},
+                AxisOrient{maps_to: ax_map.maps_back[1], flip: ax_map.flip[1], offset: offsets[ax_map.maps_back[1].index()]},
+                AxisOrient{maps_to: ax_map.maps_back[2], flip: ax_map.flip[2], offset: offsets[ax_map.maps_back[2].index()]},
             ];
             ret_val.push(Orient{orients});
         }
@@ -408,6 +429,8 @@ fn run() -> Result<(),InputError> {
     let orients: Vec<Orient> = orient(s0, [0,1], s1, [0,1]);
     assert!(orients.len() == 1);
     println!("Orient: {:?}", orients[0]);
+    println!("If you remap using orient then ({})-to-({}) becomes ({})-to-({})",
+             s1.beacons[0], s1.beacons[1], orients[0].apply(s1.beacons[0]), orients[0].apply(s1.beacons[1]));
     Ok(())
 }
 
@@ -433,19 +456,6 @@ mod test {
     }
 
     #[test]
-    fn test_orient_1() {
-        fn newb(x: Coord, y: Coord, z: Coord) -> Beacon {
-            Beacon{x, y, z}
-        }
-        let s0 = Scanner{name: "Zero".to_string(), beacons: vec![newb(100,101,102), newb(130,133,134)]};
-        let s1 = Scanner{name: "One".to_string(),  beacons: vec![newb(120,101,102), newb(150,133,134)]};
-        let orients: Vec<Orient> = orient(&s0, [0,1], &s1, [0,1]);
-        assert!(orients.len() == 1);
-        assert_eq!(orients[0].orients[0].offset, 20);
-        println!("Orient: {:?}", orients[0]);
-    }
-
-    #[test]
     fn test_orient_2() {
         fn newb(x: Coord, y: Coord, z: Coord) -> Beacon {
             Beacon{x, y, z}
@@ -455,9 +465,9 @@ mod test {
         let orients: Vec<Orient> = orient(&s0, [0,1], &s1, [0,1]);
         assert!(orients.len() == 1);
         let or = orients[0];
-        assert_eq!(or.orients[0].offset, -2); assert_eq!(or.orients[0].maps_to, Axis::X);
-        assert_eq!(or.orients[1].offset, -2); assert_eq!(or.orients[1].maps_to, Axis::Y);
-        assert_eq!(or.orients[2].offset,  0); assert_eq!(or.orients[2].maps_to, Axis::Z);
+        assert_eq!(or.orients[0].offset, 2); assert_eq!(or.orients[0].maps_to, Axis::X);
+        assert_eq!(or.orients[1].offset, 2); assert_eq!(or.orients[1].maps_to, Axis::Y);
+        assert_eq!(or.orients[2].offset, 0); assert_eq!(or.orients[2].maps_to, Axis::Z);
         println!("Orient: {:?}", orients[0]);
     }
 
@@ -471,9 +481,52 @@ mod test {
         let orients: Vec<Orient> = orient(&s0, [0,1], &s1, [0,1]);
         assert_eq!(orients.len(), 1);
         let or = orients[0];
-        assert_eq!(or.orients[0].offset, -2); assert_eq!(or.orients[0].maps_to, Axis::Y);
-        assert_eq!(or.orients[1].offset, -2); assert_eq!(or.orients[1].maps_to, Axis::X);
-        assert_eq!(or.orients[2].offset,  0); assert_eq!(or.orients[2].maps_to, Axis::Z);
+        assert_eq!(or.orients[0].offset, 2); assert_eq!(or.orients[0].maps_to, Axis::Y);
+        assert_eq!(or.orients[1].offset, 2); assert_eq!(or.orients[1].maps_to, Axis::X);
+        assert_eq!(or.orients[2].offset, 0); assert_eq!(or.orients[2].maps_to, Axis::Z);
         println!("Orient: {:?}", orients[0]);
     }
+
+    #[test]
+    fn test_orient_4() {
+        fn newb(x: Coord, y: Coord, z: Coord) -> Beacon {
+            Beacon{x, y, z}
+        }
+        let s0 = Scanner{name: "Zero".to_string(), beacons: vec![newb(0,2,0), newb(2,0,0)]};
+        let s1 = Scanner{name: "One".to_string(),  beacons: vec![newb(-1,0,-3), newb(-3,0,-1)]};
+        let orients: Vec<Orient> = orient(&s0, [0,1], &s1, [0,1]);
+        assert_eq!(orients.len(), 1);
+        let or = orients[0];
+        println!("Orient: {:?}", orients[0]);
+        assert_eq!(or.orients[0].offset, 3); assert_eq!(or.orients[0].maps_to, Axis::Z);
+        assert_eq!(or.orients[1].offset, 3); assert_eq!(or.orients[1].maps_to, Axis::X);
+        assert_eq!(or.orients[2].offset, 0); assert_eq!(or.orients[2].maps_to, Axis::Y);
+    }
+
+    #[test]
+    fn test_orient_5() {
+        fn newb(x: Coord, y: Coord, z: Coord) -> Beacon {
+            Beacon{x, y, z}
+        }
+        let s0 = Scanner{name: "Zero".to_string(), beacons: vec![newb(0,2,0), newb(2,0,0)]};
+        let s1 = Scanner{name: "One".to_string(),  beacons: vec![newb(1,0,-2), newb(-1,0,0)]};
+        let orients: Vec<Orient> = orient(&s0, [0,1], &s1, [0,1]);
+        assert_eq!(orients.len(), 1);
+        let or = orients[0];
+        println!("Orient: {:?}", orients[0]);
+        assert_eq!(or.orients[0].offset, 2); assert_eq!(or.orients[0].maps_to, Axis::Z);
+        assert_eq!(or.orients[1].offset, 1); assert_eq!(or.orients[1].maps_to, Axis::X);
+        assert_eq!(or.orients[2].offset, 0); assert_eq!(or.orients[2].maps_to, Axis::Y);
+    }
+
+    #[test]
+    fn test_axis_mapping_make() {
+        let am = AxisMapping::make([Axis::X, Axis::Y, Axis::Z], [false, false, false]);
+        assert_eq!(am.maps_back, [Axis::X, Axis::Y, Axis::Z]);
+        let am = AxisMapping::make([Axis::Z, Axis::Y, Axis::X], [false, false, false]);
+        assert_eq!(am.maps_back, [Axis::Z, Axis::Y, Axis::X]);
+        let am = AxisMapping::make([Axis::Y, Axis::Z, Axis::X], [false, false, false]);
+        assert_eq!(am.maps_back, [Axis::Z, Axis::X, Axis::Y]);
+    }
+
 }
