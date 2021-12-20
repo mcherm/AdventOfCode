@@ -73,7 +73,7 @@ fn read_beacon_file() -> Result<Vec<Scanner>, InputError> {
                 break; // Out of lines ends the file
             }
         }
-        scanners.push(Scanner{name, beacons})
+        scanners.push(Scanner::new(name, beacons));
     }
     Ok(scanners)
 }
@@ -125,7 +125,7 @@ struct AxisOrient {
 }
 
 /// Specification of how to orient one scanner relative to another.
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
 struct Orient {
     orients: [AxisOrient; 3]
 }
@@ -193,6 +193,18 @@ impl Beacon {
 }
 
 impl Scanner {
+    /// Constructor which verifies the Beacons are unique. If one is a
+    /// duplicate it is simply skipped over.
+    fn new(name: String, nonunique_beacons: Vec<Beacon>) -> Self {
+        let mut beacons = Vec::new();
+        for b in &nonunique_beacons {
+            if !beacons.contains(b) {
+                beacons.push(*b);
+            }
+        }
+        Scanner{name, beacons}
+    }
+
     // Returns a sorted list of the squares of the distances between pairs of points.
     fn get_lengths(&self) -> LengthSet {
         let mut lengths: Vec<LenSq> = Vec::new();
@@ -242,6 +254,20 @@ impl Scanner {
             }
         }
         panic!("To reach here the length wasn't in the scanner.");
+    }
+
+
+    /// This is given another scanner and the way to orient that one relative to
+    /// this. It returns a new scanner that contains (a single copy of) each Beacon
+    /// in both Scanners. The name will be "$1 & $2".
+    fn merge_with(&self, other: &Self, orient: Orient) -> Self {
+        let name: String = format!("{} & {}", self.name, other.name);
+        let mut beacons = Vec::new();
+        beacons.extend(&self.beacons);
+        for b in &other.beacons {
+            beacons.push(orient.apply(*b));
+        }
+        Self::new(name, beacons)
     }
 }
 impl PartialEq for Scanner {
@@ -663,6 +689,44 @@ fn orients_for_segment(source_points: [Beacon;2], dest_points: [Beacon;2]) -> Ve
 }
 
 
+fn orients_for_unique_seg_length(source: &Scanner, dest: &Scanner, unique_length: LenSq) -> Vec<Orient> {
+    let source_descs = source.descriptions_for_unique_length(unique_length);
+    let dest_descs = dest.descriptions_for_unique_length(unique_length);
+    let orients = orients_for_segment(
+        [source_descs[0].beacon, source_descs[1].beacon],
+        [dest_descs[0].beacon, dest_descs[1].beacon],
+    );
+    orients
+}
+
+
+fn merge_overlapping_scanners(source: &Scanner, dest: &Scanner) -> Scanner {
+    let shared_uniques = source.get_lengths().shared_uniques(&dest.get_lengths());
+    println!("shared_uniques: {:?}", shared_uniques);
+
+    let mut unique_lengths = shared_uniques.lengths.iter();
+    let first_unique_length = unique_lengths.next().expect("There were no unique lengths");
+    let mut orients = orients_for_unique_seg_length(source, dest, *first_unique_length);
+    println!("The {} orients are {:?}", orients.len(), orients);
+    for orient in &orients {
+        println!("  Orient: {}", orient);
+    }
+
+    for next_unique_length in unique_lengths {
+        let new_orients = orients_for_unique_seg_length(source, dest, *next_unique_length);
+        println!("The NEXT {} orients are {:?}", orients.len(), orients);
+        orients.retain(|orient| new_orients.contains(orient));
+        println!("After filtering, we have:");
+        for orient in &orients {
+            println!("  NEXT Orient: {}", orient);
+        }
+        if orients.len() <= 1 {
+            break; // once we have just one, we can quit.
+        }
+    }
+    source.merge_with(dest, orients[0])
+}
+
 
 
 
@@ -677,27 +741,10 @@ fn run() -> Result<(),InputError> {
     println!("----------");
     let s0: &Scanner = &scanners[0];
     let s1: &Scanner = &scanners[1];
-    println!("description for s0d0: {:?}", s0.get_point_description(0));
-    let shared_uniques = s0.get_lengths().shared_uniques(&s1.get_lengths());
-    println!("shared_uniques: {:?}", shared_uniques);
-    let unique_length = shared_uniques.lengths[0];
-    println!("some unique length: {}", unique_length);
-    let [s0d0, s0d1] = s0.descriptions_for_unique_length(unique_length);
-    let [s1d0, s1d1] = s1.descriptions_for_unique_length(unique_length);
-    println!("s0d0: {:?}", s0d0);
-    println!("s0d1: {:?}", s0d1);
-    println!("s1d0: {:?}", s1d0);
-    println!("s1d1: {:?}", s1d1);
-    println!("----------");
 
-    let orients = orients_for_segment(
-        [s0d0.beacon,s0d1.beacon],
-        [s1d0.beacon, s1d1.beacon]
-    );
-    println!("The {} orients are {:?}", orients.len(), orients);
-    for orient in orients {
-        println!("  Orient: {}", orient);
-    }
+    let merged_scanner = merge_overlapping_scanners(s0, s1);
+    println!("merged_scanner: {}", merged_scanner);
+
     Ok(())
 }
 
@@ -722,96 +769,6 @@ mod test {
         let _ = read_beacon_file();
     }
 
-    #[test]
-    fn test_orient_2() {
-        fn newb(x: Coord, y: Coord, z: Coord) -> Beacon {
-            Beacon{x, y, z}
-        }
-        let s0 = Scanner{name: "Zero".to_string(), beacons: vec![newb(2,3,0), newb(3,0,0)]};
-        let s1 = Scanner{name: "One".to_string(),  beacons: vec![newb(0,1,0), newb(1,-2,0)]};
-        let orients: Vec<Orient> = orient(&s0, [0,1], &s1, [0,1]);
-        println!("{}", orients.len()); // FIXME: Remove
-        assert!(orients.len() == 1);
-        let or = orients[0];
-        assert_eq!(or.orients[0].offset, 2); assert_eq!(or.orients[0].maps_to, Axis::X);
-        assert_eq!(or.orients[1].offset, 2); assert_eq!(or.orients[1].maps_to, Axis::Y);
-        assert_eq!(or.orients[2].offset, 0); assert_eq!(or.orients[2].maps_to, Axis::Z);
-        println!("Orient: {:?}", orients[0]);
-    }
-
-    #[test]
-    fn test_orient_3() {
-        fn newb(x: Coord, y: Coord, z: Coord) -> Beacon {
-            Beacon{x, y, z}
-        }
-        let s0 = Scanner{name: "Zero".to_string(), beacons: vec![newb(2,3,0), newb(3,0,0)]};
-        let s1 = Scanner{name: "One".to_string(),  beacons: vec![newb(1,0,0), newb(-2,1,0)]};
-        let orients: Vec<Orient> = orient(&s0, [0,1], &s1, [0,1]);
-        assert_eq!(orients.len(), 1);
-        let or = orients[0];
-        assert_eq!(or.orients[0].offset, 2); assert_eq!(or.orients[0].maps_to, Axis::Y);
-        assert_eq!(or.orients[1].offset, 2); assert_eq!(or.orients[1].maps_to, Axis::X);
-        assert_eq!(or.orients[2].offset, 0); assert_eq!(or.orients[2].maps_to, Axis::Z);
-        println!("Orient: {:?}", orients[0]);
-    }
-
-    #[test]
-    fn test_orient_4() {
-        fn newb(x: Coord, y: Coord, z: Coord) -> Beacon {
-            Beacon{x, y, z}
-        }
-        let s0 = Scanner{name: "Zero".to_string(), beacons: vec![newb(0,2,0), newb(2,0,0)]};
-        let s1 = Scanner{name: "One".to_string(),  beacons: vec![newb(-1,0,-3), newb(-3,0,-1)]};
-        let orients: Vec<Orient> = orient(&s0, [0,1], &s1, [0,1]);
-        assert_eq!(orients.len(), 1);
-        let or = orients[0];
-        println!("Orient: {:?}", orients[0]);
-        assert_eq!(or.orients[0].offset, 3); assert_eq!(or.orients[0].maps_to, Axis::Z);
-        assert_eq!(or.orients[1].offset, 3); assert_eq!(or.orients[1].maps_to, Axis::X);
-        assert_eq!(or.orients[2].offset, 0); assert_eq!(or.orients[2].maps_to, Axis::Y);
-    }
-
-    #[test]
-    fn test_orient_5() {
-        fn newb(x: Coord, y: Coord, z: Coord) -> Beacon {
-            Beacon{x, y, z}
-        }
-        let s0 = Scanner{name: "Zero".to_string(), beacons: vec![newb(0,2,0), newb(2,0,0)]};
-        let s1 = Scanner{name: "One".to_string(),  beacons: vec![newb(1,0,-2), newb(-1,0,0)]};
-        let orients: Vec<Orient> = orient(&s0, [0,1], &s1, [0,1]);
-        assert_eq!(orients.len(), 1);
-        let or = orients[0];
-        println!("Orient: {:?}", orients[0]);
-        assert_eq!(or.orients[0].offset, 2); assert_eq!(or.orients[0].maps_to, Axis::Z);
-        assert_eq!(or.orients[1].offset, 1); assert_eq!(or.orients[1].maps_to, Axis::X);
-        assert_eq!(or.orients[2].offset, 0); assert_eq!(or.orients[2].maps_to, Axis::Y);
-    }
-
-    #[test]
-    fn test_orient_6() {
-        fn newb(x: Coord, y: Coord, z: Coord) -> Beacon {
-            Beacon{x, y, z}
-        }
-        let s0 = Scanner{name: "Zero".to_string(), beacons: vec![newb(0,2,0), newb(2,0,0)]};
-        let s1 = Scanner{name: "One".to_string(),  beacons: vec![newb(1,0,-2), newb(-1,0,0)]};
-        let orients: Vec<Orient> = orient(&s0, [0,1], &s1, [0,1]);
-        assert_eq!(orients.len(), 1);
-        let or = orients[0];
-        println!("Orient: {:?}", orients[0]);
-        assert_eq!(or.orients[0].offset, 2); assert_eq!(or.orients[0].maps_to, Axis::Z);
-        assert_eq!(or.orients[1].offset, 1); assert_eq!(or.orients[1].maps_to, Axis::X);
-        assert_eq!(or.orients[2].offset, 0); assert_eq!(or.orients[2].maps_to, Axis::Y);
-    }
-
-    #[test]
-    fn test_axis_mapping_make() {
-        let am = AxisMapping::make([Axis::X, Axis::Y, Axis::Z], [false, false, false]);
-        assert_eq!(am.maps_back, [Axis::X, Axis::Y, Axis::Z]);
-        let am = AxisMapping::make([Axis::Z, Axis::Y, Axis::X], [false, false, false]);
-        assert_eq!(am.maps_back, [Axis::Z, Axis::Y, Axis::X]);
-        let am = AxisMapping::make([Axis::Y, Axis::Z, Axis::X], [false, false, false]);
-        assert_eq!(am.maps_back, [Axis::Z, Axis::X, Axis::Y]);
-    }
 
     #[test]
     fn test_axis_orient_apply() {
