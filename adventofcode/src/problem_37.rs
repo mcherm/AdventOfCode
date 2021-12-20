@@ -214,9 +214,9 @@ impl Scanner {
         for (p, other_beacon) in self.beacons.iter().enumerate() {
             if p != pos {
                 lengths.push(get_length(&beacon, other_beacon));
-                x_lengths.push(squared(beacon.x - other_beacon.x));
-                y_lengths.push(squared(beacon.y - other_beacon.y));
-                z_lengths.push(squared(beacon.z - other_beacon.z));
+                x_lengths.push(squared(beacon.x));
+                y_lengths.push(squared(beacon.y));
+                z_lengths.push(squared(beacon.z));
             }
         }
         PointDescription{
@@ -230,6 +230,19 @@ impl Scanner {
         }
     }
 
+    /// Returns the list of PointDescriptions for points that include this length
+    /// as one of their lengths. The length MUST be unique, which is why this can assume
+    /// it will  always return exactly 2 points.
+    fn descriptions_for_unique_length(&self, length: LenSq) -> [PointDescription;2] {
+        for (pos, beacon) in self.beacons.iter().enumerate() {
+            for (other_pos, other_beacon) in self.beacons.iter().enumerate() {
+                if get_length(beacon, other_beacon) == length {
+                    return [self.get_point_description(pos), self.get_point_description(other_pos)];
+                }
+            }
+        }
+        panic!("To reach here the length wasn't in the scanner.");
+    }
 }
 impl PartialEq for Scanner {
     fn eq(&self, other: &Self) -> bool {
@@ -391,7 +404,7 @@ impl LengthSet {
         LengthSet{lengths}
     }
 
-    #[allow(dead_code)] // FIXME: Remove
+    #[allow(dead_code)]
     fn len(&self) -> usize {
         self.lengths.len()
     }
@@ -427,7 +440,6 @@ impl LengthSet {
         let counts: Vec<usize> = self.lengths.iter().map(|x| {
             self.lengths.iter().filter(|v| *v == x).count()
         }).collect();
-        println!("counts: {:?}", counts); // FIXME: Remove
         let mut uniques: Vec<LenSq> = Vec::new();
         for (i, val) in self.lengths.iter().enumerate() {
             if counts[i] == 1 {
@@ -447,7 +459,42 @@ impl LengthSet {
         }
         return LengthSet::new(values)
     }
+
+    #[allow(dead_code)]
+    fn contains(&self, val: LenSq) -> bool {
+        return self.lengths.contains(&val)
+    }
+
+    /// Returns a new LengthSet which has all values present in either self or other.
+    fn union(&self, other: &Self) -> Self {
+        let mut values: Vec<LenSq> = Vec::new();
+        for val in &self.lengths {
+            values.push(*val);
+        }
+        for val in &other.lengths {
+            values.push(*val);
+        }
+        return LengthSet::new(values)
+    }
+
+    /// Given another LengthSet, finds a LengthSet of the lengths that are unique within
+    /// each LengthSet but also in common between them. In principle, there might not
+    /// be any, and it will return an empty LengthSet.
+    fn shared_uniques(&self, other: &LengthSet) -> LengthSet {
+        self.uniques().intersect(&other.uniques())
+    }
+
 }
+
+
+impl PointDescription {
+    /// Returns a LengthSet of ALL "axis lengths" (x_lengths, y_lengths, z_lengths).
+    #[allow(dead_code)] // FIXME: Remove
+    fn all_axis_lengths(&self) -> LengthSet {
+        self.x_lengths.union(&self.y_lengths).union(&self.z_lengths)
+    }
+}
+
 
 
 impl fmt::Display for Beacon {
@@ -533,6 +580,33 @@ fn orient(source_scanner: &Scanner, source_positions: [usize;2], dest_scanner: &
 }
 
 
+// FIXME: I tried to create the below, but I just can't figure out how to pass an iterator
+// /// This is given an iterable over LengthSets and values, along with a single LenSq. It expects
+// /// to find that LenSq in EXACTLY one of the LengthSets (and panics if that isn't true). It
+// /// returns the corresponding value for the LengthSet that contained the LenSq.
+// fn find_only_containing<'a, I>(
+//     len_sq: LenSq,
+//     set_value_pairs: impl Iterator<Item=(&'a LengthSet, &'a PointDescription)>
+// ) -> &'a PointDescription
+//     where
+//         I: IntoIterator,
+//         I::Item: &'a (&'a LengthSet, &'a PointDescription),
+// {
+//     let mut answer: Option<&PointDescription> = None;
+//     for (length_set, val) in set_value_pairs.into_iter() {
+//         if length_set.contains(len_sq) {
+//             match answer {
+//                 None => answer = Some(val),
+//                 Some(_) => panic!("Multiple LengthSets contained the value.")
+//             }
+//         }
+//     }
+//     match answer {
+//         Some(val) => return val,
+//         None => panic!("No LengthSets contained the value."),
+//     }
+// }
+
 
 
 
@@ -547,15 +621,70 @@ fn run() -> Result<(),InputError> {
     println!("----------");
     let s0: &Scanner = &scanners[0];
     let s1: &Scanner = &scanners[1];
-    let s0_unique_lengths = s0.get_lengths().uniques();
-    let s1_unique_lengths = s1.get_lengths().uniques();
-    let shared_uniques = s0_unique_lengths.intersect(&s1_unique_lengths);
-    println!("s0 lengths: {:?}", s0.get_lengths());
-    println!("s0 unique lengths: {:?}", s0.get_lengths().uniques());
-    println!("s1 lengths: {:?}", s1.get_lengths());
+    println!("description for s0d0: {:?}", s0.get_point_description(0));
+    let shared_uniques = s0.get_lengths().shared_uniques(&s1.get_lengths());
     println!("shared_uniques: {:?}", shared_uniques);
-    let desc_0 = s0.get_point_description(0);
-    println!("s0[0] description: {:?}", desc_0);
+    let unique_length = shared_uniques.lengths[0];
+    println!("some unique length: {}", unique_length);
+    let [s0d0, s0d1] = s0.descriptions_for_unique_length(unique_length);
+    let [s1d0, s1d1] = s1.descriptions_for_unique_length(unique_length);
+    println!("s0d0: {:?}", s0d0);
+    println!("s0d1: {:?}", s0d1);
+    println!("s1d0: {:?}", s1d0);
+    println!("s1d1: {:?}", s1d1);
+    println!("----------");
+
+    let source_point: Beacon = s0d0.beacon;
+    let this_axis: Axis = Axis::X;
+    let mut x_axis_orients: Vec<AxisOrient> = Vec::new();
+    for dest_point in [s1d0.beacon, s1d1.beacon] {
+        for maps_to in Axis::all() {
+            for flip in [false, true] {
+                let offset: Coord = source_point.get(this_axis) - dest_point.get(maps_to) * (if flip {-1} else {1});
+                x_axis_orients.push(AxisOrient{maps_to, flip, offset})
+            }
+        }
+    }
+    println!("x_axis_orients = {:?}", x_axis_orients);
+
+
+    // FIXME: Apparently this whole approach won't work!!!
+    // let s0xs = s0d0.x_lengths.union(&s0d1.x_lengths);
+    // let s1_axis_lengths = s1d0.all_axis_lengths().union(&s1d1.all_axis_lengths());
+    // println!("s0xs: {:?}", s0xs);
+    // println!("s1_axis_lengths: {:?}", s1_axis_lengths);
+    // let shared_uniques_for_xs = s0xs.shared_uniques(&s1_axis_lengths);
+    // // shared_uniques_for_xs is a list of axis values that occur in s0 x_lengths, and ANYWHERE
+    // // in the axis lengths for s1, and which is unique within each. Any one of these can be
+    // // used to determine where the x axis of s0 maps to in s1.
+    // println!("shared_uniques_for_xs: {:?}", shared_uniques_for_xs);
+    // assert!(shared_uniques_for_xs.len() != 0); // FIXME: instead of panicking we should back up and try another unique_length
+    // let unique_for_x = shared_uniques_for_xs.lengths[0];
+    // println!("unique_for_x: {}", unique_for_x);
+    // let s0_point_for_x: PointDescription = if s0d0.x_lengths.contains(unique_for_x) {
+    //     s0d0
+    // } else if s0d1.x_lengths.contains(unique_for_x) {
+    //     s0d1
+    // } else {
+    //     panic!("One of them must have it!")
+    // };
+    // println!("s0_point_for_x: {:?}", s0_point_for_x);
+    // let (s1_point_for_x, map_x_axis_to): (PointDescription, Axis) = if false {
+    //     panic!("branch should never happen")
+    // } else if s1d0.x_lengths.contains(unique_for_x) { (s1d0, Axis::X)
+    // } else if s1d0.y_lengths.contains(unique_for_x) { (s1d0, Axis::Y)
+    // } else if s1d0.z_lengths.contains(unique_for_x) { (s1d0, Axis::Z)
+    // } else if s1d1.x_lengths.contains(unique_for_x) { (s1d1, Axis::X)
+    // } else if s1d1.y_lengths.contains(unique_for_x) { (s1d1, Axis::Y)
+    // } else if s1d1.z_lengths.contains(unique_for_x) { (s1d1, Axis::Z)
+    // } else {
+    //     panic!("One of them must have it!")
+    // };
+    // println!("s1_point_for_x: {:?}\nmap_x_axis_to: {}", s1_point_for_x, map_x_axis_to);
+    // let flip: bool = false; // FIXME: Not right
+    // let offset: Coord = 0; // FIXME: Not right
+    // let x_axis_orient: AxisOrient = AxisOrient{maps_to: map_x_axis_to, flip, offset};
+    // println!("X AxisOrient = {:?}", x_axis_orient);
     println!("----------");
     // let orients: Vec<Orient> = orient(s0, [0,1], s1, [0,1]);
     // assert!(orients.len() == 1);
