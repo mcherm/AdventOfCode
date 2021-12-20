@@ -99,6 +99,19 @@ struct LengthSet {
     lengths: Vec<LenSq>
 }
 
+/// Information helping to uniquely identify a point within a scanner.
+#[derive(Debug)]
+struct PointDescription {
+    scanner_name: String,
+    pos: usize,
+    beacon: Beacon,
+    lengths: LengthSet,
+    x_lengths: LengthSet,
+    y_lengths: LengthSet,
+    z_lengths: LengthSet,
+}
+
+
 /// A direction.
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 enum Axis {X, Y, Z}
@@ -188,9 +201,35 @@ impl Scanner {
                 lengths.push(get_length(&b1, &b2));
             }
         }
-        lengths.sort();
-        LengthSet{lengths}
+        LengthSet::new(lengths)
     }
+
+    /// Given the index of a beacon, returns the PointDescription for that beacon.
+    fn get_point_description(&self, pos: usize) -> PointDescription {
+        let beacon: Beacon = self.beacons[pos];
+        let mut lengths: Vec<LenSq> = Vec::new();
+        let mut x_lengths: Vec<LenSq> = Vec::new();
+        let mut y_lengths: Vec<LenSq> = Vec::new();
+        let mut z_lengths: Vec<LenSq> = Vec::new();
+        for (p, other_beacon) in self.beacons.iter().enumerate() {
+            if p != pos {
+                lengths.push(get_length(&beacon, other_beacon));
+                x_lengths.push(squared(beacon.x - other_beacon.x));
+                y_lengths.push(squared(beacon.y - other_beacon.y));
+                z_lengths.push(squared(beacon.z - other_beacon.z));
+            }
+        }
+        PointDescription{
+            scanner_name: self.name.clone(),
+            pos,
+            beacon,
+            lengths: LengthSet::new(lengths),
+            x_lengths: LengthSet::new(x_lengths),
+            y_lengths: LengthSet::new(y_lengths),
+            z_lengths: LengthSet::new(z_lengths),
+        }
+    }
+
 }
 impl PartialEq for Scanner {
     fn eq(&self, other: &Self) -> bool {
@@ -300,6 +339,7 @@ impl Orient {
     // }
 
     /// Returns a new Beacon obtained by applying the orientation.
+    #[allow(dead_code)] // FIXME: Remove this eventually
     fn apply(&self, beacon: Beacon) -> Beacon {
         println!("beacon.x = {}", beacon.x);
         println!("self.orients[0].offset = {}", self.orients[0].offset);
@@ -346,6 +386,11 @@ impl Orient {
 
 
 impl LengthSet {
+    fn new(mut lengths: Vec<LenSq>) -> Self {
+        lengths.sort();
+        LengthSet{lengths}
+    }
+
     #[allow(dead_code)] // FIXME: Remove
     fn len(&self) -> usize {
         self.lengths.len()
@@ -363,7 +408,7 @@ impl LengthSet {
 
     // finds number of matches between 2 lengthsets
     fn overlaps(&self, other: &Self) -> u32 {
-        // FIXME: Could exploit sorting to be more efficient if needed.
+        // Note: Could exploit sorting to be more efficient if needed.
         let mut count: u32 = 0;
         for len_1 in &self.lengths {
             for len_2 in &other.lengths {
@@ -373,6 +418,34 @@ impl LengthSet {
             }
         }
         count
+    }
+
+    /// Returns a new LengthSet containing only the elements of this one that occur
+    /// precisely once.
+    fn uniques(&self) -> Self {
+        // NOTE: Can be made more efficient if desired using the sorted property
+        let counts: Vec<usize> = self.lengths.iter().map(|x| {
+            self.lengths.iter().filter(|v| *v == x).count()
+        }).collect();
+        println!("counts: {:?}", counts); // FIXME: Remove
+        let mut uniques: Vec<LenSq> = Vec::new();
+        for (i, val) in self.lengths.iter().enumerate() {
+            if counts[i] == 1 {
+                uniques.push(*val)
+            }
+        }
+        return LengthSet::new(uniques)
+    }
+
+    /// Returns a new LengthSet that only has values that appear in both self and other.
+    fn intersect(&self, other: &Self) -> Self {
+        let mut values: Vec<LenSq> = Vec::new();
+        for val in &self.lengths {
+            if other.lengths.contains(&val) {
+                values.push(*val);
+            }
+        }
+        return LengthSet::new(values)
     }
 }
 
@@ -404,6 +477,7 @@ impl fmt::Display for Axis {
 
 /// Given 2 points in s0 and two points in s1 that we believe may be the same points in the same
 /// order, this returns a vector (possibly of length 0) of Orients that could make that true.
+#[allow(dead_code)] // FIXME: Remove this eventually
 fn orient(source_scanner: &Scanner, source_positions: [usize;2], dest_scanner: &Scanner, dest_positions: [usize;2]) -> Vec<Orient> {
     let s0 = source_scanner.beacons[source_positions[0]];
     let s1 = source_scanner.beacons[source_positions[1]];
@@ -473,13 +547,21 @@ fn run() -> Result<(),InputError> {
     println!("----------");
     let s0: &Scanner = &scanners[0];
     let s1: &Scanner = &scanners[1];
+    let s0_unique_lengths = s0.get_lengths().uniques();
+    let s1_unique_lengths = s1.get_lengths().uniques();
+    let shared_uniques = s0_unique_lengths.intersect(&s1_unique_lengths);
     println!("s0 lengths: {:?}", s0.get_lengths());
+    println!("s0 unique lengths: {:?}", s0.get_lengths().uniques());
     println!("s1 lengths: {:?}", s1.get_lengths());
-    let orients: Vec<Orient> = orient(s0, [0,1], s1, [0,1]);
-    assert!(orients.len() == 1);
-    println!("Orient: {:?}", orients[0]);
-    println!("If you remap using orient then ({})-to-({}) becomes ({})-to-({})",
-             s1.beacons[0], s1.beacons[1], orients[0].apply(s1.beacons[0]), orients[0].apply(s1.beacons[1]));
+    println!("shared_uniques: {:?}", shared_uniques);
+    let desc_0 = s0.get_point_description(0);
+    println!("s0[0] description: {:?}", desc_0);
+    println!("----------");
+    // let orients: Vec<Orient> = orient(s0, [0,1], s1, [0,1]);
+    // assert!(orients.len() == 1);
+    // println!("Orient: {:?}", orients[0]);
+    // println!("If you remap using orient then ({})-to-({}) becomes ({})-to-({})",
+    //          s1.beacons[0], s1.beacons[1], orients[0].apply(s1.beacons[0]), orients[0].apply(s1.beacons[1]));
     Ok(())
 }
 
