@@ -2,8 +2,12 @@ use std::fmt;
 use std::fmt::Formatter;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
+use rand::RngCore;
 use regex::Regex;
 use rand::seq::SliceRandom;
+
+
+const USE_SHUFFLE: bool = false;
 
 
 /// An error that we can encounter when reading the input.
@@ -180,6 +184,11 @@ impl Scanner {
             }
         }
         Scanner{name, beacons}
+    }
+
+    /// Returns a count of the Beacons
+    fn len(&self) -> usize {
+        self.beacons.len()
     }
 
     // Returns a sorted list of the squares of the distances between pairs of points.
@@ -627,12 +636,12 @@ fn orients_for_unique_seg_length(source: &Scanner, dest: &Scanner, unique_length
 }
 
 
-/// Given two Scanners with overlapping Beacons, this finds unique lengths among the
-/// overlap to figure out how they are oriented, then returns a new Scanner that consists
-/// of the two combined (with the orientation of the first one). Except once in a while
-/// it fails. In that case it returns None.
+/// Given two Scanners which may have overlapping Beacons, this finds unique lengths among
+/// the overlap to figure out how they are oriented, then returns a new Scanner that consists
+/// of the two combined (with the orientation of the first one). If it cannot find a fit
+/// then it returns None instead.
 fn merge_overlapping_scanners(source: &Scanner, dest: &Scanner) -> Option<Scanner> {
-    println!("Merging {} --with-- {}", source.name, dest.name); // Keep this for monitoring progress
+    // println!("Merging {} --with-- {}", source.name, dest.name); // Keep this for monitoring progress
     let shared_uniques = source.get_lengths().shared_uniques(&dest.get_lengths());
 
     let mut unique_lengths = shared_uniques.lengths.iter();
@@ -658,16 +667,25 @@ fn merge_overlapping_scanners(source: &Scanner, dest: &Scanner) -> Option<Scanne
         println!("  Problems! there were no orients");
         return None;
     } else if orients.len() > 1 {
-        // There are 2+ orients. Make another attempt to determine which is correct
-        // before giving up (by returning None).
-        println!("  Orients: {:?}", orients);
-        println!("  Problems! there were {} orients", orients.len());
-        return None;
+        // There are 2+ orients. We COULD try counting overlaps, but in practice
+        // this happens so rarely that the code to support it isn't written yet.
+        panic!("Code could handle multiple possible orients, but it isn't implemented yet.");
     }
 
-    // --- Build the response and return it ----
+    // --- Build the response and check how many beacons overlapped ----
     assert!(orients.len() == 1);
-    Some(source.merge_with(dest, orients[0]))
+    let merged: Scanner = source.merge_with(dest, orients[0]);
+    let overlapping = (source.len() + dest.len()) - merged.len();
+    if overlapping < 12 {
+        // The best fit we could find had fewer than 12 overlapping beacons. The
+        // problem promised us at least 12 for each match. So we're going to declare
+        // that that these two Scanners simply didn't fit together.
+        println!("Rejecting the match because there are only {} overlapping beacons.", overlapping);
+        return None;
+    } else {
+        // We've got a good fit!
+        Some(merged)
+    }
 }
 
 
@@ -691,14 +709,23 @@ fn merge_once(scanners: Vec<Scanner>) -> Vec<Scanner> {
 
     // --- Merge it ---
     let mut overlap_iter = overlaps.iter();
-    let mut overlap: Overlap = overlap_iter.next().unwrap().clone();
+    let mut overlap: &Overlap = overlap_iter.next().unwrap();
     let mut merged_scanner_opt: Option<Scanner>;
     loop {
         merged_scanner_opt = merge_overlapping_scanners(&scanners[overlap.pos_1], &scanners[overlap.pos_2]);
         if merged_scanner_opt.is_some() {
             break
         } else {
-            overlap = *overlap_iter.next().expect("Ran out of overlaps to try");
+            match overlap_iter.next() {
+                Some(next_overlap) => overlap = next_overlap,
+                None => {
+                    println!("Before giving up, the list of scanners was this:");
+                    for scanner in &scanners {
+                        println!("  {}", scanner.name);
+                    }
+                    panic!("We can't do it... ran out of overlaps to try!");
+                }
+            }
         }
     }
     assert!(merged_scanner_opt.is_some());
@@ -719,9 +746,12 @@ fn merge_once(scanners: Vec<Scanner>) -> Vec<Scanner> {
 fn run() -> Result<(),InputError> {
     let mut scanners = read_beacon_file()?;
 
-    println!("Trying a shuffle first, in case that helps.");
-    scanners.shuffle(&mut rand::thread_rng());
-    println!("Shuffled!");
+    if USE_SHUFFLE {
+        let mut rng = rand::thread_rng();
+        println!("Trying a shuffle first, in case that helps. Random is {}", rng.next_u32());
+        scanners.shuffle(&mut rng);
+        println!("Shuffled!");
+    }
 
     assert!(scanners.len() > 0);
     while scanners.len() > 1 {
