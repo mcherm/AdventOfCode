@@ -3,6 +3,7 @@ use std::fmt::Formatter;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use regex::Regex;
+use rand::seq::SliceRandom;
 
 
 /// An error that we can encounter when reading the input.
@@ -356,12 +357,12 @@ impl LengthSet {
         LengthSet{lengths}
     }
 
-    #[allow(dead_code)]
+    #[allow(dead_code)] // Note: Even if not used, this code is worth keeping
     fn len(&self) -> usize {
         self.lengths.len()
     }
 
-    #[allow(dead_code)] // FIXME: Remove
+    #[allow(dead_code)] // Note: Even if not used, this code is worth keeping
     fn has_dupes(&self) -> bool {
         // use the fact that it's sorted: any dupes must be adjacent.
         for i in 1..self.lengths.len() {
@@ -372,18 +373,51 @@ impl LengthSet {
         false
     }
 
-    // finds number of matches between 2 lengthsets
+    /// Finds number of matches between 2 lengthsets. A repeated item only counts
+    /// once.
     fn overlaps(&self, other: &Self) -> i32 {
-        // FIXME: Could exploit sorting to be more efficient if needed.
-        let mut count: i32 = 0;
-        for len_1 in &self.lengths {
-            for len_2 in &other.lengths {
-                if len_1 == len_2 {
-                    count += 1;
+        let mut count = 0;
+        let mut i = 0;
+        let mut j = 0;
+        loop {
+            let self_value = self.lengths[i];
+            let other_value = other.lengths[j];
+            let should_incr_i;
+            let should_incr_j;
+            if self_value == other_value {
+                count += 1;
+                should_incr_i = true;
+                should_incr_j = true;
+            } else if self_value < other_value {
+                should_incr_i = true;
+                should_incr_j = false;
+            } else {
+                should_incr_i = true;
+                should_incr_j = true;
+            }
+            if should_incr_i {
+                loop { // keep going until the value changes
+                    i += 1;
+                    if i == self.lengths.len() {
+                        return count; // no more overlaps to be found
+                    }
+                    if self.lengths[i] != self_value {
+                        break; // we've incremented i enogh
+                    }
+                }
+            }
+            if should_incr_j {
+                loop { // keep going until the value changes
+                    j += 1;
+                    if j == other.lengths.len() {
+                        return count; // no more overlaps to be found
+                    }
+                    if self.lengths[j] != other_value {
+                        break; // we've incremented j enough
+                    }
                 }
             }
         }
-        count
     }
 
     /// Returns a new LengthSet containing only the elements of this one that occur
@@ -421,12 +455,13 @@ impl LengthSet {
         return LengthSet::new(values)
     }
 
-    #[allow(dead_code)]
+    #[allow(dead_code)] // This one is useful even if we're not using it at the moment
     fn contains(&self, val: LenSq) -> bool {
         return self.lengths.contains(&val)
     }
 
     /// Returns a new LengthSet which has all values present in either self or other.
+    #[allow(dead_code)] // This one is useful even if we're not using it at the moment
     fn union(&self, other: &Self) -> Self {
         let mut values: Vec<LenSq> = Vec::new();
         for val in &self.lengths {
@@ -449,11 +484,6 @@ impl LengthSet {
 
 
 impl PointDescription {
-    /// Returns a LengthSet of ALL "axis lengths" (x_lengths, y_lengths, z_lengths).
-    #[allow(dead_code)] // FIXME: Remove
-    fn all_axis_lengths(&self) -> LengthSet {
-        self.x_lengths.union(&self.y_lengths).union(&self.z_lengths)
-    }
 }
 
 
@@ -508,7 +538,6 @@ impl fmt::Display for Overlap {
 /// this returns a Vec of the possible AxisOrients for that axis of the source which will successfully
 /// map these two endpoints.
 fn get_possible_orients(this_axis: Axis, source_beacons: [Beacon;2], dest_beacons: [Beacon;2], allowed_maps: Vec<Axis>) -> Vec<AxisOrient> {
-    // println!("get_possible_orients({})", this_axis); // FIXME: May need this again
     let [source_point, other_source_point] = source_beacons;
     let mut axis_orients: Vec<AxisOrient> = Vec::new();
     for (dest_point, other_dest_point) in [(dest_beacons[0], dest_beacons[1]), (dest_beacons[1], dest_beacons[0])] {
@@ -516,9 +545,7 @@ fn get_possible_orients(this_axis: Axis, source_beacons: [Beacon;2], dest_beacon
             for flip in [false, true] {
                 let offset: Coord = source_point.get(this_axis) - dest_point.get(maps_to) * (if flip {-1} else {1});
                 let axis_orient = AxisOrient{maps_to, flip, offset};
-                // println!("  does {} = {}? if so, {} to {} works.", axis_orient.apply(other_dest_point), other_source_point.get(this_axis), dest_point, axis_orient); // FIXME: May need this again
                 if axis_orient.apply(other_dest_point) == other_source_point.get(this_axis) {
-                    // println!("  YES"); // FIXME: May need this again
                     assert_eq!(axis_orient.apply(dest_point), source_point.get(this_axis)); // the other point's Y works
                     // The mapping works on x for both ends of this line
                     axis_orients.push(axis_orient)
@@ -692,9 +719,14 @@ fn merge_once(scanners: Vec<Scanner>) -> Vec<Scanner> {
 fn run() -> Result<(),InputError> {
     let mut scanners = read_beacon_file()?;
 
+    println!("Trying a shuffle first, in case that helps.");
+    scanners.shuffle(&mut rand::thread_rng());
+    println!("Shuffled!");
+
     assert!(scanners.len() > 0);
     while scanners.len() > 1 {
-        scanners = merge_once(scanners)
+        scanners = merge_once(scanners);
+        println!("  I now have {} scanner groups left.", scanners.len());
     }
     println!("IN THE END, scanners: {}", scanners[0]);
     println!("There are {} beacons.", scanners[0].beacons.len());
@@ -741,7 +773,6 @@ mod test {
             AxisOrient{maps_to: Axis::Z, flip: false, offset: 3},
         ]};
         let b = or.apply(Beacon{x: 100, y: 200, z: 300});
-        println!("b: {}", b);
         assert_eq!(b, Beacon{x: 201, y: 102, z: 303});
     }
 }
