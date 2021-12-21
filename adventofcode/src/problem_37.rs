@@ -636,26 +636,41 @@ fn orients_for_unique_seg_length(source: &Scanner, dest: &Scanner, unique_length
 }
 
 
+/// This is passed two Scanners and it returns a list of lengths (squared) to try
+/// for fitting these two scanners together. We want to try to lengths that are rare
+/// in each scanner, so max_occur is the maximum number of times a length can occur
+/// in either scanner in order to be included. So if max_occur = 1 then it will
+/// only return lengths that are unique within each scanner and exist in both
+/// scanners.
+fn find_lengths_to_try(s1: &Scanner, s2: &Scanner, max_occur: usize) -> Vec<LenSq> {
+    // FIXME: try to lift the restriction that max_occur == 1
+    assert!(max_occur == 1);
+    let shared_uniques = s1.get_lengths().shared_uniques(&s2.get_lengths());
+    shared_uniques.lengths
+}
+
+
+
 /// Given two Scanners which may have overlapping Beacons, this finds unique lengths among
 /// the overlap to figure out how they are oriented, then returns a new Scanner that consists
 /// of the two combined (with the orientation of the first one). If it cannot find a fit
 /// then it returns None instead.
 fn merge_overlapping_scanners(source: &Scanner, dest: &Scanner) -> Option<Scanner> {
     // println!("Merging {} --with-- {}", source.name, dest.name); // Keep this for monitoring progress
-    let shared_uniques = source.get_lengths().shared_uniques(&dest.get_lengths());
-
-    let mut unique_lengths = shared_uniques.lengths.iter();
-    let first_unique_length_opt = unique_lengths.next();
-    if first_unique_length_opt.is_none() {
-        println!("  Problems! There were no unique lengths.");
+    let max_length_occur = 1; // FIXME: Maybe don't hard-code it
+    let lengths_to_try_vec = find_lengths_to_try(source, dest, max_length_occur);
+    let mut lengths_to_try_iter = lengths_to_try_vec.iter();
+    let first_length_opt = lengths_to_try_iter.next();
+    if first_length_opt.is_none() {
+        println!("  Failed. There were no lengths to try at max_length_occur = {}.", max_length_occur);
         return None;
     }
-    let first_unique_length = first_unique_length_opt.unwrap();
+    let first_length = first_length_opt.unwrap();
 
-    let mut orients = orients_for_unique_seg_length(source, dest, *first_unique_length);
+    let mut orients = orients_for_unique_seg_length(source, dest, *first_length);
     if orients.len() > 1 {
-        for next_unique_length in unique_lengths {
-            let new_orients = orients_for_unique_seg_length(source, dest, *next_unique_length);
+        for next_length in lengths_to_try_iter {
+            let new_orients = orients_for_unique_seg_length(source, dest, *next_length);
             orients.retain(|orient| new_orients.contains(orient));
             if orients.len() <= 1 {
                 break; // once we have just one, we can quit.
