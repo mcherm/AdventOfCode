@@ -5,6 +5,7 @@ use std::io::{BufRead, BufReader};
 use rand::RngCore;
 use regex::Regex;
 use rand::seq::SliceRandom;
+use std::collections::HashMap;
 
 
 const USE_SHUFFLE: bool = false;
@@ -228,6 +229,7 @@ impl Scanner {
         }
     }
 
+    // FIXME: Remove this after I finish changing it to look at lines that aren't just unique
     /// Returns the list of PointDescriptions for points that include this length
     /// as one of their lengths. The length MUST be unique, which is why this can assume
     /// it will  always return exactly 2 points.
@@ -240,6 +242,22 @@ impl Scanner {
             }
         }
         panic!("To reach here the length wasn't in the scanner.");
+    }
+
+
+    /// Returns the list of PointDescriptions for pairs of points that are this far apart.
+    fn descriptions_for_length(&self, length: LenSq) -> Vec<[PointDescription;2]> {
+        let mut answer = Vec::new();
+        for bigger_pos in 0..self.beacons.len() {
+            for smaller_pos in 0..bigger_pos {
+                let b1 = self.beacons[smaller_pos];
+                let b2 = self.beacons[bigger_pos];
+                if get_length(&b1, &b2) == length {
+                    answer.push([self.get_point_description(smaller_pos), self.get_point_description(bigger_pos)]);
+                }
+            }
+        }
+        answer
     }
 
 
@@ -485,15 +503,44 @@ impl LengthSet {
     /// Given another LengthSet, finds a LengthSet of the lengths that are unique within
     /// each LengthSet but also in common between them. In principle, there might not
     /// be any, and it will return an empty LengthSet.
-    fn shared_uniques(&self, other: &LengthSet) -> LengthSet {
+    fn shared_uniques(&self, other: &Self) -> LengthSet {
         self.uniques().intersect(&other.uniques())
+    }
+
+
+    /// Returns a LengthSet that contains all the lengths that occur level_of_uniqueness
+    /// times or fewer. If level_of_uniqueness == 1 it will find the unique lengths, if
+    /// level_of_uniqueness == 2 it will fine all unique and duplicate lengths, and so
+    /// forth. Each length will occur only ONCE in the resulting LengthSet.
+    fn to_level_of_uniqueness(&self, level_of_uniqueness: usize) -> Self {
+        // use the fact that it's sorted: any dupes must be adjacent.
+        let mut counts: HashMap<LenSq, usize> = HashMap::new();
+
+        for length in &self.lengths {
+            counts.insert(*length, counts.get(length).unwrap_or(&0) + 1);
+        }
+
+        let mut answer_lengths: Vec<LenSq> = Vec::new();
+        for (length, count) in counts {
+            if count <= level_of_uniqueness {
+                answer_lengths.push(length);
+            }
+        }
+        LengthSet::new(answer_lengths)
+    }
+
+
+    /// Given another LengthSet, finds a LengthSet of the lengths that occur no more than
+    /// level_of_uniqueness times in either set. This is not sorted in any particular
+    /// order but it DOES guarantee that each length appears in it only once.
+    fn shared_to_level_of_uniqueness(&self, other: &Self, level_of_uniqueness: usize) -> Self {
+        let mine = self.to_level_of_uniqueness(level_of_uniqueness);
+        let theirs = other.to_level_of_uniqueness(level_of_uniqueness);
+        mine.intersect(&theirs)
     }
 
 }
 
-
-impl PointDescription {
-}
 
 
 
@@ -625,28 +672,41 @@ fn orients_for_segment(source_points: [Beacon;2], dest_points: [Beacon;2]) -> Ve
 }
 
 
-fn orients_for_unique_seg_length(source: &Scanner, dest: &Scanner, unique_length: LenSq) -> Vec<Orient> {
-    let source_descs = source.descriptions_for_unique_length(unique_length);
-    let dest_descs = dest.descriptions_for_unique_length(unique_length);
-    let orients = orients_for_segment(
-        [source_descs[0].beacon, source_descs[1].beacon],
-        [dest_descs[0].beacon, dest_descs[1].beacon],
-    );
+// Given two scanners and a length, this returns the list of all orientations that might
+// work for any segments (one in source, the other in dest) that have that length
+fn orients_for_seg_length(source: &Scanner, dest: &Scanner, length: LenSq) -> Vec<Orient> {
+    let source_pairs = source.descriptions_for_length(length);
+    let dest_pairs = dest.descriptions_for_length(length);
+    let mut orients: Vec<Orient> = Vec::new();
+    for source_pair in &source_pairs {
+        for dest_pair in &dest_pairs {
+            // Got a point-pair from each one.
+            let orients_for_seg = orients_for_segment(
+                [source_pair[0].beacon, source_pair[1].beacon],
+                [dest_pair[0].beacon, dest_pair[1].beacon],
+            );
+            // --- Add any that are new ---
+            for orient in &orients_for_seg {
+                if !orients.contains(orient) {
+                    orients.push(*orient);
+                }
+            }
+        }
+    }
     orients
 }
 
 
 /// This is passed two Scanners and it returns a list of lengths (squared) to try
 /// for fitting these two scanners together. We want to try to lengths that are rare
-/// in each scanner, so max_occur is the maximum number of times a length can occur
-/// in either scanner in order to be included. So if max_occur = 1 then it will
+/// in each scanner, so level_of_uniqueness is the maximum number of times a length can occur
+/// in either scanner in order to be included. So if level_of_uniqueness == 1 then it will
 /// only return lengths that are unique within each scanner and exist in both
-/// scanners.
-fn find_lengths_to_try(s1: &Scanner, s2: &Scanner, max_occur: usize) -> Vec<LenSq> {
-    // FIXME: try to lift the restriction that max_occur == 1
-    assert!(max_occur == 1);
-    let shared_uniques = s1.get_lengths().shared_uniques(&s2.get_lengths());
-    shared_uniques.lengths
+/// scanners, while if level_of_uniqueness == 2 it will return lengths that occur no more
+/// than twice in each.
+fn find_lengths_to_try(s1: &Scanner, s2: &Scanner, level_of_uniqueness: usize) -> Vec<LenSq> {
+    let shared_lengths = s1.get_lengths().shared_to_level_of_uniqueness(&s2.get_lengths(), level_of_uniqueness);
+    shared_lengths.lengths
 }
 
 
@@ -654,26 +714,17 @@ fn find_lengths_to_try(s1: &Scanner, s2: &Scanner, max_occur: usize) -> Vec<LenS
 /// Given two Scanners which may have overlapping Beacons, this finds unique lengths among
 /// the overlap to figure out how they are oriented, then returns a new Scanner that consists
 /// of the two combined (with the orientation of the first one). If it cannot find a fit
-/// then it returns None instead.
-fn merge_overlapping_scanners(source: &Scanner, dest: &Scanner) -> Option<Scanner> {
-    // println!("Merging {} --with-- {}", source.name, dest.name); // Keep this for monitoring progress
-    let max_length_occur = 1; // FIXME: Maybe don't hard-code it
-    let lengths_to_try_vec = find_lengths_to_try(source, dest, max_length_occur);
-    let mut lengths_to_try_iter = lengths_to_try_vec.iter();
-    let first_length_opt = lengths_to_try_iter.next();
-    if first_length_opt.is_none() {
-        println!("  Failed. There were no lengths to try at max_length_occur = {}.", max_length_occur);
-        return None;
-    }
-    let first_length = first_length_opt.unwrap();
+/// then it returns None instead. It will consider lengths that have a level of uniqueness
+/// of up to level_of_uniqueness repetitions.
+fn merge_overlapping_scanners(source: &Scanner, dest: &Scanner, level_of_uniqueness: usize) -> Option<Scanner> {
+    println!("Merging {} --with-- {}", source.name, dest.name); // Keep this for monitoring progress
+    let lengths_to_try_vec = find_lengths_to_try(source, dest, level_of_uniqueness);
 
-    let mut orients = orients_for_unique_seg_length(source, dest, *first_length);
-    if orients.len() > 1 {
-        for next_length in lengths_to_try_iter {
-            let new_orients = orients_for_unique_seg_length(source, dest, *next_length);
-            orients.retain(|orient| new_orients.contains(orient));
-            if orients.len() <= 1 {
-                break; // once we have just one, we can quit.
+    let mut orients: Vec<Orient> = Vec::new();
+    for length in lengths_to_try_vec {
+        for orient in orients_for_seg_length(source, dest, length) {
+            if !orients.contains(&orient) {
+                orients.push(orient);
             }
         }
     }
@@ -681,26 +732,18 @@ fn merge_overlapping_scanners(source: &Scanner, dest: &Scanner) -> Option<Scanne
     if orients.len() == 0 {
         println!("  Problems! there were no orients");
         return None;
-    } else if orients.len() > 1 {
-        // There are 2+ orients. We COULD try counting overlaps, but in practice
-        // this happens so rarely that the code to support it isn't written yet.
-        panic!("Code could handle multiple possible orients, but it isn't implemented yet.");
     }
 
     // --- Build the response and check how many beacons overlapped ----
-    assert!(orients.len() == 1);
-    let merged: Scanner = source.merge_with(dest, orients[0]);
-    let overlapping = (source.len() + dest.len()) - merged.len();
-    if overlapping < 12 {
-        // The best fit we could find had fewer than 12 overlapping beacons. The
-        // problem promised us at least 12 for each match. So we're going to declare
-        // that that these two Scanners simply didn't fit together.
-        println!("Rejecting the match because there are only {} overlapping beacons.", overlapping);
-        return None;
-    } else {
-        // We've got a good fit!
-        Some(merged)
+    for orient in orients {
+        let merged: Scanner = source.merge_with(dest, orient);
+        let overlapping = (source.len() + dest.len()) - merged.len();
+        if overlapping >= 12 {
+            // We've got a good fit!
+            return Some(merged)
+        }
     }
+    return None;
 }
 
 
@@ -708,6 +751,56 @@ fn merge_overlapping_scanners(source: &Scanner, dest: &Scanner) -> Option<Scanne
 /// and merges them (hopefully... we panic if things go wrong). Then returns a new
 /// list of scanners with the merged one at the front.
 fn merge_once(scanners: Vec<Scanner>) -> Vec<Scanner> {
+    assert!(scanners.len() > 1);
+
+    // --- Review the overlaps between scanners and pick the order in which we want to try to merge them ---
+    let mut overlaps = Vec::new();
+    for (i, scanner1) in scanners.iter().enumerate() {
+        for (beyond_i, scanner2) in scanners[(i+1)..].iter().enumerate() {
+            let j = i + 1 + beyond_i;
+            let overlap_count = scanner1.get_lengths().overlaps(&scanner2.get_lengths());
+            if overlap_count > 0 {
+                overlaps.push(Overlap{pos_1: i, pos_2: j, overlap_count});
+            }
+        }
+    }
+    overlaps.sort_by_key(|x| -1 * x.overlap_count);
+    println!("overlaps: {:?}", overlaps); // FIXME: Remove
+    assert!(overlaps.len() >= 1);
+
+    // --- try the overlaps until something works or we give up ---
+    let level_of_uniqueness: usize = 5; // FIXME: Do we really need this? What's up?
+    for overlap in overlaps {
+        let merged_scanner_opt: Option<Scanner> = merge_overlapping_scanners(
+            &scanners[overlap.pos_1], &scanners[overlap.pos_2], level_of_uniqueness
+        );
+        match merged_scanner_opt {
+            Some(merged_scanner) => {
+                // --- Build the new list of scanners ---
+                let mut new_scanners = Vec::new();
+                new_scanners.push(merged_scanner);
+                for (i, scanner) in scanners.iter().enumerate() {
+                    if i != overlap.pos_1 && i != overlap.pos_2 {
+                        new_scanners.push(scanner.clone());
+                    }
+                }
+                return new_scanners;
+            },
+            None => {}, // didn't merge that pair so try the next overlap
+        }
+    }
+
+    println!("Before giving up, the list of scanners was this:");
+    for scanner in &scanners {
+        println!("  {}", scanner.name);
+    }
+    panic!("We can't do it... ran out of overlaps to try!");
+}
+
+/// Finds one highly-connected pair of scanners (starting from the front of the list)
+/// and merges them (hopefully... we panic if things go wrong). Then returns a new
+/// list of scanners with the merged one at the front.
+fn merge_once_OLD(scanners: Vec<Scanner>) -> Vec<Scanner> {
     assert!(scanners.len() > 1);
 
     // --- Review the overlaps and pick the order in which we want to try to merge them ---
@@ -727,7 +820,7 @@ fn merge_once(scanners: Vec<Scanner>) -> Vec<Scanner> {
     let mut overlap: &Overlap = overlap_iter.next().unwrap();
     let mut merged_scanner_opt: Option<Scanner>;
     loop {
-        merged_scanner_opt = merge_overlapping_scanners(&scanners[overlap.pos_1], &scanners[overlap.pos_2]);
+        merged_scanner_opt = merge_overlapping_scanners(&scanners[overlap.pos_1], &scanners[overlap.pos_2], 1);
         if merged_scanner_opt.is_some() {
             break
         } else {
