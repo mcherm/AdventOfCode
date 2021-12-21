@@ -503,6 +503,7 @@ impl LengthSet {
     /// Given another LengthSet, finds a LengthSet of the lengths that are unique within
     /// each LengthSet but also in common between them. In principle, there might not
     /// be any, and it will return an empty LengthSet.
+    #[allow(dead_code)]
     fn shared_uniques(&self, other: &Self) -> LengthSet {
         self.uniques().intersect(&other.uniques())
     }
@@ -740,9 +741,11 @@ fn merge_overlapping_scanners(source: &Scanner, dest: &Scanner, level_of_uniquen
         let overlapping = (source.len() + dest.len()) - merged.len();
         if overlapping >= 12 {
             // We've got a good fit!
+            println!("  Success! We merged it.");
             return Some(merged)
         }
     }
+    println!("  Problems! We tried every orient and none matched.");
     return None;
 }
 
@@ -765,7 +768,7 @@ fn merge_once(scanners: Vec<Scanner>) -> Vec<Scanner> {
         }
     }
     overlaps.sort_by_key(|x| -1 * x.overlap_count);
-    println!("overlaps: {:?}", overlaps); // FIXME: Remove
+    println!("  overlaps: {:?}", overlaps); // FIXME: Remove
     assert!(overlaps.len() >= 1);
 
     // --- try the overlaps until something works or we give up ---
@@ -800,6 +803,7 @@ fn merge_once(scanners: Vec<Scanner>) -> Vec<Scanner> {
 /// Finds one highly-connected pair of scanners (starting from the front of the list)
 /// and merges them (hopefully... we panic if things go wrong). Then returns a new
 /// list of scanners with the merged one at the front.
+#[allow(dead_code, non_snake_case)]
 fn merge_once_OLD(scanners: Vec<Scanner>) -> Vec<Scanner> {
     assert!(scanners.len() > 1);
 
