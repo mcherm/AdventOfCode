@@ -9,6 +9,7 @@ use std::collections::HashMap;
 
 
 const USE_SHUFFLE: bool = false;
+const MIN_OVERLAPS_FOR_MATCH: usize = 6;
 
 
 /// An error that we can encounter when reading the input.
@@ -233,6 +234,7 @@ impl Scanner {
     /// Returns the list of PointDescriptions for points that include this length
     /// as one of their lengths. The length MUST be unique, which is why this can assume
     /// it will  always return exactly 2 points.
+    #[allow(dead_code)]
     fn descriptions_for_unique_length(&self, length: LenSq) -> [PointDescription;2] {
         for (pos, beacon) in self.beacons.iter().enumerate() {
             for (other_pos, other_beacon) in self.beacons.iter().enumerate() {
@@ -739,7 +741,7 @@ fn merge_overlapping_scanners(source: &Scanner, dest: &Scanner, level_of_uniquen
     for orient in orients {
         let merged: Scanner = source.merge_with(dest, orient);
         let overlapping = (source.len() + dest.len()) - merged.len();
-        if overlapping >= 12 {
+        if overlapping >= MIN_OVERLAPS_FOR_MATCH {
             // We've got a good fit!
             println!("  Success! We merged it.");
             return Some(merged)
@@ -857,6 +859,23 @@ fn merge_once_OLD(scanners: Vec<Scanner>) -> Vec<Scanner> {
 
 fn run() -> Result<(),InputError> {
     let mut scanners = read_beacon_file()?;
+
+    // fn try_merge(scanners: &Vec<Scanner>, i: usize, j: usize) {
+    //     let s0: &Scanner = &scanners[i];
+    //     let s1: &Scanner = &scanners[j];
+    //     match merge_overlapping_scanners(s0, s1, 12) {
+    //         None => println!("Can't merge {} and {}", i, j),
+    //         Some(_) => println!("*****Successfully merged {} and {}", i, j),
+    //     }
+    // }
+    // for j in 0..37 {
+    //     try_merge(&scanners, 0, j);
+    //     // if j != 0 {
+    //     // }
+    // }
+    //
+    //
+    // if true {return Ok(())}; // FIXME: This just stops after my experiment.
 
     if USE_SHUFFLE {
         let mut rng = rand::thread_rng();
