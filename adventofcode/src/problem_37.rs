@@ -255,7 +255,6 @@ impl Eq for Scanner {}
 
 
 impl Axis {
-    #[allow(dead_code)] // FIXME: Remove
     fn all() -> [Axis;3] {
         [Axis::X, Axis::Y, Axis::Z]
     }
@@ -280,7 +279,6 @@ impl Axis {
         panic!("With only 3 options, we must have found one.")
     }
 
-    #[allow(dead_code)] // FIXME: Remove
     fn index(&self) -> usize {
         match self {
             Axis::X => 0,
@@ -351,38 +349,6 @@ impl Orient {
 }
 
 
-// FIXME: Maybe later? may be overengineered
-// impl<'a> Pair<'a> {
-//     fn new(
-//         scanner_1: &'a Scanner,
-//         s1_positions: [usize;2],
-//         scanner_2: &'a Scanner,
-//         s2_positions: [usize;2],
-//     ) -> Self {
-//         assert_eq!(
-//             get_length(&scanner_1.beacons[s1_positions[0]], &scanner_1.beacons[s1_positions[1]]),
-//             get_length(&scanner_2.beacons[s2_positions[0]], &scanner_2.beacons[s2_positions[1]])
-//         );
-//         Pair{scanner_1, scanner_2, s1_positions, s2_positions}
-//     }
-// }
-
-
-// FIXME: Maybe later? may be overengineered
-// impl<'a> PointRef<'a> {
-//     fn get_beacon(&self) -> &Beacon {
-//         &self.scanner.beacons[self.pos]
-//     }
-// }
-
-// FIXME: Maybe later? may be overengineered
-// impl<'a> PointRefPair {
-//     fn new(a: PointRef<'a>, b: PointRef<'a>) -> Self {
-//         let dist = get_length(a.get_beacon(), b.get_beacon());
-//         PointRefPair(a, b, dist)
-//     }
-// }
-
 
 impl LengthSet {
     fn new(mut lengths: Vec<LenSq>) -> Self {
@@ -397,8 +363,9 @@ impl LengthSet {
 
     #[allow(dead_code)] // FIXME: Remove
     fn has_dupes(&self) -> bool {
-        for p in 1..self.lengths.len() {
-            if self.lengths[p] == self.lengths[p-1] {
+        // use the fact that it's sorted: any dupes must be adjacent.
+        for i in 1..self.lengths.len() {
+            if self.lengths[i-1] == self.lengths[i] {
                 return true;
             }
         }
@@ -407,7 +374,7 @@ impl LengthSet {
 
     // finds number of matches between 2 lengthsets
     fn overlaps(&self, other: &Self) -> i32 {
-        // Note: Could exploit sorting to be more efficient if needed.
+        // FIXME: Could exploit sorting to be more efficient if needed.
         let mut count: i32 = 0;
         for len_1 in &self.lengths {
             for len_2 in &other.lengths {
@@ -422,14 +389,22 @@ impl LengthSet {
     /// Returns a new LengthSet containing only the elements of this one that occur
     /// precisely once.
     fn uniques(&self) -> Self {
-        // NOTE: Can be made more efficient if desired using the sorted property
-        let counts: Vec<usize> = self.lengths.iter().map(|x| {
-            self.lengths.iter().filter(|v| *v == x).count()
-        }).collect();
+        // use the fact that it's sorted: any dupes must be adjacent.
         let mut uniques: Vec<LenSq> = Vec::new();
-        for (i, val) in self.lengths.iter().enumerate() {
-            if counts[i] == 1 {
-                uniques.push(*val)
+        let mut previous: LenSq = self.lengths[0];
+        let mut previous_is_dup = false;
+        for i in 1..self.lengths.len() {
+            let subsequent = self.lengths[i];
+            if subsequent == previous {
+                // it's a dupe
+                previous_is_dup = true;
+            } else {
+                // new one is different
+                if !previous_is_dup {
+                    uniques.push(previous);
+                }
+                previous = subsequent;
+                previous_is_dup = false;
             }
         }
         return LengthSet::new(uniques)
@@ -522,37 +497,11 @@ impl fmt::Display for Orient {
 }
 impl fmt::Display for Overlap {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "<({},{}): {}>", self.pos_1, self.pos2, self.overlap_count)
+        write!(f, "<({},{}): {}>", self.pos_1, self.pos_2, self.overlap_count)
     }
 }
 
 
-// FIXME: I tried to create the below, but I just can't figure out how to pass an iterator
-// /// This is given an iterable over LengthSets and values, along with a single LenSq. It expects
-// /// to find that LenSq in EXACTLY one of the LengthSets (and panics if that isn't true). It
-// /// returns the corresponding value for the LengthSet that contained the LenSq.
-// fn find_only_containing<'a, I>(
-//     len_sq: LenSq,
-//     set_value_pairs: impl Iterator<Item=(&'a LengthSet, &'a PointDescription)>
-// ) -> &'a PointDescription
-//     where
-//         I: IntoIterator,
-//         I::Item: &'a (&'a LengthSet, &'a PointDescription),
-// {
-//     let mut answer: Option<&PointDescription> = None;
-//     for (length_set, val) in set_value_pairs.into_iter() {
-//         if length_set.contains(len_sq) {
-//             match answer {
-//                 None => answer = Some(val),
-//                 Some(_) => panic!("Multiple LengthSets contained the value.")
-//             }
-//         }
-//     }
-//     match answer {
-//         Some(val) => return val,
-//         None => panic!("No LengthSets contained the value."),
-//     }
-// }
 
 
 /// Given an axis in the source, the two source beacons, the two dest beacons, and a few maps we're allowed to use,
@@ -580,6 +529,11 @@ fn get_possible_orients(this_axis: Axis, source_beacons: [Beacon;2], dest_beacon
     axis_orients
 }
 
+
+/// Given two beacons in one Scanner and two beacons in another scanner where we suspect
+/// that the pairs correspond to each other (in some order) this returns a vector of the
+/// different orientations that could be applied to the "dest" Scanner to make them line
+/// up.
 fn orients_for_segment(source_points: [Beacon;2], dest_points: [Beacon;2]) -> Vec<Orient> {
     // --- determine possible x_axis_orients ---
     let x_axis_orients = get_possible_orients(
@@ -625,7 +579,9 @@ fn orients_for_segment(source_points: [Beacon;2], dest_points: [Beacon;2]) -> Ve
             if po.apply(dest_points[0]) == source_points[0] && po.apply(dest_points[1]) == source_points[1] ||
                 po.apply(dest_points[1]) == source_points[0] && po.apply(dest_points[0]) == source_points[1]
             {
-                orients.push(po);
+                if !orients.contains(&po) {
+                    orients.push(po);
+                }
             }
         }
     }
@@ -671,13 +627,20 @@ fn merge_overlapping_scanners(source: &Scanner, dest: &Scanner) -> Option<Scanne
         }
     }
 
-    if orients.len() == 1 {
-        Some(source.merge_with(dest, orients[0]))
-    } else {
+    if orients.len() == 0 {
+        println!("  Problems! there were no orients");
+        return None;
+    } else if orients.len() > 1 {
+        // There are 2+ orients. Make another attempt to determine which is correct
+        // before giving up (by returning None).
         println!("  Orients: {:?}", orients);
         println!("  Problems! there were {} orients", orients.len());
-        None
+        return None;
     }
+
+    // --- Build the response and return it ----
+    assert!(orients.len() == 1);
+    Some(source.merge_with(dest, orients[0]))
 }
 
 
