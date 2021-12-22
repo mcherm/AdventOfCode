@@ -159,6 +159,7 @@ fn squared(c: Coord) -> LenSq {
 }
 
 // Returns the length squared between the two points
+// FIXME: This gets called a boatload of times. It should be pre-calculated inside Scanner. But that's only a performance problem
 fn get_length(b1: &Beacon, b2: &Beacon) -> LenSq {
     squared(b1.x - b2.x) + squared(b1.y - b2.y) + squared(b1.z - b2.z)
 }
@@ -350,7 +351,7 @@ impl AxisOrient {
 const LEGAL_ORIENT_KEYS: [&str;24] = [
     "X+Y+Z+",
     "Y+X-Z+",
-    "Y+X-Z+",
+    "X-Y-Z+",
     "Y-X+Z+",
     "Z-Y+X+",
     "Y+Z+X+",
@@ -362,7 +363,7 @@ const LEGAL_ORIENT_KEYS: [&str;24] = [
     "Z+X+Y+",
     "X+Y-Z-",
     "Y-X-Z-",
-    "Y+X+Z-",
+    "X-Y+Z-",
     "Y+X+Z-",
     "Z+Y+X-",
     "Y+Z-X-",
@@ -709,12 +710,8 @@ fn orients_for_segment(source_points: [Beacon;2], dest_points: [Beacon;2]) -> Ve
 // Given two scanners and a length, this returns the list of all orientations that might
 // work for any segments (one in source, the other in dest) that have that length
 fn orients_for_seg_length(source: &Scanner, dest: &Scanner, length: LenSq) -> Vec<Orient> {
-    let print = length == 3984; // FIXME: Remove this and all its stuff
-    if print {println!("beginning orients_for_seg_length()");}
     let source_pairs = source.descriptions_for_length(length);
     let dest_pairs = dest.descriptions_for_length(length);
-    if print {println!("  source_pair ({}) = {:?}", source_pairs.len(), source_pairs);}
-    if print {println!("  dest_pair ({}) = {:?}", dest_pairs.len(), dest_pairs);}
     let mut orients: Vec<Orient> = Vec::new();
     for source_pair in &source_pairs {
         for dest_pair in &dest_pairs {
@@ -723,7 +720,6 @@ fn orients_for_seg_length(source: &Scanner, dest: &Scanner, length: LenSq) -> Ve
                 [source_pair[0].beacon, source_pair[1].beacon],
                 [dest_pair[0].beacon, dest_pair[1].beacon],
             );
-            if print {println!("  orients_for_seg = {:?}", orients_for_seg);}
             // --- Add any that are new ---
             for orient in &orients_for_seg {
                 if !orients.contains(orient) {
@@ -731,10 +727,6 @@ fn orients_for_seg_length(source: &Scanner, dest: &Scanner, length: LenSq) -> Ve
                 }
             }
         }
-    }
-    // FIXME: Temp
-    if length == 627386 {
-        println!("With value 627386, orients_for_seg_length returns {:?}", orients);
     }
     orients
 }
@@ -762,19 +754,16 @@ fn find_lengths_to_try(s1: &Scanner, s2: &Scanner, level_of_uniqueness: usize) -
 fn merge_overlapping_scanners(source: &Scanner, dest: &Scanner, level_of_uniqueness: usize) -> Option<Scanner> {
     println!("Merging {} --with-- {}", source.name, dest.name); // Keep this for monitoring progress
     let lengths_to_try_vec = find_lengths_to_try(source, dest, level_of_uniqueness);
-    println!("The lengths_to_try_vec are {:?}", lengths_to_try_vec); // FIXME: Remove
 
     let mut orients: Vec<Orient> = Vec::new();
     for length in lengths_to_try_vec {
         let orients_for_this_length = orients_for_seg_length(source, dest, length);
-        //println!("For length {} got {} orients", length, orients_for_this_length.len()); // FIXME: Remove
         for orient in orients_for_this_length {
             if !orients.contains(&orient) {
                 orients.push(orient);
             }
         }
     }
-    println!("The orients are {:?}", orients); // FIXME: Remove
 
     if orients.len() == 0 {
         println!("  Problems! there were no orients");
@@ -803,6 +792,7 @@ fn merge_once(scanners: Vec<Scanner>) -> Vec<Scanner> {
     assert!(scanners.len() > 1);
 
     // --- Review the overlaps between scanners and pick the order in which we want to try to merge them ---
+    // FIXME: Regenerating this again after every call to merge_once is a lot of wasted work. But it's not the source of my bug.
     let mut overlaps = Vec::new();
     for (i, scanner1) in scanners.iter().enumerate() {
         for (beyond_i, scanner2) in scanners[(i+1)..].iter().enumerate() {
@@ -817,7 +807,7 @@ fn merge_once(scanners: Vec<Scanner>) -> Vec<Scanner> {
     assert!(overlaps.len() >= 1);
 
     // --- try the overlaps until something works or we give up ---
-    let level_of_uniqueness: usize = 5000; // FIXME: Do we really need this? What's up?
+    let level_of_uniqueness: usize = 1; // FIXME: Do we really need this? What's up?
     for overlap in overlaps {
         let merged_scanner_opt: Option<Scanner> = merge_overlapping_scanners(
             &scanners[overlap.pos_1], &scanners[overlap.pos_2], level_of_uniqueness
@@ -925,6 +915,7 @@ fn merge_a_few_by_hand(scanners: Vec<Scanner>) -> Vec<Scanner> {
 }
 
 
+#[allow(dead_code)]
 fn merge_in_hardcoded_order(scanners: &Vec<Scanner>) {
     fn merge(ss: Vec<Scanner>) -> Scanner {
         let mut iterator = ss.iter();
@@ -983,8 +974,8 @@ fn find_connectable_pairs(scanners: &Vec<Scanner>) {
 fn run() -> Result<(),InputError> {
     let mut scanners: Vec<Scanner> = read_beacon_file()?;
 
-    merge_in_hardcoded_order(&scanners);
-    if true {return Ok(())}
+    // merge_in_hardcoded_order(&scanners);
+    // if true {return Ok(())}
 
     // let mut scanners = merge_a_few_by_hand(scanners); // FIXME: This is a real hack
 
