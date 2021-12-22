@@ -10,6 +10,7 @@ use std::collections::HashMap;
 
 const USE_SHUFFLE: bool = false;
 const MIN_OVERLAPS_FOR_MATCH: usize = 12;
+const UNIQUENESS_LEVEL: usize = 1;
 
 
 /// An error that we can encounter when reading the input.
@@ -96,19 +97,21 @@ struct Beacon {
     z: Coord
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 struct Scanner {
-    name: String,
-    beacons: Vec<Beacon>
+    pub name: String,
+    pub beacons: Vec<Beacon>,
+    length_set: LengthSet,
+    segments_by_length: HashMap<LenSq,Vec<[Beacon;2]>>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct LengthSet {
     lengths: Vec<LenSq>
 }
 
 /// Information helping to uniquely identify a point within a scanner.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct PointDescription {
     scanner_name: String,
     pos: usize,
@@ -118,7 +121,6 @@ struct PointDescription {
     y_lengths: LengthSet,
     z_lengths: LengthSet,
 }
-
 
 /// A direction.
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -159,7 +161,6 @@ fn squared(c: Coord) -> LenSq {
 }
 
 // Returns the length squared between the two points
-// FIXME: This gets called a boatload of times. It should be pre-calculated inside Scanner. But that's only a performance problem
 fn get_length(b1: &Beacon, b2: &Beacon) -> LenSq {
     squared(b1.x - b2.x) + squared(b1.y - b2.y) + squared(b1.z - b2.z)
 }
@@ -180,13 +181,38 @@ impl Scanner {
     /// Constructor which verifies the Beacons are unique. If one is a
     /// duplicate it is simply skipped over.
     fn new(name: String, nonunique_beacons: Vec<Beacon>) -> Self {
+        // --- collect copies of all beacons (only 1 copy if there are dupes) ---
         let mut beacons = Vec::new();
         for b in &nonunique_beacons {
             if !beacons.contains(b) {
                 beacons.push(*b);
             }
         }
-        Scanner{name, beacons}
+
+        // --- pre-calculate the LengthSet for this Scanner ---
+        let mut lengths: Vec<LenSq> = Vec::new();
+        for (i,b1) in beacons.iter().enumerate() {
+            for b2 in beacons[(i+1)..].iter() {
+                lengths.push(get_length(&b1, &b2));
+            }
+        }
+        let length_set = LengthSet::new(lengths);
+
+        // --- pre-calculate the segments_by_length ---
+        let mut segments_by_length: HashMap<LenSq,Vec<[Beacon;2]>> = HashMap::new();
+        for (pos, beacon) in beacons.iter().enumerate() {
+            for other_beacon in beacons[..pos].iter() {
+                let length = get_length(beacon, other_beacon);
+                if !segments_by_length.contains_key(&length) {
+                    segments_by_length.insert(length, Vec::new());
+                }
+                let current_segments_for_this_length: &mut Vec<[Beacon;2]> = segments_by_length.get_mut(&length).unwrap();
+                current_segments_for_this_length.push([beacon.clone(), other_beacon.clone()])
+            }
+        }
+
+        // --- create the new struct ---
+        Scanner{name, beacons, length_set, segments_by_length}
     }
 
     /// Returns a count of the Beacons
@@ -194,73 +220,16 @@ impl Scanner {
         self.beacons.len()
     }
 
-    // Returns a sorted list of the squares of the distances between pairs of points.
-    fn get_lengths(&self) -> LengthSet {
-        let mut lengths: Vec<LenSq> = Vec::new();
-        for (i,b1) in self.beacons.iter().enumerate() {
-            for b2 in self.beacons[(i+1)..].iter() {
-                lengths.push(get_length(&b1, &b2));
-            }
-        }
-        LengthSet::new(lengths)
+    /// Returns a LengthSet of the distances between pairs of points.
+    fn get_lengths(&self) -> &LengthSet {
+        &self.length_set
     }
 
-    /// Given the index of a beacon, returns the PointDescription for that beacon.
-    fn get_point_description(&self, pos: usize) -> PointDescription {
-        let beacon: Beacon = self.beacons[pos];
-        let mut lengths: Vec<LenSq> = Vec::new();
-        let mut x_lengths: Vec<LenSq> = Vec::new();
-        let mut y_lengths: Vec<LenSq> = Vec::new();
-        let mut z_lengths: Vec<LenSq> = Vec::new();
-        for (p, other_beacon) in self.beacons.iter().enumerate() {
-            if p != pos {
-                lengths.push(get_length(&beacon, other_beacon));
-                x_lengths.push(squared(beacon.x));
-                y_lengths.push(squared(beacon.y));
-                z_lengths.push(squared(beacon.z));
-            }
-        }
-        PointDescription{
-            scanner_name: self.name.clone(),
-            pos,
-            beacon,
-            lengths: LengthSet::new(lengths),
-            x_lengths: LengthSet::new(x_lengths),
-            y_lengths: LengthSet::new(y_lengths),
-            z_lengths: LengthSet::new(z_lengths),
-        }
-    }
-
-    // FIXME: Remove this after I finish changing it to look at lines that aren't just unique
-    /// Returns the list of PointDescriptions for points that include this length
-    /// as one of their lengths. The length MUST be unique, which is why this can assume
-    /// it will  always return exactly 2 points.
-    #[allow(dead_code)]
-    fn descriptions_for_unique_length(&self, length: LenSq) -> [PointDescription;2] {
-        for (pos, beacon) in self.beacons.iter().enumerate() {
-            for (other_pos, other_beacon) in self.beacons.iter().enumerate() {
-                if get_length(beacon, other_beacon) == length {
-                    return [self.get_point_description(pos), self.get_point_description(other_pos)];
-                }
-            }
-        }
-        panic!("To reach here the length wasn't in the scanner.");
-    }
-
-
-    /// Returns the list of PointDescriptions for pairs of points that are this far apart.
-    fn descriptions_for_length(&self, length: LenSq) -> Vec<[PointDescription;2]> {
-        let mut answer = Vec::new();
-        for bigger_pos in 0..self.beacons.len() {
-            for smaller_pos in 0..bigger_pos {
-                let b1 = self.beacons[smaller_pos];
-                let b2 = self.beacons[bigger_pos];
-                if get_length(&b1, &b2) == length {
-                    answer.push([self.get_point_description(smaller_pos), self.get_point_description(bigger_pos)]);
-                }
-            }
-        }
-        answer
+    /// Returns the list of pairs of Beacons in this Scanner which form segments of the
+    /// given length. If there IS none of that length, it panics. (I'd rather have it
+    /// return an empty Vec in that case, but I don't know how.)
+    fn segments_for_length(&self, length: LenSq) -> &Vec<[Beacon;2]> {
+        self.segments_by_length.get(&length).unwrap()
     }
 
 
@@ -481,30 +450,6 @@ impl LengthSet {
         }
     }
 
-    /// Returns a new LengthSet containing only the elements of this one that occur
-    /// precisely once.
-    fn uniques(&self) -> Self {
-        // use the fact that it's sorted: any dupes must be adjacent.
-        let mut uniques: Vec<LenSq> = Vec::new();
-        let mut previous: LenSq = self.lengths[0];
-        let mut previous_is_dup = false;
-        for i in 1..self.lengths.len() {
-            let subsequent = self.lengths[i];
-            if subsequent == previous {
-                // it's a dupe
-                previous_is_dup = true;
-            } else {
-                // new one is different
-                if !previous_is_dup {
-                    uniques.push(previous);
-                }
-                previous = subsequent;
-                previous_is_dup = false;
-            }
-        }
-        return LengthSet::new(uniques)
-    }
-
     /// Returns a new LengthSet that only has values that appear in both self and other.
     fn intersect(&self, other: &Self) -> Self {
         let mut values: Vec<LenSq> = Vec::new();
@@ -532,14 +477,6 @@ impl LengthSet {
             values.push(*val);
         }
         return LengthSet::new(values)
-    }
-
-    /// Given another LengthSet, finds a LengthSet of the lengths that are unique within
-    /// each LengthSet but also in common between them. In principle, there might not
-    /// be any, and it will return an empty LengthSet.
-    #[allow(dead_code)]
-    fn shared_uniques(&self, other: &Self) -> LengthSet {
-        self.uniques().intersect(&other.uniques())
     }
 
 
@@ -710,15 +647,15 @@ fn orients_for_segment(source_points: [Beacon;2], dest_points: [Beacon;2]) -> Ve
 // Given two scanners and a length, this returns the list of all orientations that might
 // work for any segments (one in source, the other in dest) that have that length
 fn orients_for_seg_length(source: &Scanner, dest: &Scanner, length: LenSq) -> Vec<Orient> {
-    let source_pairs = source.descriptions_for_length(length);
-    let dest_pairs = dest.descriptions_for_length(length);
+    let source_pairs = source.segments_for_length(length);
+    let dest_pairs = dest.segments_for_length(length);
     let mut orients: Vec<Orient> = Vec::new();
-    for source_pair in &source_pairs {
-        for dest_pair in &dest_pairs {
+    for source_pair in source_pairs {
+        for dest_pair in dest_pairs {
             // Got a point-pair from each one.
             let orients_for_seg = orients_for_segment(
-                [source_pair[0].beacon, source_pair[1].beacon],
-                [dest_pair[0].beacon, dest_pair[1].beacon],
+                [source_pair[0], source_pair[1]],
+                [dest_pair[0], dest_pair[1]],
             );
             // --- Add any that are new ---
             for orient in &orients_for_seg {
@@ -807,10 +744,9 @@ fn merge_once(scanners: Vec<Scanner>) -> Vec<Scanner> {
     assert!(overlaps.len() >= 1);
 
     // --- try the overlaps until something works or we give up ---
-    let level_of_uniqueness: usize = 1; // FIXME: Do we really need this? What's up?
     for overlap in overlaps {
         let merged_scanner_opt: Option<Scanner> = merge_overlapping_scanners(
-            &scanners[overlap.pos_1], &scanners[overlap.pos_2], level_of_uniqueness
+            &scanners[overlap.pos_1], &scanners[overlap.pos_2], UNIQUENESS_LEVEL
         );
         match merged_scanner_opt {
             Some(merged_scanner) => {
@@ -835,163 +771,12 @@ fn merge_once(scanners: Vec<Scanner>) -> Vec<Scanner> {
     panic!("We can't do it... ran out of overlaps to try!");
 }
 
-// /// Finds one highly-connected pair of scanners (starting from the front of the list)
-// /// and merges them (hopefully... we panic if things go wrong). Then returns a new
-// /// list of scanners with the merged one at the front.
-// #[allow(dead_code, non_snake_case)]
-// fn merge_once_OLD(scanners: Vec<Scanner>) -> Vec<Scanner> {
-//     assert!(scanners.len() > 1);
-//
-//     // --- Review the overlaps and pick the order in which we want to try to merge them ---
-//     let mut overlaps: Vec<Overlap> = Vec::new();
-//     for (i, scanner1) in scanners.iter().enumerate() {
-//         for (beyond_i, scanner2) in scanners[(i+1)..].iter().enumerate() {
-//             let j = i + 1 + beyond_i;
-//             let overlap_count = scanner1.get_lengths().overlaps(&scanner2.get_lengths());
-//             overlaps.push(Overlap{pos_1: i, pos_2: j, overlap_count});
-//         }
-//     }
-//     overlaps.sort_by_key(|x| -1 * x.overlap_count);
-//     assert!(overlaps.len() >= 1);
-//
-//     // --- Merge it ---
-//     let mut overlap_iter = overlaps.iter();
-//     let mut overlap: &Overlap = overlap_iter.next().unwrap();
-//     let mut merged_scanner_opt: Option<Scanner>;
-//     loop {
-//         merged_scanner_opt = merge_overlapping_scanners(&scanners[overlap.pos_1], &scanners[overlap.pos_2], 1);
-//         if merged_scanner_opt.is_some() {
-//             break
-//         } else {
-//             match overlap_iter.next() {
-//                 Some(next_overlap) => overlap = next_overlap,
-//                 None => {
-//                     println!("Before giving up, the list of scanners was this:");
-//                     for scanner in &scanners {
-//                         println!("  {}", scanner.name);
-//                     }
-//                     panic!("We can't do it... ran out of overlaps to try!");
-//                 }
-//             }
-//         }
-//     }
-//     assert!(merged_scanner_opt.is_some());
-//
-//     // --- Build the new list of scanners ---
-//     let mut new_scanners = Vec::new();
-//     new_scanners.push(merged_scanner_opt.unwrap());
-//     for (i, scanner) in scanners.iter().enumerate() {
-//         if i != overlap.pos_1 && i != overlap.pos_2 {
-//             new_scanners.push(scanner.clone());
-//         }
-//     }
-//     new_scanners
-// }
-
-
-/// Since I'm having trouble with a few key ones, I'll force them by hand.
-#[allow(dead_code)]
-fn merge_a_few_by_hand(scanners: Vec<Scanner>) -> Vec<Scanner> {
-    let pairs = [
-        [0,27],
-        [3,4],
-        [16,14],
-        [32,22],
-        [15,20],
-        [23,9],
-        [19,10],
-    ];
-    let mut answer: Vec<Scanner> = Vec::new();
-    for [a,b] in pairs {
-        answer.push( merge_overlapping_scanners(&scanners[a], &scanners[b], 9).unwrap() );
-    }
-    let already_done = pairs.iter().flatten().collect::<Vec<&usize>>();
-    for i in 0..scanners.len() {
-        if !already_done.contains(&&i) {
-            answer.push(scanners[i].clone())
-        }
-    }
-    answer
-}
-
-
-#[allow(dead_code)]
-fn merge_in_hardcoded_order(scanners: &Vec<Scanner>) {
-    fn merge(ss: Vec<Scanner>) -> Scanner {
-        let mut iterator = ss.iter();
-        let mut answer: Scanner = iterator.next().unwrap().clone();
-        for s in iterator {
-            answer = merge_overlapping_scanners(&answer, s, 10000).unwrap();
-        }
-        answer
-    }
-    fn merge_chain(scanners: &Vec<Scanner>, items: Vec<usize>) -> Scanner {
-        let mut ss: Vec<Scanner> = Vec::new();
-        for item in items {
-            ss.push(scanners[item].clone());
-        }
-        merge(ss)
-    }
-
-
-    let f = merge_chain(scanners, vec![2,33,14]);
-    // let f = merge_chain(scanners, vec![33,14]);
-
-    // let f = merge_chain(scanners,    vec![9,23]);
-    // let f = merge_chain(scanners,    vec![0,27,28,30,18,20,9,23]);
-
-    // let a = merge_chain(scanners, vec![0,27,28,30,18,20,9,23,7,13,22,32,33,2]);
-    // let b = merge_chain(scanners, vec![17,31,37,6,34]);
-    // let c = merge_chain(scanners, vec![26,8,24]);
-    // let d = merge_chain(scanners, vec![12,35]);
-    // let e = merge_chain(scanners, vec![5]);
-    //
-    // let f = merge(vec![a,b,c,d,e]);
-    println!("merged to {}", f.name);
-}
-
-
-
-/// It helps me by printing out what pairs can be connected.
-#[allow(dead_code)]
-fn find_connectable_pairs(scanners: &Vec<Scanner>) {
-    for j in 0..scanners.len() {
-        for i in 0..j {
-            // println!("    Trying {},{}", i, j);
-            // if i==0 && j==27 {println!("Trying 0,27");}
-            match merge_overlapping_scanners(&scanners[i], &scanners[j], 9) {
-                None => {},
-                Some(_) => println!("{} to {}", i, j),
-            }
-        }
-    }
-
-}
 
 
 
 
 fn run() -> Result<(),InputError> {
     let mut scanners: Vec<Scanner> = read_beacon_file()?;
-
-    // merge_in_hardcoded_order(&scanners);
-    // if true {return Ok(())}
-
-    // let mut scanners = merge_a_few_by_hand(scanners); // FIXME: This is a real hack
-
-    // fn try_merge(scanners: &Vec<Scanner>, i: usize, j: usize) {
-    //     let s0: &Scanner = &scanners[i];
-    //     let s1: &Scanner = &scanners[j];
-    //     match merge_overlapping_scanners(s0, s1, 12) {
-    //         None => println!("Can't merge {} and {}", i, j),
-    //         Some(_) => println!("*****Successfully merged {} and {}", i, j),
-    //     }
-    // }
-    // for j in 0..37 {
-    //     try_merge(&scanners, 32, j);
-    // }
-    // if true {return Ok(())}; // FIXME: This just stops after my experiment.
-
 
     if USE_SHUFFLE {
         let mut rng = rand::thread_rng();
@@ -1091,26 +876,6 @@ mod test {
         assert_eq!(orients.len(), 1);
     }
 
-    #[test]
-    fn apply_some_orients() {
-        let orient_1 = Orient::parse("[x:Y+#127 y:Z-#84 z:X-#-1223]");
-        let orient_2 = Orient::parse("[x:Y+#1144 y:X-#-30 z:Z+#-1163]");
-        let orient_3 = Orient::parse("[x:Y+#1144 y:X-#-30 z:Z+#-1163]");
-        let orient_4 = Orient::parse("[x:X-#1143 y:Z+#-1265 z:Y+#-2362]");
-        let orient_5 = Orient::parse("[x:X-#1143 y:Z+#-1265 z:Y+#-2362]");
-        let orient_6 = Orient::parse("[x:X-#1143 y:Z+#-1265 z:Y+#-2362]");
-        let beacon = Beacon{ x: -811, y: 420, z: -628 };
-        let mut b = beacon;
-        println!("{}", b);
-        b = orient_1.apply(b); println!("{}", b);
-        b = orient_2.apply(b); println!("{}", b);
-        b = orient_3.apply(b); println!("{}", b);
-        b = orient_4.apply(b); println!("{}", b);
-        b = orient_5.apply(b); println!("{}", b);
-        b = orient_6.apply(b); println!("{}", b);
-        // FIXME: Right now this is full of println's and lacks any kind of assert
-    }
-
 
     #[test]
     fn can_find_orients_after_transform_1() {
@@ -1128,20 +893,6 @@ mod test {
     }
 
     #[test]
-    fn can_find_orients_after_transform_2() {
-        let source = [Beacon { x: -1571, y: 444, z: 564 }, Beacon { x: -1527, y: 412, z: 596 }];
-        let dest = [Beacon { x: -550, y: -769, z: -532 }, Beacon { x: -582, y: -801, z: -488 }];
-        let _o1 = Orient::parse("[x:Z+#-1137 y:Y-#-12 z:X+#-64]");
-
-        let orients = orients_for_segment(source, dest);
-        assert_eq!(orients.len(), 3);
-        assert_eq!(orients[0], Orient::parse("[x:Z+#-1039 y:Y+#1213 z:X-#14]"));
-        assert_eq!(orients[1], Orient::parse("[x:Z-#-2059 y:X-#-138 z:Y+#1365]"));
-        assert_eq!(orients[2], Orient::parse("[x:Y+#-746 y:Z+#920 z:X+#-246]"));
-        // FIXME: Right now this is broken
-    }
-
-    #[test]
     fn can_find_orients_after_transform_3() {
         let source = [Beacon { x: 0, y: 0, z: 0 }, Beacon { x: 1, y: 2, z: 3 }];
         let dest = [Beacon { x: 10, y: 10, z: 10 }, Beacon { x: 11, y: 12, z: 13 }];
@@ -1154,12 +905,3 @@ mod test {
     }
 
 }
-
-
-
-// What I have learned:
-//   There's a problem where I can successfully merge two scanners BUT if one is first
-//   merged into another then they can't be merged. That shouldn't ever happen, I think
-//   but it does. An example is illustrated in the tests two_orients_1 and two_orients_2.
-//   The simplest example I have is that "s33" won't merge with "s14", but if you merge
-//   s2 with s33, then "s3+s33" WILL merge with "s14.
