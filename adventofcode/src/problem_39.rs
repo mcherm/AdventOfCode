@@ -94,7 +94,8 @@ impl EnhanceAlgo {
         Ok(EnhanceAlgo{data})
     }
 
-    fn eval(&self, index: ImageIndex) -> bool{
+    /// Uses the data to evaluate an image index and return what should be placed in the new image.
+    fn eval(&self, index: ImageIndex) -> bool {
         self.data[index as usize]
     }
 }
@@ -110,14 +111,17 @@ struct Image {
 }
 
 impl Image {
+    /// Returns 1 more than the rightmost edge
     fn right(&self) -> Coord {
         self.left + Coord::try_from(self.width).unwrap()
     }
 
+    /// Returns 1 more than the bottommost edge
     fn bottom(&self) -> Coord {
         self.top + Coord::try_from(self.height).unwrap()
     }
 
+    /// Pass any x and y value and it returns the pixel value at that location
     fn get(&self, x: Coord, y: Coord) -> bool {
         if x < self.left || x >= self.right() || y < self.top || y >= self.bottom() {
             false
@@ -204,17 +208,18 @@ impl fmt::Display for Image {
 
 
 fn run() -> Result<(),InputError> {
-    let (algo, image) = read_image_enhance_file()?;
+    let (algo, orig_image) = read_image_enhance_file()?;
 
+    let repeats = 2;
+    let mut image = orig_image;
     println!("{}", image);
     println!();
-    let image_2 = image.enhance(&algo);
-    println!("{}", image_2);
-    println!();
-    let image_3 = image_2.enhance(&algo);
-    println!("{}", image_3);
-    println!();
-    println!("There are {} pixels lit.", image_3.count_lit());
+    for _ in 0..repeats {
+        image = image.enhance(&algo);
+        println!("{}", image);
+        println!();
+    }
+    println!("There are {} pixels lit in the final version.", image.count_lit());
 
     Ok(())
 }
