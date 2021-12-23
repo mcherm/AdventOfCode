@@ -107,7 +107,8 @@ struct Image {
     top: Coord,
     width: usize,
     height: usize,
-    pixels: Vec<bool>
+    pixels: Vec<bool>,
+    background: bool,
 }
 
 impl Image {
@@ -124,7 +125,7 @@ impl Image {
     /// Pass any x and y value and it returns the pixel value at that location
     fn get(&self, x: Coord, y: Coord) -> bool {
         if x < self.left || x >= self.right() || y < self.top || y >= self.bottom() {
-            false
+            self.background
         } else {
             let x_index: usize = usize::try_from(x - self.left).unwrap();
             let y_index: usize = usize::try_from(y - self.top).unwrap();
@@ -167,7 +168,8 @@ impl Image {
                 });
             }
         }
-        Ok(Image{left, top, width, height, pixels})
+        let background: bool = false;
+        Ok(Image{left, top, width, height, pixels, background})
     }
 
     /// Given an image, runs the "enhancement" algorithm on it to produce a new image.
@@ -185,7 +187,8 @@ impl Image {
                 pixels.push(pixel);
             }
         }
-        Image{left, top, width, height, pixels}
+        let background = algo.eval(0);
+        Image{left, top, width, height, pixels, background}
     }
 
     /// Returns the number of true pixels.
@@ -298,7 +301,6 @@ mod test {
         assert_eq!(expect2, img2);
     }
 
-
     #[test]
     fn count_lit() {
         let img = Image::parse(&vec![
@@ -308,5 +310,21 @@ mod test {
             "####",
         ]).unwrap();
         assert_eq!(12, img.count_lit());
+    }
+
+    #[test]
+    fn background_on() {
+        // hey, it's possible to have the infinite background turn on. Confirm that.
+        let algo_str: String = format!("#{}", ".".repeat(511));
+        let algo = EnhanceAlgo::new(&algo_str).unwrap();
+        let img_1 = Image::parse(&vec![
+            "####",
+            "#..#",
+            "#..#",
+            "####",
+        ]).unwrap();
+        let img_2 = img_1.enhance(&algo);
+        assert_eq!(false, img_1.get(-10,-10));
+        assert_eq!(true, img_2.get(-10,-10));
     }
 }
