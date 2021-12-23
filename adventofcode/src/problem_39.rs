@@ -297,4 +297,16 @@ mod test {
         ]).unwrap();
         assert_eq!(expect2, img2);
     }
+
+
+    #[test]
+    fn count_lit() {
+        let img = Image::parse(&vec![
+            "####",
+            "#..#",
+            "#..#",
+            "####",
+        ]).unwrap();
+        assert_eq!(12, img.count_lit());
+    }
 }
