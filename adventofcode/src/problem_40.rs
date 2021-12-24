@@ -133,7 +133,7 @@ impl Image {
         }
     }
 
-    /// Gets the 9 values surrounding x,y in the form of a number
+    /// Gets the 9 values surrounding x,y in the form of a number.
     fn get_neighborhood(&self, x: Coord, y: Coord) -> ImageIndex {
         let mut answer: ImageIndex = 0;
         for y_delta in -1..=1 {
@@ -187,12 +187,17 @@ impl Image {
                 pixels.push(pixel);
             }
         }
-        let background = algo.eval(0);
+        let background_neighborhood = match self.background {
+            false => 0,
+            true => 511,
+        };
+        let background = algo.eval(background_neighborhood);
         Image{left, top, width, height, pixels, background}
     }
 
     /// Returns the number of true pixels.
     fn count_lit(&self) -> usize {
+        assert!(!self.background); // Otherwise, there are an infinite number of them.
         self.pixels.iter().filter(|x| **x).count()
     }
 }
@@ -205,7 +210,7 @@ impl fmt::Display for Image {
             }
             writeln!(f)?;
         }
-        Ok(())
+        writeln!(f)
     }
 }
 
@@ -216,11 +221,9 @@ fn run() -> Result<(),InputError> {
     let repeats = 50;
     let mut image = orig_image;
     println!("{}", image);
-    println!();
     for _ in 0..repeats {
         image = image.enhance(&algo);
         println!("{}", image);
-        println!();
     }
     println!("There are {} pixels lit in the final version.", image.count_lit());
 
