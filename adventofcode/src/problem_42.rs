@@ -119,10 +119,8 @@ impl GameMetaState {
         GameMetaState{universes}
     }
 
-    /// Takes a turn, populating new universes. Returns true if at least one new universe
-    /// was created; false if NO new universes were created.
-    fn take_turn(&mut self, player: usize) -> bool {
-        let mut did_something_new: bool = false;
+    /// Takes a turn, populating new universes.
+    fn take_turn(&mut self, player: usize) {
         let mut new_universes = [0; NUM_GAMESTATES];
         for old_key in 0..NUM_GAMESTATES {
             let old_count = self.universes[old_key];
@@ -132,9 +130,6 @@ impl GameMetaState {
                 // After someone wins, no one moves, no one scores, and no new universes are created
                 new_universes[old_key] += old_count;
             } else {
-                if old_count > 0 {
-                    did_something_new = true;
-                }
                 for (roll, weight) in ROLL_PROBS {
                     let new_p = |p_old| (p_old + roll) % BOARD_SIZE;
                     let new_score = |s_old, p_new| cmp::min(WINNING_SCORE, s_old + p_new + 1);
@@ -163,7 +158,19 @@ impl GameMetaState {
             }
         }
         self.universes = new_universes;
-        did_something_new
+    }
+
+
+    /// Returns the number of universes in which neither player has yet won.
+    fn num_continuing_universes(&self) -> usize {
+        let mut answer = 0;
+        for key in 0..NUM_GAMESTATES {
+            let (_, _, s0, s1) = unkey(key);
+            if s0 != WINNING_SCORE && s1 != WINNING_SCORE {
+                answer += self.universes[key];
+            }
+        }
+        answer
     }
 
     /// Returns the number of winning universes for [player1, player2]. If there is any
@@ -196,6 +203,7 @@ impl fmt::Display for GameMetaState {
                          universes, p0 + 1, p1 + 1, s0, s1)?;
             }
         }
+        writeln!(f, "So that's {} universes still going.", self.num_continuing_universes())?;
         writeln!(f)
     }
 }
@@ -203,21 +211,25 @@ impl fmt::Display for GameMetaState {
 
 fn run() -> Result<(),InputError> {
     let starts = read_dice_game_file()?;
-    println!("starts: ({},{})", starts[0], starts[1]);
+    println!("Starting at : ({},{})", starts[0], starts[1]);
 
     let mut game = GameMetaState::new(starts);
     let mut player = 0;
     let mut turn = 0;
+    println!("The game state is:\n{}", game);
     loop {
         turn += 1;
         println!("Beginning turn {}.", turn);
-        let still_going = game.take_turn(player);
-        if !still_going {
+        game.take_turn(player);
+        println!("The game state is now:\n{}", game);
+        if game.num_continuing_universes() == 0 {
             break;
         }
         player = (player + 1) % 2;
     }
     let [p1_wins, p2_wins] = game.num_winning_universes();
+    println!();
+    println!("Player 1 wins in {} universes and player 2 in {}.", p1_wins, p2_wins);
     println!("The winner who won more won in {} universes.", cmp::max(p1_wins, p2_wins));
 
     Ok(())
