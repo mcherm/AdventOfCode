@@ -3,7 +3,7 @@ use std::fmt::Formatter;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use regex::Regex;
-
+use std::cmp;
 
 /// An error that we can encounter when reading the input.
 #[derive(Debug)]
@@ -60,31 +60,34 @@ fn read_dice_game_file() -> Result<[usize;2], InputError> {
 }
 
 
-#[derive(Debug)]
-struct ScoresAtPosition {
 
-}
+const NUM_GAMESTATES: usize = 48400;
 
 #[derive(Debug)]
 struct GameMetaState {
-    // if p1, p2 are player positions counting from zero, then positions[p1 * 10 + p2] is
-    // the count of universes with those positions
-    positions: [usize;100],
-    // All scores are 0..=20, or else 21+ (for a total of 22 options). if s1 and s2 are
-    // player scores (treating 21 as "21 and up") then scores[s1 * 22 + s2] is the count of
-    // universes with that pair of scores.
-    scores: [usize;484],
+    /// If p0 and p1 are player positions (indexed from zero) and s0 and s1 are player
+    /// scores (letting 21 mean "21 or higher") then positions[key(p0,p1,s0,s1)] is the
+    /// number of universes with that set of positions and scores.
+    universes: [usize;NUM_GAMESTATES],
 }
 
 
-/// Given a pair of positions (indexed from 0), return the key for it
-fn pos_key(p1: usize, p2: usize) -> usize {
-    p1 * 10 + p2
+/// Given a pair of positions (indexed from 0), and a pair of keys, return the key for it.
+/// This will always be a number from 0 to just-below 48400.
+fn key(p1: usize, p2: usize, s1: usize, s2: usize) -> usize {
+    (((p1 * 10) + p2) * 22 + s1) * 22 + s2
 }
 
-/// Given a key, return the pair of positions (indexed from 0)
-fn unkey_pos(key: usize) -> [usize;2] {
-    [key / 10, key % 10]
+/// Given a key, return the pair of positions (indexed from 0) and scores in the order
+/// (p0,p1,s0,s1)
+fn unkey(key: usize) -> (usize, usize, usize, usize) {
+    let s1 = key % 22;
+    let remainder_1 = key / 22;
+    let s0 = remainder_1 % 22;
+    let remainder_2 = remainder_1 / 22;
+    let p1 = remainder_2 % 10;
+    let p0 = remainder_2 / 10;
+    (p0,p1,s0,s1)
 }
 
 
@@ -102,45 +105,81 @@ const ROLL_PROBS: [(usize, usize);7] = [
 
 impl GameMetaState {
     fn new(pos: [usize;2]) -> Self {
-        let mut positions: [usize;100] = [0;100];
-        let scores: [usize;484] = [0;484];
-        positions[pos_key(pos[0] - 1, pos[1] - 1)] = 1;
-        GameMetaState{positions, scores}
+        let mut universes = [0;48400];
+        universes[key(pos[0], pos[1], 0, 0)] = 1;
+        GameMetaState{universes}
     }
 
-    fn take_turn(&mut self, player: usize) {
-        let mut new_positions = [0;100];
-        for old_key in 0..100 {
-            let [p0_pos_old, p1_pos_old] = unkey_pos(old_key);
-            for (roll, weight) in ROLL_PROBS {
-                let p0_pos_new;
-                let p1_pos_new;
-                match player {
-                    0 => {
-                        p0_pos_new = (p0_pos_old + roll) % 10;
-                        p1_pos_new = p1_pos_old;
-                    },
-                    1 => {
-                        p0_pos_new = p0_pos_old;
-                        p1_pos_new = (p1_pos_old + roll) % 10;
-                    },
-                    _ => panic!("Invalid player"),
+    /// Takes a turn, populating new universes. Returns true if at least one new universe
+    /// was created; false if NO new universes were created.
+    fn take_turn(&mut self, player: usize) -> bool {
+        let mut did_something_new: bool = false;
+        let mut new_universes = [0;48400];
+        for old_key in 0..NUM_GAMESTATES {
+            let (p0_old, p1_old, s0_old, s1_old)  = unkey(old_key);
+
+            if s0_old == 21 || s1_old == 21 {
+                // After someone wins, no one moves, no one scores, and no new universes are created
+                new_universes[old_key] += self.universes[old_key];
+            } else {
+                did_something_new = true;
+                for (roll, weight) in ROLL_PROBS {
+                    let new_p = |p_old| (p_old + roll) % 10;
+                    let new_score = |s_old, p_new| cmp::min(21, s_old + p_new + 1);
+                    let p0_new;
+                    let p1_new;
+                    let s0_new;
+                    let s1_new;
+                    match player {
+                        0 => {
+                            p0_new = new_p(p0_old);
+                            p1_new = p1_old;
+                            s0_new = new_score(s0_old, p0_new);
+                            s1_new = s1_old;
+                        },
+                        1 => {
+                            p0_new = p0_old;
+                            p1_new = new_p(p1_old);
+                            s0_new = s0_old;
+                            s1_new = new_score(s1_old, p1_new);
+                        },
+                        _ => panic!("Invalid player"),
+                    }
+                    let new_key = key(p0_new, p1_new, s0_new, s1_new);
+                    new_universes[new_key] += weight * self.universes[old_key];
                 }
-                let new_key = pos_key(p0_pos_new, p1_pos_new);
-                new_positions[new_key] += weight * self.positions[old_key];
             }
         }
-        self.positions = new_positions;
+        self.universes = new_universes;
+        did_something_new
+    }
+
+    /// Returns the number of winning universes for [player1, player2]. If there is any
+    /// universe in which both players won or neither player won then this panics.
+    fn num_winning_universes(&self) -> [usize;2] {
+        let mut p1_wins = 0;
+        let mut p2_wins = 0;
+        for key in 0..NUM_GAMESTATES {
+            let count = self.universes[key];
+            match unkey(key) {
+                (_, _, 21, 21) => panic!("Both players won a game."),
+                (_, _, 21, _) => p1_wins += count,
+                (_, _, _, 21) => p2_wins += count,
+                (_, _, _, _) => panic!("There was a game that no player won."),
+            }
+        }
+        [p1_wins, p2_wins]
     }
 }
 
 impl fmt::Display for GameMetaState {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        for key in 0..100 {
-            let universes = self.positions[key];
+        for key in 0..NUM_GAMESTATES {
+            let universes = self.universes[key];
             if universes > 0 {
-                let [p0_pos, p1_pos] = unkey_pos(key);
-                writeln!(f, "There are {} universes with players at {} and {}.", universes, p0_pos + 1, p1_pos + 1)?;
+                let (p0,p1,s0,s1) = unkey(key);
+                writeln!(f, "There are {} universes with players at {} and {} and scores of {} and {}.",
+                         universes, p0 + 1, p1 + 1, s0, s1)?;
             }
         }
         writeln!(f)
@@ -149,15 +188,24 @@ impl fmt::Display for GameMetaState {
 
 
 fn run() -> Result<(),InputError> {
+    println!("The size 'usize' goes up to {}", usize::MAX);
+    println!("The size 'u32' goes up to {}", u32::MAX);
+    println!("The size 'u64' goes up to {}", u64::MAX);
+
     let starts = read_dice_game_file()?;
     println!("starts: ({},{})", starts[0], starts[1]);
 
     let mut game = GameMetaState::new(starts);
     println!("GameMetaState = \n{}", game);
     let mut player = 0;
-    game.take_turn(player);
-    println!("GameMetaState = \n{}", game);
-    // player = (player + 1) % 2;
+    let mut turn = 0;
+    while game.take_turn(player) {
+        turn += 1;
+        println!("Completed turn {}.", turn);
+        player = (player + 1) % 2;
+    }
+    let [p1_wins, p2_wins] = game.num_winning_universes();
+    println!("The winner who won more won in {} universes.", cmp::max(p1_wins, p2_wins));
 
     Ok(())
 }
@@ -179,5 +227,25 @@ mod test {
     #[test]
     fn test_read_file() {
         let _ = read_dice_game_file().unwrap();
+    }
+
+    #[test]
+    fn test_pos_key() {
+        assert_eq!(0, key(0, 0, 0, 0));
+        assert_eq!(21, key(0, 0, 0, 21));
+        assert_eq!(22, key(0, 0, 1, 0));
+        assert_eq!(28, key(0, 0, 1, 6));
+        assert_eq!(484-1, key(0, 0, 21, 21));
+        assert_eq!(NUM_GAMESTATES - 1, key(9, 9, 21, 21));
+    }
+
+    #[test]
+    fn test_unpos_key() {
+        assert_eq!((0,0,0,0), unkey(0));
+        assert_eq!((0,0,0,5), unkey(5));
+        assert_eq!((0,0,5,0), unkey(110));
+        assert_eq!((0,5,0,0), unkey(2420));
+        assert_eq!((5,0,0,0), unkey(24200));
+        assert_eq!((9,9,21,21), unkey(NUM_GAMESTATES - 1));
     }
 }
