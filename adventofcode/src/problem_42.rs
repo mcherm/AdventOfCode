@@ -111,16 +111,17 @@ const ROLL_PROBS: [(usize, usize);7] = [
 
 
 impl GameMetaState {
+    /// This is passed positions with ONE-BASED indexing (not zero based) and creates a new
+    /// game in just one universe with those starting positions and a score of 0,0.
     fn new(pos: [usize;2]) -> Self {
         let mut universes = [0; NUM_GAMESTATES];
-        universes[key(pos[0], pos[1], 0, 0)] = 1;
+        universes[key(pos[0] - 1, pos[1] - 1, 0, 0)] = 1;
         GameMetaState{universes}
     }
 
     /// Takes a turn, populating new universes. Returns true if at least one new universe
     /// was created; false if NO new universes were created.
     fn take_turn(&mut self, player: usize) -> bool {
-        println!("TAKING TURN"); // FIXME: Remove
         let mut did_something_new: bool = false;
         let mut new_universes = [0; NUM_GAMESTATES];
         for old_key in 0..NUM_GAMESTATES {
@@ -132,7 +133,6 @@ impl GameMetaState {
                 new_universes[old_key] += old_count;
             } else {
                 if old_count > 0 {
-                    println!("    Did something new (old_count = {}) {} {} {} {}", old_count, p0_old, p1_old, s0_old, s1_old); // FIXME: Remove
                     did_something_new = true;
                 }
                 for (roll, weight) in ROLL_PROBS {
@@ -206,20 +206,12 @@ fn run() -> Result<(),InputError> {
     println!("starts: ({},{})", starts[0], starts[1]);
 
     let mut game = GameMetaState::new(starts);
-    println!("GameMetaState = \n{}", game);
     let mut player = 0;
     let mut turn = 0;
     loop {
         turn += 1;
         println!("Beginning turn {}.", turn);
-        println!();
         let still_going = game.take_turn(player);
-        println!();
-        println!("GameMetaState = \n{}", game);
-        println!();
-        println!();
-        println!();
-        println!();
         if !still_going {
             break;
         }
