@@ -3,6 +3,7 @@ use std::fmt::{Display, Formatter};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use regex::Regex;
+use nom;
 
 
 // ======== Reading Input ========
@@ -48,12 +49,54 @@ fn read_reactor_reboot_file() -> Result<Vec<Instruction>, InputError> {
     let mut instructions: Vec<Instruction> = Vec::new();
     for line in lines {
         let text: String = line?;
-        let instruction: Instruction = Instruction::parse(&text)?;
+        let (rest, instruction) = parse_instruction(&text).unwrap();
+        if rest != "" {
+            return Err(InputError::InvalidReactorRebootLine);
+        }
         instructions.push(instruction);
     }
 
     // --- return result ---
     Ok(instructions)
+}
+
+
+fn parse_power_level(input: &str) -> nom::IResult<&str, PowerLevel> {
+    nom::branch::alt((
+        nom::bytes::complete::tag("on"),
+        nom::bytes::complete::tag("off"),
+    ))(input).map(|(rest, res)| (rest, match res {
+        "on" => PowerLevel::On,
+        "off" => PowerLevel::Off,
+        _ => panic!("bad power level") // NOTE: I don't know enough to do error handling right
+    }))
+}
+
+fn parse_bounds(input: &str) -> nom::IResult<&str, Bounds> {
+    nom::sequence::tuple((
+        nom::character::complete::i32,
+        nom::bytes::complete::tag(".."),
+        nom::character::complete::i32,
+    ))(input).map(|(rest, (low, _, high))| (rest, Bounds{low, high}))
+}
+
+fn parse_cuboid(input: &str) -> nom::IResult<&str, Cuboid> {
+    nom::sequence::tuple((
+        nom::bytes::complete::tag("x="),
+        parse_bounds,
+        nom::bytes::complete::tag(",y="),
+        parse_bounds,
+        nom::bytes::complete::tag(",z="),
+        parse_bounds,
+    ))(input).map(|(rest, (_, xb, _, yb, _, zb))| (rest, Cuboid{bounds: [xb, yb, zb]}))
+}
+
+fn parse_instruction(input: &str) -> nom::IResult<&str, Instruction> {
+    nom::sequence::tuple((
+        parse_power_level,
+        nom::character::complete::char(' '),
+        parse_cuboid,
+    ))(input).map(|(rest, (power_level, _, cuboid))| (rest, Instruction{power_level, cuboid}))
 }
 
 
@@ -96,11 +139,11 @@ struct Instruction {
 
 
 impl PowerLevel {
-    fn parse(text: &str) -> Result<Self,InputError> {
+    fn parse_regex(text: &str) -> Result<Self,InputError> {
         match text {
             "on" => Ok(PowerLevel::On),
             "off" => Ok(PowerLevel::Off),
-            _ => Err(InputError::InvalidReactorRebootLine)
+            _ => Err(InputError::InvalidReactorRebootLine),
         }
     }
 }
@@ -137,7 +180,7 @@ impl Display for Axis {
 }
 
 impl Bounds {
-    fn parse(text: &str) -> Result<Self, InputError> {
+    fn parse_regex(text: &str) -> Result<Self, InputError> {
         let bounds_regex = Regex::new(
             r"^(-?\d+)\.\.(-?\d+)$"
         ).unwrap();
@@ -155,14 +198,14 @@ impl Display for Bounds {
 }
 
 impl Cuboid {
-    fn parse(text: &str) -> Result<Self,InputError> {
+    fn parse_regex(text: &str) -> Result<Self,InputError> {
         let cuboid_regex = Regex::new(
             r"^x=(.*),y=(.*),z=(.*)$"
         ).unwrap();
         let capture = cuboid_regex.captures(&text).ok_or(InputError::InvalidReactorRebootLine)?;
-        let x: Bounds = Bounds::parse(capture.get(1).unwrap().as_str())?;
-        let y: Bounds = Bounds::parse(capture.get(2).unwrap().as_str())?;
-        let z: Bounds = Bounds::parse(capture.get(3).unwrap().as_str())?;
+        let x: Bounds = Bounds::parse_regex(capture.get(1).unwrap().as_str())?;
+        let y: Bounds = Bounds::parse_regex(capture.get(2).unwrap().as_str())?;
+        let z: Bounds = Bounds::parse_regex(capture.get(3).unwrap().as_str())?;
         let bounds = [x,y,z];
         Ok(Cuboid{bounds})
     }
@@ -179,13 +222,13 @@ impl Display for Cuboid {
 }
 
 impl Instruction {
-    fn parse(text: &str) -> Result<Self,InputError> {
+    fn parse_regex(text: &str) -> Result<Self,InputError> {
         let instruction_regex = Regex::new(
             r"^(.*) (.*)$"
         ).unwrap();
         let capture = instruction_regex.captures(&text).ok_or(InputError::InvalidReactorRebootLine)?;
-        let power_level = PowerLevel::parse(capture.get(1).unwrap().as_str())?;
-        let cuboid = Cuboid::parse(capture.get(2).unwrap().as_str())?;
+        let power_level = PowerLevel::parse_regex(capture.get(1).unwrap().as_str())?;
+        let cuboid = Cuboid::parse_regex(capture.get(2).unwrap().as_str())?;
         Ok(Instruction{power_level, cuboid})
     }
 }
