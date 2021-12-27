@@ -3,7 +3,12 @@ use std::fmt::{Display, Formatter};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use regex::Regex;
-use nom;
+use nom::bytes::complete::tag as nom_tag;
+use nom::character::complete::i32 as nom_coord;
+use nom::sequence::tuple as nom_tuple;
+use nom::branch::alt as nom_alt;
+
+
 
 
 // ======== Reading Input ========
@@ -49,7 +54,7 @@ fn read_reactor_reboot_file() -> Result<Vec<Instruction>, InputError> {
     let mut instructions: Vec<Instruction> = Vec::new();
     for line in lines {
         let text: String = line?;
-        let (rest, instruction) = parse_instruction(&text).unwrap();
+        let (rest, instruction) = Instruction::parse_nom(&text).unwrap();
         if rest != "" {
             return Err(InputError::InvalidReactorRebootLine);
         }
@@ -61,43 +66,6 @@ fn read_reactor_reboot_file() -> Result<Vec<Instruction>, InputError> {
 }
 
 
-fn parse_power_level(input: &str) -> nom::IResult<&str, PowerLevel> {
-    nom::branch::alt((
-        nom::bytes::complete::tag("on"),
-        nom::bytes::complete::tag("off"),
-    ))(input).map(|(rest, res)| (rest, match res {
-        "on" => PowerLevel::On,
-        "off" => PowerLevel::Off,
-        _ => panic!("bad power level") // NOTE: I don't know enough to do error handling right
-    }))
-}
-
-fn parse_bounds(input: &str) -> nom::IResult<&str, Bounds> {
-    nom::sequence::tuple((
-        nom::character::complete::i32,
-        nom::bytes::complete::tag(".."),
-        nom::character::complete::i32,
-    ))(input).map(|(rest, (low, _, high))| (rest, Bounds{low, high}))
-}
-
-fn parse_cuboid(input: &str) -> nom::IResult<&str, Cuboid> {
-    nom::sequence::tuple((
-        nom::bytes::complete::tag("x="),
-        parse_bounds,
-        nom::bytes::complete::tag(",y="),
-        parse_bounds,
-        nom::bytes::complete::tag(",z="),
-        parse_bounds,
-    ))(input).map(|(rest, (_, xb, _, yb, _, zb))| (rest, Cuboid{bounds: [xb, yb, zb]}))
-}
-
-fn parse_instruction(input: &str) -> nom::IResult<&str, Instruction> {
-    nom::sequence::tuple((
-        parse_power_level,
-        nom::character::complete::char(' '),
-        parse_cuboid,
-    ))(input).map(|(rest, (power_level, _, cuboid))| (rest, Instruction{power_level, cuboid}))
-}
 
 
 // ======== Types ========
@@ -146,6 +114,17 @@ impl PowerLevel {
             _ => Err(InputError::InvalidReactorRebootLine),
         }
     }
+
+    fn parse_nom(input: &str) -> nom::IResult<&str, Self> {
+        nom_alt((
+            nom_tag("on"),
+            nom_tag("off"),
+        ))(input).map(|(rest, res)| (rest, match res {
+            "on" => PowerLevel::On,
+            "off" => PowerLevel::Off,
+            _ => panic!("should never happen")
+        }))
+    }
 }
 
 impl Display for PowerLevel {
@@ -189,6 +168,14 @@ impl Bounds {
         let high: Coord = capture.get(2).unwrap().as_str().parse()?;
         Ok(Bounds{low, high})
     }
+
+    fn parse_nom(input: &str) -> nom::IResult<&str, Self> {
+        nom_tuple((
+            nom_coord,
+            nom_tag(".."),
+            nom_coord,
+        ))(input).map(|(rest, (low, _, high))| (rest, Bounds{low, high}))
+    }
 }
 
 impl Display for Bounds {
@@ -209,6 +196,17 @@ impl Cuboid {
         let bounds = [x,y,z];
         Ok(Cuboid{bounds})
     }
+
+    fn parse_nom(input: &str) -> nom::IResult<&str, Self> {
+        nom_tuple((
+            nom_tag("x="),
+            Bounds::parse_nom,
+            nom_tag(",y="),
+            Bounds::parse_nom,
+            nom_tag(",z="),
+            Bounds::parse_nom,
+        ))(input).map(|(rest, (_, xb, _, yb, _, zb))| (rest, Cuboid{bounds: [xb, yb, zb]}))
+    }
 }
 
 impl Display for Cuboid {
@@ -222,6 +220,7 @@ impl Display for Cuboid {
 }
 
 impl Instruction {
+    #[allow(dead_code)]
     fn parse_regex(text: &str) -> Result<Self,InputError> {
         let instruction_regex = Regex::new(
             r"^(.*) (.*)$"
@@ -230,6 +229,14 @@ impl Instruction {
         let power_level = PowerLevel::parse_regex(capture.get(1).unwrap().as_str())?;
         let cuboid = Cuboid::parse_regex(capture.get(2).unwrap().as_str())?;
         Ok(Instruction{power_level, cuboid})
+    }
+
+    fn parse_nom(input: &str) -> nom::IResult<&str, Self> {
+        nom_tuple((
+            PowerLevel::parse_nom,
+            nom_tag(" "),
+            Cuboid::parse_nom,
+        ))(input).map(|(rest, (power_level, _, cuboid))| (rest, Instruction{power_level, cuboid}))
     }
 }
 
