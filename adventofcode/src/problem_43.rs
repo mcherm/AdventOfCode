@@ -254,9 +254,8 @@ impl Bounds {
 
     /// Returns true if the coord is within (NOT on the boundaries of) this Bounds
     /// and false otherwise.
-    // FIXME: There's a bug here with boundary conditions: upper allows being on the boundary; lower doesn't.
     fn surrounds(&self, coord: Coord) -> bool {
-        coord > self.low && coord < self.high
+        coord > self.low && coord < (self.high - 1)
     }
 
     /// Returns true if the other has a boundary that falls within self (and therefore
@@ -273,6 +272,7 @@ impl Bounds {
     /// Given an other which splits self, this returns a Vec of Bounds which consist
     /// of self split up into pieces. The Vec will always be of length 2 or 3.
     fn split_by(&self, other: &Self) -> Vec<Self> {
+        assert!(matches!(self.compare_with(other), Comparison::Intersects | Comparison::Surrounds));
         let intersects = (self.surrounds(other.low), self.surrounds(other.high));
         match intersects {
             (false, false) => panic!("Bounds::split_by() may only be called when it splits it."),
@@ -654,19 +654,34 @@ mod test {
     #[test]
     fn test_bounds_compare_with() {
         let b = Bounds::new(10, 20);
-        assert_eq!(Comparison::Separate,   b.compare_with(&Bounds::new(0, 5)));
-        assert_eq!(Comparison::Separate,   b.compare_with(&Bounds::new(0, 10)));
-        assert_eq!(Comparison::Intersects, b.compare_with(&Bounds::new(0, 15)));
+        assert_eq!(Comparison::Separate,    b.compare_with(&Bounds::new(0, 5)));
+        assert_eq!(Comparison::Separate,    b.compare_with(&Bounds::new(0, 10)));
+        assert_eq!(Comparison::Intersects,  b.compare_with(&Bounds::new(0, 15)));
         assert_eq!(Comparison::ContainedBy, b.compare_with(&Bounds::new(0, 20)));
         assert_eq!(Comparison::ContainedBy, b.compare_with(&Bounds::new(0, 25)));
-        assert_eq!(Comparison::Surrounds,  b.compare_with(&Bounds::new(10, 15)));
-        assert_eq!(Comparison::Equal,      b.compare_with(&Bounds::new(10, 20)));
+        assert_eq!(Comparison::Surrounds,   b.compare_with(&Bounds::new(10, 15)));
+        assert_eq!(Comparison::Equal,       b.compare_with(&Bounds::new(10, 20)));
         assert_eq!(Comparison::ContainedBy, b.compare_with(&Bounds::new(10, 25)));
-        assert_eq!(Comparison::Surrounds,  b.compare_with(&Bounds::new(13, 18)));
-        assert_eq!(Comparison::Surrounds,  b.compare_with(&Bounds::new(15, 20)));
-        assert_eq!(Comparison::Intersects, b.compare_with(&Bounds::new(15, 25)));
-        assert_eq!(Comparison::Separate,   b.compare_with(&Bounds::new(20, 25)));
-        assert_eq!(Comparison::Separate,   b.compare_with(&Bounds::new(25, 30)));
+        assert_eq!(Comparison::Surrounds,   b.compare_with(&Bounds::new(13, 18)));
+        assert_eq!(Comparison::Surrounds,   b.compare_with(&Bounds::new(15, 20)));
+        assert_eq!(Comparison::Intersects,  b.compare_with(&Bounds::new(15, 25)));
+        assert_eq!(Comparison::Separate,    b.compare_with(&Bounds::new(20, 25)));
+        assert_eq!(Comparison::Separate,    b.compare_with(&Bounds::new(25, 30)));
+    }
+
+    #[test]
+    fn test_surrounds() {
+        let b = Bounds::new(10, 20);
+        assert_eq!(false,   b.surrounds(0));
+        assert_eq!(false,   b.surrounds(9));
+        assert_eq!(false,   b.surrounds(10));
+        assert_eq!(true,   b.surrounds(11));
+        assert_eq!(true,   b.surrounds(15));
+        assert_eq!(true,   b.surrounds(18));
+        assert_eq!(false,   b.surrounds(19));
+        assert_eq!(false,   b.surrounds(20));
+        assert_eq!(false,   b.surrounds(21));
+        assert_eq!(false,   b.surrounds(25));
     }
 
     #[test]
