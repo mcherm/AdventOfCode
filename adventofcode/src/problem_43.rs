@@ -79,23 +79,31 @@ enum PowerLevel {
 #[derive(Debug)]
 enum Axis {X, Y, Z}
 
+/// This is an immutable range of coordinates.
 #[derive(Debug, Eq, PartialEq, Clone)]
 struct Bounds {
     low: Coord,
     high: Coord,
 }
 
+/// This is an immutable rectangular parallelpiped.
 #[derive(Debug, Eq, PartialEq, Clone)]
 struct Cuboid {
     m_bounds: [Bounds; Axis::NUM_AXES],
 }
 
+/// This is an immutable instruction to be followed.
 #[derive(Debug, Eq, PartialEq, Clone)]
 struct Instruction {
     power_level: PowerLevel,
     cuboid: Cuboid,
 }
 
+/// This is an immutable reactor core which can follow instructions.
+#[derive(Debug)]
+struct ReactorCore {
+    on_blocks: Vec<Cuboid>
+}
 
 // ======== Implementations ========
 
@@ -133,7 +141,7 @@ impl Display for PowerLevel {
 impl Axis {
     const NUM_AXES: usize = 3;
 
-    fn all() -> [&'static Axis; Self::NUM_AXES] {
+    fn all() -> [&'static Axis; Axis::NUM_AXES] {
         [&Axis::X, &Axis::Y, &Axis::Z]
     }
 
@@ -142,6 +150,14 @@ impl Axis {
             Axis::X => 0,
             Axis::Y => 1,
             Axis::Z => 2,
+        }
+    }
+
+    fn others(&self) -> [&'static Axis; Axis::NUM_AXES - 1] {
+        match self {
+            Axis::X => [&Axis::Y, &Axis::Z],
+            Axis::Y => [&Axis::Z, &Axis::X],
+            Axis::Z => [&Axis::X, &Axis::Y],
         }
     }
 }
@@ -206,6 +222,11 @@ impl Bounds {
     /// self would need to split to avoid a partial overlap situation).
     fn is_split_by(&self, other: &Self) -> bool {
         self.contains(other.low) || self.contains(other.high)
+    }
+
+    /// Returns true if other overlaps at least some with self.
+    fn overlaps(&self, other: &Self) -> bool {
+        other.low < self.high && other.high > self.low
     }
 
     /// Given an other which splits self, this returns a Vec of Bounds which consist
@@ -289,12 +310,17 @@ impl Cuboid {
     /// Returns true if the other has a boundary along axis that falls within self (and
     /// therefore self would need to split to avoid a partial overlap situation).
     fn is_split_by_axis(&self, other: &Self, axis: &Axis) -> bool {
-        self.bounds(axis).is_split_by(&other.bounds(axis))
+        // we are split by this axis our bounds are split by theirs on this axis AND
+        // the other two axes overlap.
+        self.bounds(axis).is_split_by(&other.bounds(axis)) &&
+            axis.others().iter().all(|oa| self.bounds(oa).overlaps(other.bounds(oa)))
     }
 
     /// Returns true if the other has any boundary that falls within self (and therefore
     /// self would need to split to avoid a partial overlap situation).
     fn is_split_by(&self, other: &Self) -> bool {
+        // If any axis is split by other while the other 2 axes overlap with other then
+        // we are split by it
         Axis::all().iter().any(|a| self.is_split_by_axis(other,a))
     }
 
@@ -313,22 +339,8 @@ impl Cuboid {
 
     /// Given an other which splits self, this returns a Vec of Cuboids which consist
     /// of self split up into pieces that may overlap but don't intersect with other.
-    fn split_by(&self, other: &Self) -> Vec<Self> { // FIXME: I'm confident that this can be written better.
+    fn split_by(&self, other: &Self) -> Vec<Self> {
         assert!(self.is_split_by(other)); // Just verifying to help catch bugs
-        let all_axes = Axis::all();
-        let axes_that_split = all_axes.iter().filter(|a| self.is_split_by_axis(other, a));
-        // let mut existing_splits_opt: Option<Vec<Self>> = None; // if None then work from self
-        for axis in axes_that_split {
-            println!("beginning axis = {}", axis); // FIXME: I'm testing this as I go
-            // let what_to_iterate = match &existing_splits_opt {
-            //     None => [self].iter(),
-            //     Some(existing_splits) => existing_splits.iter().map(|x| &x)
-            // };
-            // for bound_we_have in what_to_iterate {
-            //     println!("bound_we_have = {}", bound_we_have); // FIXME: I'm testing this as I go
-            // }
-        }
-
         let mut splits: Vec<Self> = vec![self.clone()]; // Unnecessary clone. But deal with it.
         for axis in Axis::all() {
             let mut next_splits: Vec<Self> = Vec::new();
@@ -341,23 +353,6 @@ impl Cuboid {
             }
             splits = next_splits;
         }
-        // let mut split_2: Vec<Self> = Vec::new();
-        // for cuboid in split_1 {
-        //     if cuboid.is_split_by_axis(other, &Axis::Y) {
-        //         split_2.extend(cuboid.split_by_axis(other, &Axis::Y));
-        //     } else {
-        //         split_2.push(cuboid);
-        //     }
-        // }
-        // let mut split_3: Vec<Self> = Vec::new();
-        // for cuboid in split_2 {
-        //     if cuboid.is_split_by_axis(other, &Axis::Z) {
-        //         split_3.extend(cuboid.split_by_axis(other, &Axis::Z));
-        //     } else {
-        //         split_3.push(cuboid);
-        //     }
-        // }
-
         splits
     }
 }
@@ -415,9 +410,60 @@ impl Display for Instruction {
 }
 
 
+impl ReactorCore {
+    fn new() -> Self {
+        ReactorCore{on_blocks: Vec::new()}
+    }
+
+    // /// Modifies this core by performing the given instruction.
+    // fn perform(&mut self, instruction: Instruction) -> Self {
+    //     assert!(instruction.power_level == PowerLevel::On); // For now, only on instructions are supported
+    //     let changing_cuboids: Vec<Cuboid> = vec![instruction.cuboid];
+    //     let new_on_blocks: Vec<Cuboid> = Vec::new();
+    //     for block in self.on_blocks {
+    //         for changing_cuboid in changing_cuboids {
+    //             // FIXME: Still working on this.
+    //         }
+    //     }
+    //     ReactorCore{on_blocks: new_on_blocks}
+    // }
+
+}
+
+impl Display for ReactorCore {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        writeln!(f, "Reactor:")?;
+        for cuboid in &self.on_blocks {
+            writeln!(f, "  Cubes are on at {}", cuboid)?;
+        }
+        writeln!(f, "  All others are off.")
+    }
+}
+
 
 // ======== Functions ========
 
+
+/// Modify splitting to be a vector of cuboids that covers the exact same set of
+/// points but in which no cuboid is split by one of the cuboids in splitters.
+// FIXME: There is a totally unnecessary amount of copying going on here, because I don't know what I'm doing
+fn split_all(splitting: &Vec<Cuboid>, splitters: &Vec<Cuboid>) -> Vec<Cuboid> {
+    println!("Starting split_all");
+    let mut old_cuboids = splitting.clone();
+    let mut new_cuboids: Vec<Cuboid> = Vec::new();
+    for splitter in splitters {
+        for cuboid in old_cuboids.iter() {
+            if cuboid.is_split_by(splitter) {
+                new_cuboids.extend(cuboid.split_by(splitter));
+            } else {
+                new_cuboids.push(cuboid.clone());
+            }
+        }
+        old_cuboids = new_cuboids.clone();
+        new_cuboids.clear();
+    }
+    old_cuboids
+}
 
 // ======== run() and main() ========
 
@@ -428,6 +474,9 @@ fn run() -> Result<(),InputError> {
     for instruction in instructions {
         println!("{}", instruction);
     }
+
+    let reactor_core = ReactorCore::new();
+    println!("{}", reactor_core);
 
     Ok(())
 }
@@ -500,6 +549,11 @@ mod test {
     }
 
     #[test]
+    fn test_cuboid_is_split_by() {
+
+    }
+
+    #[test]
     fn test_cuboid_split() {
         let c0 = Cuboid::parse("x=3..5,y=5..16,z=-200..0").unwrap();
         let c1 = Cuboid::parse("x=3..5,y=0..11,z=-200..-99").unwrap();
@@ -510,5 +564,36 @@ mod test {
             Cuboid::parse("x=3..5,y=12..16,z=-200..-99").unwrap(),
             Cuboid::parse("x=3..5,y=12..16,z=-98..0").unwrap(),
         ]);
+    }
+
+    #[test]
+    fn test_split_all() {
+        let splitting = vec![
+            Cuboid::parse("x=0..99,y=0..99,z=0..99").unwrap(),
+        ];
+        let splitters = vec![
+            Cuboid::parse("x=50..120,y=30..99,z=0..99").unwrap(),
+            Cuboid::parse("x=10..29,y=50..74,z=0..99").unwrap(),
+            Cuboid::parse("x=0..3,y=0..3,z=0..3").unwrap(),
+        ];
+        let new_splitting = split_all(&splitting, &splitters);
+        // NOTE: This test is slightly fragile in that it assumes we prefer axis X to Y to Z
+        //   in that order. There are other ways to divide it (and other orders even if
+        //   we had the same division) that would also be valid answers.
+        assert_eq!(
+            new_splitting,
+            vec![
+                Cuboid::parse("x=0..3,y=0..3,z=0..3").unwrap(),
+                Cuboid::parse("x=0..3,y=0..3,z=4..99").unwrap(),
+                Cuboid::parse("x=0..3,y=4..99,z=0..99").unwrap(),
+                Cuboid::parse("x=4..9,y=0..99,z=0..99").unwrap(),
+                Cuboid::parse("x=10..29,y=0..49,z=0..99").unwrap(),
+                Cuboid::parse("x=10..29,y=50..74,z=0..99").unwrap(),
+                Cuboid::parse("x=10..29,y=75..99,z=0..99").unwrap(),
+                Cuboid::parse("x=30..49,y=0..99,z=0..99").unwrap(),
+                Cuboid::parse("x=50..99,y=0..29,z=0..99").unwrap(),
+                Cuboid::parse("x=50..99,y=30..99,z=0..99").unwrap(),
+            ]
+        );
     }
 }
