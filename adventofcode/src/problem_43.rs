@@ -3,6 +3,7 @@ use std::fmt::{Display, Formatter};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use regex::Regex;
+use std::cmp::Ordering;
 use nom::bytes::complete::tag as nom_tag;
 use nom::character::complete::i32 as nom_coord;
 use nom::sequence::tuple as nom_tuple;
@@ -78,6 +79,16 @@ enum PowerLevel {
 
 #[derive(Debug)]
 enum Axis {X, Y, Z}
+
+// Possible outcome of comparing two Bounds OR two Cuboids.
+#[derive(Debug, Eq, PartialEq, Copy, Clone)]
+enum Comparison {
+    Separate, // share no points in common
+    Intersects, // some points shared, but each has some points the other lacks
+    Contained, // second has all points of first, plus some others
+    Surrounds, // first has all points of second, plus some others
+    Equal, // it's the same Bound or Cuboid: all points are common
+}
 
 /// This is an immutable range of coordinates.
 #[derive(Debug, Eq, PartialEq, Clone)]
@@ -173,6 +184,8 @@ impl Display for Axis {
 }
 
 impl Bounds {
+    /// Passed a low (inclusive) and high (exclusive) boundary, this creates a
+    /// Coord. We must have low < high... they can't be equal or swapped.
     fn new(low: Coord, high: Coord) -> Self {
         assert!(low < high);
         Bounds{low, high}
@@ -212,16 +225,37 @@ impl Bounds {
         }
     }
 
+
+    /// Returns a value indicating how these two Bounds compare.
+    fn compare_with(&self, other: &Self) -> Comparison {
+        if self.high <= other.low || self.low >= other.high {
+            Comparison::Separate
+        } else {
+            match (self.low.cmp(&other.low), self.high.cmp(&other.high)) {
+                (Ordering::Less, Ordering::Less) => Comparison::Intersects,
+                (Ordering::Less, Ordering::Equal) => Comparison::Surrounds,
+                (Ordering::Less, Ordering::Greater) => Comparison::Surrounds,
+                (Ordering::Equal, Ordering::Less) => Comparison::Contained,
+                (Ordering::Equal, Ordering::Equal) => Comparison::Equal,
+                (Ordering::Equal, Ordering::Greater) => Comparison::Surrounds,
+                (Ordering::Greater, Ordering::Less) => Comparison::Contained,
+                (Ordering::Greater, Ordering::Equal) => Comparison::Contained,
+                (Ordering::Greater, Ordering::Greater) => Comparison::Intersects,
+            }
+        }
+    }
+
     /// Returns true if the coord is within (NOT on the boundaries of) this Bounds
     /// and false otherwise.
-    fn contains(&self, coord: Coord) -> bool {
+    // FIXME: There's a bug here with boundary conditions: upper allows being on the boundary; lower doesn't.
+    fn surrounds(&self, coord: Coord) -> bool {
         coord > self.low && coord < self.high
     }
 
     /// Returns true if the other has a boundary that falls within self (and therefore
     /// self would need to split to avoid a partial overlap situation).
     fn is_split_by(&self, other: &Self) -> bool {
-        self.contains(other.low) || self.contains(other.high)
+        self.surrounds(other.low) || self.surrounds(other.high)
     }
 
     /// Returns true if other overlaps at least some with self.
@@ -232,7 +266,7 @@ impl Bounds {
     /// Given an other which splits self, this returns a Vec of Bounds which consist
     /// of self split up into pieces. The Vec will always be of length 2 or 3.
     fn split_by(&self, other: &Self) -> Vec<Self> {
-        let intersects = (self.contains(other.low), self.contains(other.high));
+        let intersects = (self.surrounds(other.low), self.surrounds(other.high));
         match intersects {
             (false, false) => panic!("Bounds::split_by() may only be called when it splits it."),
             (true, false) => vec![
@@ -283,6 +317,7 @@ impl Cuboid {
     }
 
     /// Parse input to create a Cuboid. Returns None if there was any issue with the parsing.
+    #[allow(dead_code)]
     fn parse(input: &str) -> Option<Self> {
         match Self::parse_nom(input) {
             Err(_) => None,
@@ -296,7 +331,6 @@ impl Cuboid {
         }
     }
 
-
     /// Use this to access the Bounds for a given axis.
     fn bounds(&self, axis: &Axis) -> &Bounds {
         return &self.m_bounds[axis.index()]
@@ -305,6 +339,22 @@ impl Cuboid {
     /// Returns a copy of the bounds for this Cuboid
     fn copy_bounds(&self) -> [Bounds; Axis::NUM_AXES] {
         Axis::all().map(|a| (*self.bounds(a)).clone())
+    }
+
+    /// Returns a value indicating how these two Cuboids compare.
+    fn compare_with(&self, other: &Self) -> Comparison {
+        let compares: Vec<Comparison> = Axis::all().iter().map(|a| self.bounds(a).compare_with(other.bounds(a))).collect();
+        if compares.iter().any(|c| matches!(c, Comparison::Separate)) {
+            Comparison::Separate
+        } else if compares.iter().all(|c| matches!(c, Comparison::Equal)) {
+            Comparison::Equal
+        } else if compares.iter().all(|c| matches!(c, Comparison::Contained | Comparison::Equal)) {
+            Comparison::Contained
+        } else if compares.iter().all(|c| matches!(c, Comparison::Surrounds | Comparison::Equal)) {
+            Comparison::Surrounds
+        } else {
+            Comparison::Intersects
+        }
     }
 
     /// Returns true if the other has a boundary along axis that falls within self (and
@@ -415,18 +465,51 @@ impl ReactorCore {
         ReactorCore{on_blocks: Vec::new()}
     }
 
-    // /// Modifies this core by performing the given instruction.
-    // fn perform(&mut self, instruction: Instruction) -> Self {
-    //     assert!(instruction.power_level == PowerLevel::On); // For now, only on instructions are supported
-    //     let changing_cuboids: Vec<Cuboid> = vec![instruction.cuboid];
-    //     let new_on_blocks: Vec<Cuboid> = Vec::new();
-    //     for block in self.on_blocks {
-    //         for changing_cuboid in changing_cuboids {
-    //             // FIXME: Still working on this.
-    //         }
-    //     }
-    //     ReactorCore{on_blocks: new_on_blocks}
-    // }
+    /// Modifies this core by performing the given instruction.
+    fn perform(&mut self, instruction: &Instruction) -> Self {
+        assert!(instruction.power_level == PowerLevel::On); // For now, only on instructions are supported
+        let mut new_on_blocks: Vec<Cuboid> = Vec::with_capacity(self.on_blocks.capacity() + 8);
+        let mut instruction_cuboids: Vec<Cuboid> = vec![instruction.cuboid.clone()];
+        for on_block in self.on_blocks.iter() {
+            let mut new_instruction_cuboids: Vec<Cuboid> = Vec::with_capacity(instruction_cuboids.capacity() + 8);
+            for instruction_cuboid in instruction_cuboids.iter() {
+                match instruction_cuboid.compare_with(on_block) {
+                    Comparison::Separate => {
+                        println!("Instruction {} doesn't overlap {}", instruction_cuboid, on_block);
+                        new_on_blocks.push(on_block.clone());
+                        new_instruction_cuboids.push(instruction_cuboid.clone());
+                    },
+                    Comparison::Equal => {
+                        println!("Instruction {} equals {}", instruction_cuboid, on_block);
+                        new_on_blocks.push(on_block.clone());
+                    },
+                    Comparison::Contained => {
+                        println!("Instruction {} contained in {}", instruction_cuboid, on_block);
+                        new_on_blocks.push(on_block.clone());
+                    },
+                    Comparison::Surrounds => {
+                        println!("Instruction {} surrounds {}", instruction_cuboid, on_block);
+                        new_instruction_cuboids.push(instruction_cuboid.clone());
+                    },
+                    Comparison::Intersects => {
+                        println!("Instruction {} intersects {}", instruction_cuboid, on_block);
+                        new_on_blocks.push(on_block.clone());
+                        let pieces = instruction_cuboid.split_by(on_block);
+                        for piece in pieces.iter() {
+                            match piece.compare_with(on_block) {
+                                Comparison::Separate => new_instruction_cuboids.push(piece.clone()),
+                                Comparison::Equal | Comparison::Contained => {},
+                                _ => panic!("Split pieces shouldn't Intersect or Surround.")
+                            }
+                        }
+                    },
+                }
+            }
+            instruction_cuboids = new_instruction_cuboids;
+        }
+        new_on_blocks.extend(instruction_cuboids);
+        ReactorCore{on_blocks: new_on_blocks}
+    }
 
 }
 
@@ -444,26 +527,27 @@ impl Display for ReactorCore {
 // ======== Functions ========
 
 
-/// Modify splitting to be a vector of cuboids that covers the exact same set of
-/// points but in which no cuboid is split by one of the cuboids in splitters.
-// FIXME: There is a totally unnecessary amount of copying going on here, because I don't know what I'm doing
-fn split_all(splitting: &Vec<Cuboid>, splitters: &Vec<Cuboid>) -> Vec<Cuboid> {
-    println!("Starting split_all");
-    let mut old_cuboids = splitting.clone();
-    let mut new_cuboids: Vec<Cuboid> = Vec::new();
-    for splitter in splitters {
-        for cuboid in old_cuboids.iter() {
-            if cuboid.is_split_by(splitter) {
-                new_cuboids.extend(cuboid.split_by(splitter));
-            } else {
-                new_cuboids.push(cuboid.clone());
-            }
-        }
-        old_cuboids = new_cuboids.clone();
-        new_cuboids.clear();
-    }
-    old_cuboids
-}
+// FIXME: Remove
+// /// Modify splitting to be a vector of cuboids that covers the exact same set of
+// /// points but in which no cuboid is split by one of the cuboids in splitters.
+// // FIXME: There is a totally unnecessary amount of copying going on here, because I don't know what I'm doing
+// fn split_all(splitting: &Vec<Cuboid>, splitters: &Vec<Cuboid>) -> Vec<Cuboid> {
+//     println!("Starting split_all");
+//     let mut old_cuboids = splitting.clone();
+//     let mut new_cuboids: Vec<Cuboid> = Vec::new();
+//     for splitter in splitters {
+//         for cuboid in old_cuboids.iter() {
+//             if cuboid.is_split_by(splitter) {
+//                 new_cuboids.extend(cuboid.split_by(splitter));
+//             } else {
+//                 new_cuboids.push(cuboid.clone());
+//             }
+//         }
+//         old_cuboids = new_cuboids.clone();
+//         new_cuboids.clear();
+//     }
+//     old_cuboids
+// }
 
 // ======== run() and main() ========
 
@@ -471,12 +555,16 @@ fn split_all(splitting: &Vec<Cuboid>, splitters: &Vec<Cuboid>) -> Vec<Cuboid> {
 fn run() -> Result<(),InputError> {
     let instructions = read_reactor_reboot_file()?;
     println!("Instructions:");
-    for instruction in instructions {
+    for instruction in instructions.iter() {
         println!("{}", instruction);
     }
 
-    let reactor_core = ReactorCore::new();
-    println!("{}", reactor_core);
+    let mut reactor_core = ReactorCore::new();
+    println!("Reactor Core before: {}", reactor_core);
+    for instruction in instructions.iter() {
+        reactor_core = reactor_core.perform(instruction);
+        println!("Reactor Core: {}", reactor_core);
+    }
 
     Ok(())
 }
@@ -520,6 +608,24 @@ mod test {
     }
 
     #[test]
+    fn test_bounds_compare_with() {
+        let b = Bounds::new(10, 20);
+        assert_eq!(Comparison::Separate,   b.compare_with(&Bounds::new(0, 5)));
+        assert_eq!(Comparison::Separate,   b.compare_with(&Bounds::new(0, 10)));
+        assert_eq!(Comparison::Intersects, b.compare_with(&Bounds::new(0, 15)));
+        assert_eq!(Comparison::Contained,  b.compare_with(&Bounds::new(0, 20)));
+        assert_eq!(Comparison::Contained,  b.compare_with(&Bounds::new(0, 25)));
+        assert_eq!(Comparison::Surrounds,  b.compare_with(&Bounds::new(10, 15)));
+        assert_eq!(Comparison::Equal,      b.compare_with(&Bounds::new(10, 20)));
+        assert_eq!(Comparison::Contained,  b.compare_with(&Bounds::new(10, 25)));
+        assert_eq!(Comparison::Surrounds,  b.compare_with(&Bounds::new(13, 18)));
+        assert_eq!(Comparison::Surrounds,  b.compare_with(&Bounds::new(15, 20)));
+        assert_eq!(Comparison::Intersects, b.compare_with(&Bounds::new(15, 25)));
+        assert_eq!(Comparison::Separate,   b.compare_with(&Bounds::new(20, 25)));
+        assert_eq!(Comparison::Separate,   b.compare_with(&Bounds::new(25, 30)));
+    }
+
+    #[test]
     fn test_bounds_split_by() {
         let b = Bounds::new(5, 15);
         assert_eq!(
@@ -537,6 +643,18 @@ mod test {
     }
 
     #[test]
+    fn test_cuboid_compare_with() {
+        let c = Cuboid::parse("x=0..5,y=0..5,z=0..5").unwrap();
+        assert_eq!(Comparison::Separate, c.compare_with(&Cuboid::parse("x=0..5,y=6..8,z=0..5").unwrap()));
+        assert_eq!(Comparison::Equal, c.compare_with(&Cuboid::parse("x=0..5,y=0..5,z=0..5").unwrap()));
+        assert_eq!(Comparison::Surrounds, c.compare_with(&Cuboid::parse("x=0..3,y=0..5,z=0..5").unwrap()));
+        assert_eq!(Comparison::Surrounds, c.compare_with(&Cuboid::parse("x=0..3,y=0..5,z=2..5").unwrap()));
+        assert_eq!(Comparison::Contained, c.compare_with(&Cuboid::parse("x=-5..10,y=-5..10,z=-5..10").unwrap()));
+        assert_eq!(Comparison::Intersects, c.compare_with(&Cuboid::parse("x=0..5,y=2..3,z=3..6").unwrap()));
+        assert_eq!(Comparison::Intersects, c.compare_with(&Cuboid::parse("x=-1..8,y=2..4,z=2..4").unwrap()));
+    }
+
+    #[test]
     fn test_cuboid_split_by_axis() {
         let c = Cuboid::parse("x=3..5,y=5..16,z=-200..-99").unwrap();
         assert_eq!(
@@ -549,11 +667,6 @@ mod test {
     }
 
     #[test]
-    fn test_cuboid_is_split_by() {
-
-    }
-
-    #[test]
     fn test_cuboid_split() {
         let c0 = Cuboid::parse("x=3..5,y=5..16,z=-200..0").unwrap();
         let c1 = Cuboid::parse("x=3..5,y=0..11,z=-200..-99").unwrap();
@@ -561,39 +674,39 @@ mod test {
         assert_eq!(split, vec![
             Cuboid::parse("x=3..5,y=5..11,z=-200..-99").unwrap(),
             Cuboid::parse("x=3..5,y=5..11,z=-98..0").unwrap(),
-            Cuboid::parse("x=3..5,y=12..16,z=-200..-99").unwrap(),
-            Cuboid::parse("x=3..5,y=12..16,z=-98..0").unwrap(),
+            Cuboid::parse("x=3..5,y=12..16,z=-200..0").unwrap(),
         ]);
     }
 
-    #[test]
-    fn test_split_all() {
-        let splitting = vec![
-            Cuboid::parse("x=0..99,y=0..99,z=0..99").unwrap(),
-        ];
-        let splitters = vec![
-            Cuboid::parse("x=50..120,y=30..99,z=0..99").unwrap(),
-            Cuboid::parse("x=10..29,y=50..74,z=0..99").unwrap(),
-            Cuboid::parse("x=0..3,y=0..3,z=0..3").unwrap(),
-        ];
-        let new_splitting = split_all(&splitting, &splitters);
-        // NOTE: This test is slightly fragile in that it assumes we prefer axis X to Y to Z
-        //   in that order. There are other ways to divide it (and other orders even if
-        //   we had the same division) that would also be valid answers.
-        assert_eq!(
-            new_splitting,
-            vec![
-                Cuboid::parse("x=0..3,y=0..3,z=0..3").unwrap(),
-                Cuboid::parse("x=0..3,y=0..3,z=4..99").unwrap(),
-                Cuboid::parse("x=0..3,y=4..99,z=0..99").unwrap(),
-                Cuboid::parse("x=4..9,y=0..99,z=0..99").unwrap(),
-                Cuboid::parse("x=10..29,y=0..49,z=0..99").unwrap(),
-                Cuboid::parse("x=10..29,y=50..74,z=0..99").unwrap(),
-                Cuboid::parse("x=10..29,y=75..99,z=0..99").unwrap(),
-                Cuboid::parse("x=30..49,y=0..99,z=0..99").unwrap(),
-                Cuboid::parse("x=50..99,y=0..29,z=0..99").unwrap(),
-                Cuboid::parse("x=50..99,y=30..99,z=0..99").unwrap(),
-            ]
-        );
-    }
+    // FIXME: Remove
+    // #[test]
+    // fn test_split_all() {
+    //     let splitting = vec![
+    //         Cuboid::parse("x=0..99,y=0..99,z=0..99").unwrap(),
+    //     ];
+    //     let splitters = vec![
+    //         Cuboid::parse("x=50..120,y=30..99,z=0..99").unwrap(),
+    //         Cuboid::parse("x=10..29,y=50..74,z=0..99").unwrap(),
+    //         Cuboid::parse("x=0..3,y=0..3,z=0..3").unwrap(),
+    //     ];
+    //     let new_splitting = split_all(&splitting, &splitters);
+    //     // NOTE: This test is slightly fragile in that it assumes we prefer axis X to Y to Z
+    //     //   in that order. There are other ways to divide it (and other orders even if
+    //     //   we had the same division) that would also be valid answers.
+    //     assert_eq!(
+    //         new_splitting,
+    //         vec![
+    //             Cuboid::parse("x=0..3,y=0..3,z=0..3").unwrap(),
+    //             Cuboid::parse("x=0..3,y=0..3,z=4..99").unwrap(),
+    //             Cuboid::parse("x=0..3,y=4..99,z=0..99").unwrap(),
+    //             Cuboid::parse("x=4..9,y=0..99,z=0..99").unwrap(),
+    //             Cuboid::parse("x=10..29,y=0..49,z=0..99").unwrap(),
+    //             Cuboid::parse("x=10..29,y=50..74,z=0..99").unwrap(),
+    //             Cuboid::parse("x=10..29,y=75..99,z=0..99").unwrap(),
+    //             Cuboid::parse("x=30..49,y=0..99,z=0..99").unwrap(),
+    //             Cuboid::parse("x=50..99,y=0..29,z=0..99").unwrap(),
+    //             Cuboid::parse("x=50..99,y=30..99,z=0..99").unwrap(),
+    //         ]
+    //     );
+    // }
 }
