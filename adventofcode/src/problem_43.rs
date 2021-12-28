@@ -70,6 +70,7 @@ fn read_reactor_reboot_file() -> Result<Vec<Instruction>, InputError> {
 // ======== Types ========
 
 type Coord = i32;
+type Volume = u64;
 
 #[derive(Debug, Eq, PartialEq, Clone)]
 enum PowerLevel {
@@ -85,7 +86,7 @@ enum Axis {X, Y, Z}
 enum Comparison {
     Separate, // share no points in common
     Intersects, // some points shared, but each has some points the other lacks
-    Contained, // second has all points of first, plus some others
+    ContainedBy, // second has all points of first, plus some others
     Surrounds, // first has all points of second, plus some others
     Equal, // it's the same Bound or Cuboid: all points are common
 }
@@ -235,14 +236,20 @@ impl Bounds {
                 (Ordering::Less, Ordering::Less) => Comparison::Intersects,
                 (Ordering::Less, Ordering::Equal) => Comparison::Surrounds,
                 (Ordering::Less, Ordering::Greater) => Comparison::Surrounds,
-                (Ordering::Equal, Ordering::Less) => Comparison::Contained,
+                (Ordering::Equal, Ordering::Less) => Comparison::ContainedBy,
                 (Ordering::Equal, Ordering::Equal) => Comparison::Equal,
                 (Ordering::Equal, Ordering::Greater) => Comparison::Surrounds,
-                (Ordering::Greater, Ordering::Less) => Comparison::Contained,
-                (Ordering::Greater, Ordering::Equal) => Comparison::Contained,
+                (Ordering::Greater, Ordering::Less) => Comparison::ContainedBy,
+                (Ordering::Greater, Ordering::Equal) => Comparison::ContainedBy,
                 (Ordering::Greater, Ordering::Greater) => Comparison::Intersects,
             }
         }
+    }
+
+    /// Returns a count of the size of this bound (as a volume).
+    fn length(&self) -> Volume {
+        // It's safe to unwrap because we know high > low
+        Volume::try_from(self.high - self.low).unwrap()
     }
 
     /// Returns true if the coord is within (NOT on the boundaries of) this Bounds
@@ -348,13 +355,18 @@ impl Cuboid {
             Comparison::Separate
         } else if compares.iter().all(|c| matches!(c, Comparison::Equal)) {
             Comparison::Equal
-        } else if compares.iter().all(|c| matches!(c, Comparison::Contained | Comparison::Equal)) {
-            Comparison::Contained
+        } else if compares.iter().all(|c| matches!(c, Comparison::ContainedBy | Comparison::Equal)) {
+            Comparison::ContainedBy
         } else if compares.iter().all(|c| matches!(c, Comparison::Surrounds | Comparison::Equal)) {
             Comparison::Surrounds
         } else {
             Comparison::Intersects
         }
+    }
+
+    /// Returns a count of the number of points that are in this cuboid.
+    fn volume(&self) -> Volume {
+        Axis::all().iter().map(|a| self.bounds(a).length()).product()
     }
 
     /// Returns true if the other has a boundary along axis that falls within self (and
@@ -465,9 +477,13 @@ impl ReactorCore {
         ReactorCore{on_blocks: Vec::new()}
     }
 
+    /// Returns a count of the number of points that are on.
+    fn volume_on(&self) -> Volume {
+        self.on_blocks.iter().map(|c| c.volume()).sum()
+    }
+
     /// Modifies this core by performing the given instruction.
     fn perform(&mut self, instruction: &Instruction) -> Self {
-        assert!(instruction.power_level == PowerLevel::On); // For now, only on instructions are supported
         let mut new_on_blocks: Vec<Cuboid> = Vec::with_capacity(self.on_blocks.capacity() + 8);
         let mut instruction_cuboids: Vec<Cuboid> = vec![instruction.cuboid.clone()];
         for on_block in self.on_blocks.iter() {
@@ -481,11 +497,17 @@ impl ReactorCore {
                     },
                     Comparison::Equal => {
                         println!("Instruction {} equals {}", instruction_cuboid, on_block);
-                        new_on_blocks.push(on_block.clone());
+                        match instruction.power_level {
+                            PowerLevel::On => new_on_blocks.push(on_block.clone()),
+                            PowerLevel::Off => {},
+                        }
                     },
-                    Comparison::Contained => {
+                    Comparison::ContainedBy => {
                         println!("Instruction {} contained in {}", instruction_cuboid, on_block);
-                        new_on_blocks.push(on_block.clone());
+                        match instruction.power_level {
+                            PowerLevel::On => new_on_blocks.push(on_block.clone()),
+                            PowerLevel::Off => new_instruction_cuboids.push(instruction_cuboid.clone()),
+                        }
                     },
                     Comparison::Surrounds => {
                         println!("Instruction {} surrounds {}", instruction_cuboid, on_block);
@@ -493,21 +515,43 @@ impl ReactorCore {
                     },
                     Comparison::Intersects => {
                         println!("Instruction {} intersects {}", instruction_cuboid, on_block);
-                        new_on_blocks.push(on_block.clone());
-                        let pieces = instruction_cuboid.split_by(on_block);
-                        for piece in pieces.iter() {
-                            match piece.compare_with(on_block) {
-                                Comparison::Separate => new_instruction_cuboids.push(piece.clone()),
-                                Comparison::Equal | Comparison::Contained => {},
-                                _ => panic!("Split pieces shouldn't Intersect or Surround.")
-                            }
+                        match instruction.power_level {
+                            PowerLevel::On => {
+                                // -- keep the existing block --
+                                new_on_blocks.push(on_block.clone());
+                                // -- keep all pieces of the instruction except the bit already covered
+                                let pieces = instruction_cuboid.split_by(on_block);
+                                for piece in pieces.iter() {
+                                    match piece.compare_with(on_block) {
+                                        Comparison::Separate => new_instruction_cuboids.push(piece.clone()),
+                                        Comparison::Equal | Comparison::ContainedBy => {},
+                                        _ => panic!("Split pieces shouldn't Intersect or Surround.")
+                                    }
+                                }
+                            },
+                            PowerLevel::Off => {
+                                // -- keep the existing instruction --
+                                new_instruction_cuboids.push(instruction_cuboid.clone());
+                                // -- keep all pieces of the existing on_block except the bit that was covered
+                                let pieces = on_block.split_by(instruction_cuboid);
+                                for piece in pieces.iter() {
+                                    match piece.compare_with(instruction_cuboid) {
+                                        Comparison::Separate => new_on_blocks.push(piece.clone()),
+                                        Comparison::Equal | Comparison::ContainedBy => {},
+                                        _ => panic!("Split pieces shouldn't Intersect or Surround.")
+                                    }
+                                }
+                            },
                         }
                     },
                 }
             }
             instruction_cuboids = new_instruction_cuboids;
         }
-        new_on_blocks.extend(instruction_cuboids);
+        match instruction.power_level {
+            PowerLevel::On => new_on_blocks.extend(instruction_cuboids),
+            PowerLevel::Off => {},
+        }
         ReactorCore{on_blocks: new_on_blocks}
     }
 
@@ -560,10 +604,10 @@ fn run() -> Result<(),InputError> {
     }
 
     let mut reactor_core = ReactorCore::new();
-    println!("Reactor Core before: {}", reactor_core);
+    println!("Reactor Core before has {} on: {}", reactor_core.volume_on(), reactor_core);
     for instruction in instructions.iter() {
         reactor_core = reactor_core.perform(instruction);
-        println!("Reactor Core: {}", reactor_core);
+        println!("Reactor Core: has {} on: {}", reactor_core.volume_on(), reactor_core);
     }
 
     Ok(())
@@ -613,11 +657,11 @@ mod test {
         assert_eq!(Comparison::Separate,   b.compare_with(&Bounds::new(0, 5)));
         assert_eq!(Comparison::Separate,   b.compare_with(&Bounds::new(0, 10)));
         assert_eq!(Comparison::Intersects, b.compare_with(&Bounds::new(0, 15)));
-        assert_eq!(Comparison::Contained,  b.compare_with(&Bounds::new(0, 20)));
-        assert_eq!(Comparison::Contained,  b.compare_with(&Bounds::new(0, 25)));
+        assert_eq!(Comparison::ContainedBy, b.compare_with(&Bounds::new(0, 20)));
+        assert_eq!(Comparison::ContainedBy, b.compare_with(&Bounds::new(0, 25)));
         assert_eq!(Comparison::Surrounds,  b.compare_with(&Bounds::new(10, 15)));
         assert_eq!(Comparison::Equal,      b.compare_with(&Bounds::new(10, 20)));
-        assert_eq!(Comparison::Contained,  b.compare_with(&Bounds::new(10, 25)));
+        assert_eq!(Comparison::ContainedBy, b.compare_with(&Bounds::new(10, 25)));
         assert_eq!(Comparison::Surrounds,  b.compare_with(&Bounds::new(13, 18)));
         assert_eq!(Comparison::Surrounds,  b.compare_with(&Bounds::new(15, 20)));
         assert_eq!(Comparison::Intersects, b.compare_with(&Bounds::new(15, 25)));
@@ -649,7 +693,7 @@ mod test {
         assert_eq!(Comparison::Equal, c.compare_with(&Cuboid::parse("x=0..5,y=0..5,z=0..5").unwrap()));
         assert_eq!(Comparison::Surrounds, c.compare_with(&Cuboid::parse("x=0..3,y=0..5,z=0..5").unwrap()));
         assert_eq!(Comparison::Surrounds, c.compare_with(&Cuboid::parse("x=0..3,y=0..5,z=2..5").unwrap()));
-        assert_eq!(Comparison::Contained, c.compare_with(&Cuboid::parse("x=-5..10,y=-5..10,z=-5..10").unwrap()));
+        assert_eq!(Comparison::ContainedBy, c.compare_with(&Cuboid::parse("x=-5..10,y=-5..10,z=-5..10").unwrap()));
         assert_eq!(Comparison::Intersects, c.compare_with(&Cuboid::parse("x=0..5,y=2..3,z=3..6").unwrap()));
         assert_eq!(Comparison::Intersects, c.compare_with(&Cuboid::parse("x=-1..8,y=2..4,z=2..4").unwrap()));
     }
