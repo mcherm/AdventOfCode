@@ -327,20 +327,6 @@ impl Cuboid {
         Axis::all().iter().map(|a| self.bounds(a).length()).product()
     }
 
-    /// Returns true if the other overlaps with self and also has a boundary along axis
-    /// that falls within self (and therefore self would need to split along axis to avoid a
-    /// partial overlap situation).
-    fn is_split_by_axis(&self, other: &Self, axis: &Axis) -> bool {
-        match self.bounds(axis).compare_with(other.bounds(axis)) {
-            Comparison::ContainedBy | Comparison::Separate | Comparison::Equal => false,
-            Comparison::Intersects | Comparison::Surrounds => {
-                // if other has a boundary within self along axis, then we still need
-                // to make sure that we overlap along the other axes.
-                axis.others().iter().all(|oa| self.bounds(oa).overlaps(other.bounds(oa)))
-            },
-        }
-    }
-
     /// Returns true if the other has any boundary that falls within self (and therefore
     /// self would need to split to avoid a partial overlap situation).
     fn is_split_by(&self, other: &Self) -> bool {
@@ -363,18 +349,60 @@ impl Cuboid {
         answer
     }
 
+
     /// Given an other which splits self, this returns a Vec of Cuboids which consist
-    /// of self split up into pieces that may overlap but don't intersect with other.
-    fn split_by(&self, other: &Self) -> Vec<Self> { // FIXME: If the ONLY use is to get the pieces that DON'T overlap, consider making a different function to do that instead
+    /// of self split up into pieces don't intersect with other but which, taken together,
+    /// include all of self which didn't overlap with other.
+    fn subtract(&self, other: &Self) -> Vec<Self> {
         assert!(self.is_split_by(other)); // Just verifying to help catch bugs
         let mut splits: Vec<Self> = vec![self.clone()]; // Unnecessary clone. But deal with it.
         for axis in Axis::all() {
-            let mut next_splits: Vec<Self> = Vec::new();
+            let mut next_splits: Vec<Self> = Vec::with_capacity(splits.len() + 6);
             for piece in splits {
-                if piece.is_split_by_axis(other, axis) {
-                    next_splits.extend(piece.split_by_axis(other, axis));
-                } else {
-                    next_splits.push(piece);
+                match piece.bounds(axis).compare_with(other.bounds(axis)) {
+                    Comparison::Separate => {
+                        // -- this piece isn't broken up by other along this axis --
+                        next_splits.push(piece);
+                    },
+                    Comparison::Equal | Comparison::ContainedBy => {
+                        // -- this piece overlaps along this axis... --
+                        match piece.compare_with(other) {
+                            Comparison::Equal | Comparison::ContainedBy => {
+                                // -- ...and this piece IS the overlap; leave it out --
+                            },
+                            Comparison::Separate | Comparison::Intersects | Comparison::Surrounds => {
+                                // -- ...but has some parts outside of other --
+                                next_splits.push(piece);
+                            },
+                        }
+                    },
+                    Comparison::Intersects | Comparison::Surrounds => {
+                        // -- this axis would split this piece --
+                        // if other has a boundary within self along axis, then we still need
+                        // to make sure that we overlap along the other axes.
+                        let overlaps = axis.others().iter().all(|oa| {
+                            piece.bounds(oa).overlaps(other.bounds(oa))
+                        });
+                        if overlaps {
+                            // -- it genuinely gets split --
+                            let small_pieces = piece.split_by_axis(other, axis);
+                            for small_piece in small_pieces.iter() {
+                                match small_piece.compare_with(other) {
+                                    Comparison::Separate | Comparison::Intersects | Comparison::Surrounds => {
+                                        // -- this small piece has some parts outside of other --
+                                        next_splits.push(small_piece.clone());
+                                    },
+                                    Comparison::ContainedBy | Comparison::Equal => {
+                                        // -- this small piece is the overlap; leave it out --
+                                    },
+                                }
+                            }
+                        } else {
+                            // -- along some other axis it is separate --
+                            next_splits.push(piece);
+                        }
+
+                    },
                 }
             }
             splits = next_splits;
@@ -382,25 +410,6 @@ impl Cuboid {
         splits
     }
 
-    // FIXME: This exists just to help Rachel debug by breaking up the same way she does.
-    /// Given an other which splits self, this returns a Vec of Cuboids which consist
-    /// of self split up into pieces that may overlap but don't intersect with other.
-    fn rachel_split_by(&self, other: &Self) -> Vec<Self> {
-        assert!(self.is_split_by(other)); // Just verifying to help catch bugs
-        let mut splits: Vec<Self> = vec![self.clone()]; // Unnecessary clone. But deal with it.
-        for axis in [&Axis::Z, &Axis::X, &Axis::Y].iter() {
-            let mut next_splits: Vec<Self> = Vec::new();
-            for piece in splits {
-                if piece.is_split_by_axis(other, axis) {
-                    next_splits.extend(piece.split_by_axis(other, axis));
-                } else {
-                    next_splits.push(piece);
-                }
-            }
-            splits = next_splits;
-        }
-        splits
-    }
 }
 
 impl Display for Cuboid {
@@ -506,16 +515,7 @@ impl ReactorCore {
                                 new_instruction_cuboids.push(instruction_cuboid.clone());
                                 assert!(use_this_on_block == true);
                                 use_this_on_block = false;
-                                let pieces = on_block.split_by(instruction_cuboid);
-                                if debugging {println!("                the on_block breaks into {} pieces:", pieces.len());}
-                                for piece in pieces.iter() {
-                                    if debugging {println!("                    one of which is {}", piece);}
-                                    match piece.compare_with(instruction_cuboid) {
-                                        Comparison::Separate => new_on_blocks.push(piece.clone()),
-                                        Comparison::Equal | Comparison::ContainedBy => {},
-                                        _ => panic!("Split pieces shouldn't Intersect or Surround.")
-                                    }
-                                }
+                                new_on_blocks.extend(on_block.subtract(instruction_cuboid));
                             },
                         }
                     },
@@ -530,16 +530,7 @@ impl ReactorCore {
                         match instruction.power_level {
                             PowerLevel::On => {
                                 // -- keep all pieces of the instruction except the bit already covered
-                                let pieces = instruction_cuboid.split_by(on_block);
-                                if debugging {println!("                it breaks into {} pieces:", pieces.len());}
-                                for piece in pieces.iter() {
-                                    if debugging {println!("                    one of which is {}", piece);}
-                                    match piece.compare_with(on_block) {
-                                        Comparison::Separate => new_instruction_cuboids.push(piece.clone()),
-                                        Comparison::Equal | Comparison::ContainedBy => {},
-                                        _ => panic!("Split pieces shouldn't Intersect or Surround.")
-                                    }
-                                }
+                                new_instruction_cuboids.extend(instruction_cuboid.subtract(on_block));
                             },
                             PowerLevel::Off => {
                                 // -- keep the existing instruction --
@@ -548,16 +539,7 @@ impl ReactorCore {
                                 assert!(use_this_on_block == true);
                                 use_this_on_block = false;
                                 // -- but do use the all pieces of it, except the bit that was covered --
-                                let pieces = on_block.split_by(instruction_cuboid);
-                                for piece in pieces.iter() {
-                                    match piece.compare_with(instruction_cuboid) {
-                                        Comparison::Separate => {
-                                            new_on_blocks.push(piece.clone());
-                                        },
-                                        Comparison::Equal | Comparison::ContainedBy => {},
-                                        _ => panic!("Split pieces shouldn't Intersect or Surround.")
-                                    }
-                                }
+                                new_on_blocks.extend(on_block.subtract(instruction_cuboid));
                             },
                         }
                     },
@@ -733,26 +715,40 @@ mod test {
             vec![Bounds::parse("11..12").unwrap(), Bounds::parse("13..13").unwrap()],
             c0.bounds(&Axis::X).split_by(c1.bounds(&Axis::X)),
         );
-        assert!(c0.is_split_by_axis(&c1, &Axis::X));
         assert!(c0.is_split_by(&c1));
         assert_eq!(
             vec![
-                Cuboid::parse("x=11..12,y=11..12,z=11..12").unwrap(),
                 Cuboid::parse("x=11..12,y=11..12,z=13..13").unwrap(),
                 Cuboid::parse("x=11..12,y=13..13,z=11..13").unwrap(),
                 Cuboid::parse("x=13..13,y=11..13,z=11..13").unwrap(),
             ],
-            c0.split_by(&c1)
+            c0.subtract(&c1)
         );
     }
 
     #[test]
-    fn test_cuboid_split() {
+    fn test_cuboid_subtract_centered() {
+        let c0 = Cuboid::parse("x=0..2,y=0..2,z=0..2").unwrap();
+        let c1 = Cuboid::parse("x=1..1,y=1..1,z=1..1").unwrap();
+        assert_eq!(
+            vec![
+                "x=0..0,y=0..2,z=0..2",
+                "x=1..1,y=0..0,z=0..2",
+                "x=1..1,y=1..1,z=0..0",
+                "x=1..1,y=1..1,z=2..2",
+                "x=1..1,y=2..2,z=0..2",
+                "x=2..2,y=0..2,z=0..2",
+            ].iter().map(|x| Cuboid::parse(x).unwrap()).collect::<Vec<Cuboid>>(),
+            c0.subtract(&c1)
+        );
+    }
+
+    #[test]
+    fn test_cuboid_subtract_another_case() {
         let c0 = Cuboid::parse("x=3..5,y=5..16,z=-200..0").unwrap();
         let c1 = Cuboid::parse("x=3..5,y=0..11,z=-200..-99").unwrap();
-        let split = c0.split_by(&c1);
+        let split = c0.subtract(&c1);
         assert_eq!(split, vec![
-            Cuboid::parse("x=3..5,y=5..11,z=-200..-99").unwrap(),
             Cuboid::parse("x=3..5,y=5..11,z=-98..0").unwrap(),
             Cuboid::parse("x=3..5,y=12..16,z=-200..0").unwrap(),
         ]);
@@ -771,7 +767,6 @@ mod test {
         let piece = Cuboid::parse("x=0..0,y=0..1,z=0..0").unwrap();
         let other = &Cuboid::parse("x=0..0,y=1..1,z=0..0").unwrap();
         let axis = &Axis::Y;
-        assert_eq!(true, piece.is_split_by_axis(other, axis));
         assert_eq!(
             vec![
                 Cuboid::parse("x=0..0,y=0..0,z=0..0").unwrap(),
@@ -779,49 +774,5 @@ mod test {
             ],
             piece.split_by_axis(other, axis)
         );
-    }
-
-    #[test]
-    fn test_rachel_stuff_1() {
-        let first = Cuboid::parse("x=0..2,y=0..2,z=0..2").unwrap();
-        let second = Cuboid::parse("x=1..1,y=1..1,z=1..1").unwrap();
-        let pieces = first.rachel_split_by(&second);
-        assert_eq!(
-            vec![
-                "x=0..2,y=0..2,z=0..0",
-                "x=0..0,y=0..2,z=1..1",
-                "x=1..1,y=0..0,z=1..1",
-                "x=1..1,y=1..1,z=1..1",
-                "x=1..1,y=2..2,z=1..1",
-                "x=2..2,y=0..2,z=1..1",
-                "x=0..2,y=0..2,z=2..2",
-            ].iter().map(|x| Cuboid::parse(x).unwrap()).collect::<Vec<Cuboid>>(),
-            pieces
-        );
-    }
-
-    #[test]
-    fn test_rachel_stuff_2() {
-        let first = Cuboid::parse("x=-22..28,y=-29..23,z=-38..16").unwrap();
-        println!("First: {}", first);
-        let second = Cuboid::parse("x=-27..23,y=-28..26,z=-21..29").unwrap();
-        println!("second: {}", second);
-        let pieces = first.rachel_split_by(&second);
-        let mut subtraction_pieces = Vec::new();
-        for piece in pieces.iter() {
-            match piece.compare_with(&second) {
-                Comparison::Separate => {
-                    subtraction_pieces.push(piece.clone());
-                },
-                Comparison::Equal | Comparison::ContainedBy => {
-                    println!("    intersection: {}", piece);
-                },
-                _ => panic!("Split pieces shouldn't Intersect or Surround.")
-            }
-        }
-        println!("Subtracted Pieces:");
-        for piece in subtraction_pieces.iter() {
-            println!("    {}", piece);
-        }
     }
 }
