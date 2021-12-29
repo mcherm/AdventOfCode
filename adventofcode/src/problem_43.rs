@@ -9,11 +9,6 @@ use nom::sequence::tuple as nom_tuple;
 use nom::branch::alt as nom_alt;
 
 
-// ======== Constants for altering how it runs ========
-
-const DEBUGGING: bool = false;
-const IGNORE_BEYOND_50: bool = true;
-
 // ======== Reading Input ========
 
 /// An error that we can encounter when reading the input.
@@ -370,7 +365,7 @@ impl Cuboid {
 
     /// Given an other which splits self, this returns a Vec of Cuboids which consist
     /// of self split up into pieces that may overlap but don't intersect with other.
-    fn split_by(&self, other: &Self) -> Vec<Self> {
+    fn split_by(&self, other: &Self) -> Vec<Self> { // FIXME: If the ONLY use is to get the pieces that DON'T overlap, consider making a different function to do that instead
         assert!(self.is_split_by(other)); // Just verifying to help catch bugs
         let mut splits: Vec<Self> = vec![self.clone()]; // Unnecessary clone. But deal with it.
         for axis in Axis::all() {
@@ -455,25 +450,26 @@ impl ReactorCore {
         self.on_blocks.iter().map(|c| c.volume()).sum()
     }
 
-    /// Modifies this core by performing the given instruction.
-    fn perform(&mut self, instruction: &Instruction) -> Self {
+    /// Modifies this core by performing the given instruction. Prints out debugging info
+    /// if the debugging paramter is true.
+    fn perform(&mut self, instruction: &Instruction, debugging: bool) -> Self {
         let mut new_on_blocks: Vec<Cuboid> = Vec::with_capacity(self.on_blocks.capacity() + 8);
         let mut instruction_cuboids: Vec<Cuboid> = vec![instruction.cuboid.clone()];
-        if DEBUGGING {println!("There are {} on blocks:", self.on_blocks.len());}
+        if debugging {println!("There are {} on blocks:", self.on_blocks.len());}
         for on_block in self.on_blocks.iter() {
-            if DEBUGGING {println!("    working on block {}:", on_block);}
+            if debugging {println!("    working on block {}:", on_block);}
             let mut new_instruction_cuboids: Vec<Cuboid> = Vec::with_capacity(instruction_cuboids.capacity() + 8);
-            if DEBUGGING {println!("    with {} instruction cuboids:", instruction_cuboids.len());}
+            if debugging {println!("    with {} instruction cuboids:", instruction_cuboids.len());}
             let mut use_this_on_block = true;
             for instruction_cuboid in instruction_cuboids.iter() {
-                if DEBUGGING {println!("        one of which is {}:", instruction_cuboid);}
+                if debugging {println!("        one of which is {}:", instruction_cuboid);}
                 match instruction_cuboid.compare_with(on_block) {
                     Comparison::Separate => {
-                        if DEBUGGING {println!("            Instruction {} doesn't overlap {}", instruction_cuboid, on_block);}
+                        if debugging {println!("            Instruction {} doesn't overlap {}", instruction_cuboid, on_block);}
                         new_instruction_cuboids.push(instruction_cuboid.clone());
                     },
                     Comparison::Equal => {
-                        if DEBUGGING {println!("            Instruction {} equals {}", instruction_cuboid, on_block);}
+                        if debugging {println!("            Instruction {} equals {}", instruction_cuboid, on_block);}
                         match instruction.power_level {
                             PowerLevel::On => {},
                             PowerLevel::Off => {
@@ -483,31 +479,41 @@ impl ReactorCore {
                         }
                     },
                     Comparison::ContainedBy => {
-                        if DEBUGGING {println!("            Instruction {} contained in {}", instruction_cuboid, on_block);}
+                        if debugging {println!("            Instruction {} contained in {}", instruction_cuboid, on_block);}
                         match instruction.power_level {
                             PowerLevel::On => {},
                             PowerLevel::Off => {
                                 new_instruction_cuboids.push(instruction_cuboid.clone());
                                 assert!(use_this_on_block == true);
                                 use_this_on_block = false;
+                                let pieces = on_block.split_by(instruction_cuboid);
+                                if debugging {println!("                the on_block breaks into {} pieces:", pieces.len());}
+                                for piece in pieces.iter() {
+                                    if debugging {println!("                    one of which is {}", piece);}
+                                    match piece.compare_with(instruction_cuboid) {
+                                        Comparison::Separate => new_on_blocks.push(piece.clone()),
+                                        Comparison::Equal | Comparison::ContainedBy => {},
+                                        _ => panic!("Split pieces shouldn't Intersect or Surround.")
+                                    }
+                                }
                             },
                         }
                     },
                     Comparison::Surrounds => {
-                        if DEBUGGING {println!("            Instruction {} surrounds {}", instruction_cuboid, on_block);}
+                        if debugging {println!("            Instruction {} surrounds {}", instruction_cuboid, on_block);}
                         assert!(use_this_on_block == true);
                         use_this_on_block = false;
                         new_instruction_cuboids.push(instruction_cuboid.clone());
                     },
                     Comparison::Intersects => {
-                        if DEBUGGING {println!("            Instruction {} intersects {}", instruction_cuboid, on_block);}
+                        if debugging {println!("            Instruction {} intersects {}", instruction_cuboid, on_block);}
                         match instruction.power_level {
                             PowerLevel::On => {
                                 // -- keep all pieces of the instruction except the bit already covered
                                 let pieces = instruction_cuboid.split_by(on_block);
-                                if DEBUGGING {println!("                it breaks into {} pieces:", pieces.len());}
+                                if debugging {println!("                it breaks into {} pieces:", pieces.len());}
                                 for piece in pieces.iter() {
-                                    if DEBUGGING {println!("                    one of which is {}", piece);}
+                                    if debugging {println!("                    one of which is {}", piece);}
                                     match piece.compare_with(on_block) {
                                         Comparison::Separate => new_instruction_cuboids.push(piece.clone()),
                                         Comparison::Equal | Comparison::ContainedBy => {},
@@ -580,6 +586,9 @@ fn drop_out_of_bounds_instructions(instructions: &Vec<Instruction>) -> Vec<Instr
 
 
 fn run() -> Result<(),InputError> {
+    const IGNORE_BEYOND_50: bool = true;
+    let debugging: bool = false;
+
     let mut instructions = read_reactor_reboot_file()?;
     if IGNORE_BEYOND_50 {
         instructions = drop_out_of_bounds_instructions(&instructions);
@@ -587,9 +596,9 @@ fn run() -> Result<(),InputError> {
     let mut reactor_core = ReactorCore::new();
     println!("Reactor Core before has {} on: {}", reactor_core.volume_on(), reactor_core);
     for instruction in instructions.iter() {
-        reactor_core = reactor_core.perform(instruction);
+        reactor_core = reactor_core.perform(instruction, debugging);
         println!("Reactor Core: has {} on", reactor_core.volume_on());
-        if DEBUGGING {println!("{}", reactor_core);}
+        if debugging {println!("{}", reactor_core);}
     }
 
     Ok(())
