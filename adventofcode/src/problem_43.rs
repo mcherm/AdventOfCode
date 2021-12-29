@@ -303,7 +303,7 @@ impl Cuboid {
 
     /// Returns a copy of the bounds for this Cuboid
     fn copy_bounds(&self) -> [Bounds; Axis::NUM_AXES] {
-        Axis::all().map(|a| (*self.bounds(a)).clone())
+        self.m_bounds.clone()
     }
 
     /// Returns a value indicating how these two Cuboids compare.
@@ -327,15 +327,6 @@ impl Cuboid {
         Axis::all().iter().map(|a| self.bounds(a).length()).product()
     }
 
-    /// Returns true if the other has any boundary that falls within self (and therefore
-    /// self would need to split to avoid a partial overlap situation).
-    fn is_split_by(&self, other: &Self) -> bool {
-        match self.compare_with(other) {
-            Comparison::Equal | Comparison::Separate | Comparison::ContainedBy => false,
-            Comparison::Intersects | Comparison::Surrounds => true,
-        }
-    }
-
     /// Given an other which splits self along the given axis, this returns a Vec of Cuboids
     /// which consist of self split up into pieces that may overlap but don't intersect
     /// with other. The Vec will always be of length 2 or 3.
@@ -354,7 +345,6 @@ impl Cuboid {
     /// of self split up into pieces don't intersect with other but which, taken together,
     /// include all of self which didn't overlap with other.
     fn subtract(&self, other: &Self) -> Vec<Self> {
-        assert!(self.is_split_by(other)); // Just verifying to help catch bugs
         let mut splits: Vec<Self> = vec![self.clone()]; // Unnecessary clone. But deal with it.
         for axis in Axis::all() {
             let mut next_splits: Vec<Self> = Vec::with_capacity(splits.len() + 6);
@@ -715,7 +705,6 @@ mod test {
             vec![Bounds::parse("11..12").unwrap(), Bounds::parse("13..13").unwrap()],
             c0.bounds(&Axis::X).split_by(c1.bounds(&Axis::X)),
         );
-        assert!(c0.is_split_by(&c1));
         assert_eq!(
             vec![
                 Cuboid::parse("x=11..12,y=11..12,z=13..13").unwrap(),
