@@ -232,12 +232,6 @@ impl Bounds {
         Volume::try_from(self.high - self.low).unwrap()
     }
 
-    /// Returns true if the coord is within (NOT on the boundaries of) this Bounds
-    /// and false otherwise.
-    fn surrounds(&self, coord: Coord) -> bool {
-        (self.low < coord) && (coord < (self.high - 1))
-    }
-
     /// Returns true if other overlaps at least some with self.
     fn overlaps(&self, other: &Self) -> bool {
         other.low < self.high && other.high > self.low
@@ -247,7 +241,7 @@ impl Bounds {
     /// of self split up into pieces. The Vec will always be of length 2 or 3.
     fn split_by(&self, other: &Self) -> Vec<Self> {
         assert!(matches!(self.compare_with(other), Comparison::Intersects | Comparison::Surrounds));
-        let intersects = (self.surrounds(other.low), self.surrounds(other.high - 1));
+        let intersects = (other.low > self.low, other.high < self.high);
         match intersects {
             (false, false) => panic!("Bounds::split_by() may only be called when it splits it."),
             (true, false) => vec![
@@ -605,21 +599,6 @@ mod test {
     }
 
     #[test]
-    fn test_surrounds() {
-        let b = Bounds::new(10, 20);
-        assert_eq!(false,   b.surrounds(0));
-        assert_eq!(false,   b.surrounds(9));
-        assert_eq!(false,   b.surrounds(10));
-        assert_eq!(true,   b.surrounds(11));
-        assert_eq!(true,   b.surrounds(15));
-        assert_eq!(true,   b.surrounds(18));
-        assert_eq!(false,   b.surrounds(19));
-        assert_eq!(false,   b.surrounds(20));
-        assert_eq!(false,   b.surrounds(21));
-        assert_eq!(false,   b.surrounds(25));
-    }
-
-    #[test]
     fn test_bounds_split_by() {
         let b = Bounds::new(5, 15);
         assert_eq!(
@@ -668,7 +647,6 @@ mod test {
     fn test_cuboid_is_split_by() {
         let c0 = Cuboid::parse("x=11..13,y=11..13,z=11..13").unwrap();
         let c1 = Cuboid::parse("x=10..12,y=10..12,z=10..12").unwrap();
-        assert!(c0.bounds(&Axis::X).surrounds(12));
         assert_eq!(
             vec![Bounds::parse("11..12").unwrap(), Bounds::parse("13..13").unwrap()],
             c0.bounds(&Axis::X).split_by(c1.bounds(&Axis::X)),
@@ -698,4 +676,26 @@ mod test {
         ]);
     }
 
+    #[test]
+    fn test_splitting_small_thing() {
+        // I added this test because I had a bug with this behavior.
+        let b1 = Bounds::parse("0..1").unwrap();
+        let b2 = &Bounds::parse("1..1").unwrap();
+        assert_eq!(
+            vec![Bounds::parse("0..0").unwrap(), Bounds::parse("1..1").unwrap()],
+            b1.split_by(b2)
+        );
+
+        let piece = Cuboid::parse("x=0..0,y=0..1,z=0..0").unwrap();
+        let other = &Cuboid::parse("x=0..0,y=1..1,z=0..0").unwrap();
+        let axis = &Axis::Y;
+        assert_eq!(true, piece.is_split_by_axis(other, axis));
+        assert_eq!(
+            vec![
+                Cuboid::parse("x=0..0,y=0..0,z=0..0").unwrap(),
+                Cuboid::parse("x=0..0,y=1..1,z=0..0").unwrap(),
+            ],
+            piece.split_by_axis(other, axis)
+        );
+    }
 }
