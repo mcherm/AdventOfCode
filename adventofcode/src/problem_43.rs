@@ -2,7 +2,6 @@ use std::fmt;
 use std::fmt::{Display, Formatter};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
-use regex::Regex;
 use std::cmp::Ordering;
 use nom::bytes::complete::tag as nom_tag;
 use nom::character::complete::i32 as nom_coord;
@@ -121,14 +120,6 @@ struct ReactorCore {
 
 
 impl PowerLevel {
-    fn parse_regex(text: &str) -> Result<Self,InputError> {
-        match text {
-            "on" => Ok(PowerLevel::On),
-            "off" => Ok(PowerLevel::Off),
-            _ => Err(InputError::InvalidReactorRebootLine),
-        }
-    }
-
     fn parse_nom(input: &str) -> nom::IResult<&str, Self> {
         nom_alt((
             nom_tag("on"),
@@ -192,17 +183,6 @@ impl Bounds {
         Bounds{low, high}
     }
 
-    fn parse_regex(text: &str) -> Result<Self, InputError> {
-        let bounds_regex = Regex::new(
-            r"^(-?\d+)\.\.(-?\d+)$"
-        ).unwrap();
-        let capture = bounds_regex.captures(&text).ok_or(InputError::InvalidReactorRebootLine)?;
-        let low: Coord = capture.get(1).unwrap().as_str().parse()?;
-        let high_included: Coord = capture.get(2).unwrap().as_str().parse::<Coord>()?;
-        let high: Coord = high_included - 1; // subtract 1 to switch from including both endpoints to including only one
-        Ok(Bounds::new(low, high))
-    }
-
     fn parse_nom(input: &str) -> nom::IResult<&str, Self> {
         nom_tuple((
             nom_coord,
@@ -255,13 +235,7 @@ impl Bounds {
     /// Returns true if the coord is within (NOT on the boundaries of) this Bounds
     /// and false otherwise.
     fn surrounds(&self, coord: Coord) -> bool {
-        coord > self.low && coord < (self.high - 1)
-    }
-
-    /// Returns true if the other has a boundary that falls within self (and therefore
-    /// self would need to split to avoid a partial overlap situation).
-    fn is_split_by(&self, other: &Self) -> bool {
-        self.surrounds(other.low) || self.surrounds(other.high)
+        (self.low < coord) && (coord < (self.high - 1))
     }
 
     /// Returns true if other overlaps at least some with self.
@@ -273,7 +247,7 @@ impl Bounds {
     /// of self split up into pieces. The Vec will always be of length 2 or 3.
     fn split_by(&self, other: &Self) -> Vec<Self> {
         assert!(matches!(self.compare_with(other), Comparison::Intersects | Comparison::Surrounds));
-        let intersects = (self.surrounds(other.low), self.surrounds(other.high));
+        let intersects = (self.surrounds(other.low), self.surrounds(other.high - 1));
         match intersects {
             (false, false) => panic!("Bounds::split_by() may only be called when it splits it."),
             (true, false) => vec![
@@ -300,18 +274,6 @@ impl Display for Bounds {
 }
 
 impl Cuboid {
-    fn parse_regex(text: &str) -> Result<Self,InputError> {
-        let cuboid_regex = Regex::new(
-            r"^x=(.*),y=(.*),z=(.*)$"
-        ).unwrap();
-        let capture = cuboid_regex.captures(&text).ok_or(InputError::InvalidReactorRebootLine)?;
-        let x: Bounds = Bounds::parse_regex(capture.get(1).unwrap().as_str())?;
-        let y: Bounds = Bounds::parse_regex(capture.get(2).unwrap().as_str())?;
-        let z: Bounds = Bounds::parse_regex(capture.get(3).unwrap().as_str())?;
-        let m_bounds = [x,y,z];
-        Ok(Cuboid{m_bounds})
-    }
-
     fn parse_nom(input: &str) -> nom::IResult<&str, Self> {
         nom_tuple((
             nom_tag("x="),
@@ -369,21 +331,27 @@ impl Cuboid {
         Axis::all().iter().map(|a| self.bounds(a).length()).product()
     }
 
-    /// Returns true if the other has a boundary along axis that falls within self (and
-    /// therefore self would need to split to avoid a partial overlap situation).
+    /// Returns true if the other overlaps with self and also has a boundary along axis
+    /// that falls within self (and therefore self would need to split along axis to avoid a
+    /// partial overlap situation).
     fn is_split_by_axis(&self, other: &Self, axis: &Axis) -> bool {
-        // we are split by this axis our bounds are split by theirs on this axis AND
-        // the other two axes overlap.
-        self.bounds(axis).is_split_by(&other.bounds(axis)) &&
-            axis.others().iter().all(|oa| self.bounds(oa).overlaps(other.bounds(oa)))
+        match self.bounds(axis).compare_with(other.bounds(axis)) {
+            Comparison::ContainedBy | Comparison::Separate | Comparison::Equal => false,
+            Comparison::Intersects | Comparison::Surrounds => {
+                // if other has a boundary within self along axis, then we still need
+                // to make sure that we overlap along the other axes.
+                axis.others().iter().all(|oa| self.bounds(oa).overlaps(other.bounds(oa)))
+            },
+        }
     }
 
     /// Returns true if the other has any boundary that falls within self (and therefore
     /// self would need to split to avoid a partial overlap situation).
     fn is_split_by(&self, other: &Self) -> bool {
-        // If any axis is split by other while the other 2 axes overlap with other then
-        // we are split by it
-        Axis::all().iter().any(|a| self.is_split_by_axis(other,a))
+        match self.compare_with(other) {
+            Comparison::Equal | Comparison::Separate | Comparison::ContainedBy => false,
+            Comparison::Intersects | Comparison::Surrounds => true,
+        }
     }
 
     /// Given an other which splits self along the given axis, this returns a Vec of Cuboids
@@ -406,11 +374,11 @@ impl Cuboid {
         let mut splits: Vec<Self> = vec![self.clone()]; // Unnecessary clone. But deal with it.
         for axis in Axis::all() {
             let mut next_splits: Vec<Self> = Vec::new();
-            for cuboid in splits {
-                if cuboid.is_split_by_axis(other, axis) {
-                    next_splits.extend(cuboid.split_by_axis(other, axis));
+            for piece in splits {
+                if piece.is_split_by_axis(other, axis) {
+                    next_splits.extend(piece.split_by_axis(other, axis));
                 } else {
-                    next_splits.push(cuboid);
+                    next_splits.push(piece);
                 }
             }
             splits = next_splits;
@@ -430,17 +398,6 @@ impl Display for Cuboid {
 }
 
 impl Instruction {
-    #[allow(dead_code)]
-    fn parse_regex(text: &str) -> Result<Self,InputError> {
-        let instruction_regex = Regex::new(
-            r"^(.*) (.*)$"
-        ).unwrap();
-        let capture = instruction_regex.captures(&text).ok_or(InputError::InvalidReactorRebootLine)?;
-        let power_level = PowerLevel::parse_regex(capture.get(1).unwrap().as_str())?;
-        let cuboid = Cuboid::parse_regex(capture.get(2).unwrap().as_str())?;
-        Ok(Instruction{power_level, cuboid})
-    }
-
     fn parse_nom(input: &str) -> nom::IResult<&str, Self> {
         nom_tuple((
             PowerLevel::parse_nom,
@@ -571,28 +528,6 @@ impl Display for ReactorCore {
 // ======== Functions ========
 
 
-// FIXME: Remove
-// /// Modify splitting to be a vector of cuboids that covers the exact same set of
-// /// points but in which no cuboid is split by one of the cuboids in splitters.
-// // FIXME: There is a totally unnecessary amount of copying going on here, because I don't know what I'm doing
-// fn split_all(splitting: &Vec<Cuboid>, splitters: &Vec<Cuboid>) -> Vec<Cuboid> {
-//     println!("Starting split_all");
-//     let mut old_cuboids = splitting.clone();
-//     let mut new_cuboids: Vec<Cuboid> = Vec::new();
-//     for splitter in splitters {
-//         for cuboid in old_cuboids.iter() {
-//             if cuboid.is_split_by(splitter) {
-//                 new_cuboids.extend(cuboid.split_by(splitter));
-//             } else {
-//                 new_cuboids.push(cuboid.clone());
-//             }
-//         }
-//         old_cuboids = new_cuboids.clone();
-//         new_cuboids.clear();
-//     }
-//     old_cuboids
-// }
-
 // ======== run() and main() ========
 
 
@@ -699,6 +634,10 @@ mod test {
             b.split_by(&Bounds::new(8,13)),
             vec![Bounds::new(5,8), Bounds::new(8,13), Bounds::new(13,15)]
         );
+        assert_eq!(
+            vec![Bounds::parse("11..12").unwrap(), Bounds::parse("13..13").unwrap()],
+            Bounds::parse("11..13").unwrap().split_by(&Bounds::parse("10..12").unwrap())
+        );
     }
 
     #[test]
@@ -726,6 +665,28 @@ mod test {
     }
 
     #[test]
+    fn test_cuboid_is_split_by() {
+        let c0 = Cuboid::parse("x=11..13,y=11..13,z=11..13").unwrap();
+        let c1 = Cuboid::parse("x=10..12,y=10..12,z=10..12").unwrap();
+        assert!(c0.bounds(&Axis::X).surrounds(12));
+        assert_eq!(
+            vec![Bounds::parse("11..12").unwrap(), Bounds::parse("13..13").unwrap()],
+            c0.bounds(&Axis::X).split_by(c1.bounds(&Axis::X)),
+        );
+        assert!(c0.is_split_by_axis(&c1, &Axis::X));
+        assert!(c0.is_split_by(&c1));
+        assert_eq!(
+            vec![
+                Cuboid::parse("x=11..12,y=11..12,z=11..12").unwrap(),
+                Cuboid::parse("x=11..12,y=11..12,z=13..13").unwrap(),
+                Cuboid::parse("x=11..12,y=13..13,z=11..13").unwrap(),
+                Cuboid::parse("x=13..13,y=11..13,z=11..13").unwrap(),
+            ],
+            c0.split_by(&c1)
+        );
+    }
+
+    #[test]
     fn test_cuboid_split() {
         let c0 = Cuboid::parse("x=3..5,y=5..16,z=-200..0").unwrap();
         let c1 = Cuboid::parse("x=3..5,y=0..11,z=-200..-99").unwrap();
@@ -737,35 +698,4 @@ mod test {
         ]);
     }
 
-    // FIXME: Remove
-    // #[test]
-    // fn test_split_all() {
-    //     let splitting = vec![
-    //         Cuboid::parse("x=0..99,y=0..99,z=0..99").unwrap(),
-    //     ];
-    //     let splitters = vec![
-    //         Cuboid::parse("x=50..120,y=30..99,z=0..99").unwrap(),
-    //         Cuboid::parse("x=10..29,y=50..74,z=0..99").unwrap(),
-    //         Cuboid::parse("x=0..3,y=0..3,z=0..3").unwrap(),
-    //     ];
-    //     let new_splitting = split_all(&splitting, &splitters);
-    //     // NOTE: This test is slightly fragile in that it assumes we prefer axis X to Y to Z
-    //     //   in that order. There are other ways to divide it (and other orders even if
-    //     //   we had the same division) that would also be valid answers.
-    //     assert_eq!(
-    //         new_splitting,
-    //         vec![
-    //             Cuboid::parse("x=0..3,y=0..3,z=0..3").unwrap(),
-    //             Cuboid::parse("x=0..3,y=0..3,z=4..99").unwrap(),
-    //             Cuboid::parse("x=0..3,y=4..99,z=0..99").unwrap(),
-    //             Cuboid::parse("x=4..9,y=0..99,z=0..99").unwrap(),
-    //             Cuboid::parse("x=10..29,y=0..49,z=0..99").unwrap(),
-    //             Cuboid::parse("x=10..29,y=50..74,z=0..99").unwrap(),
-    //             Cuboid::parse("x=10..29,y=75..99,z=0..99").unwrap(),
-    //             Cuboid::parse("x=30..49,y=0..99,z=0..99").unwrap(),
-    //             Cuboid::parse("x=50..99,y=0..29,z=0..99").unwrap(),
-    //             Cuboid::parse("x=50..99,y=30..99,z=0..99").unwrap(),
-    //         ]
-    //     );
-    // }
 }
