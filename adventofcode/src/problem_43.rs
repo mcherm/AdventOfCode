@@ -381,6 +381,26 @@ impl Cuboid {
         }
         splits
     }
+
+    // FIXME: This exists just to help Rachel debug by breaking up the same way she does.
+    /// Given an other which splits self, this returns a Vec of Cuboids which consist
+    /// of self split up into pieces that may overlap but don't intersect with other.
+    fn rachel_split_by(&self, other: &Self) -> Vec<Self> {
+        assert!(self.is_split_by(other)); // Just verifying to help catch bugs
+        let mut splits: Vec<Self> = vec![self.clone()]; // Unnecessary clone. But deal with it.
+        for axis in [&Axis::Z, &Axis::X, &Axis::Y].iter() {
+            let mut next_splits: Vec<Self> = Vec::new();
+            for piece in splits {
+                if piece.is_split_by_axis(other, axis) {
+                    next_splits.extend(piece.split_by_axis(other, axis));
+                } else {
+                    next_splits.push(piece);
+                }
+            }
+            splits = next_splits;
+        }
+        splits
+    }
 }
 
 impl Display for Cuboid {
@@ -759,5 +779,49 @@ mod test {
             ],
             piece.split_by_axis(other, axis)
         );
+    }
+
+    #[test]
+    fn test_rachel_stuff_1() {
+        let first = Cuboid::parse("x=0..2,y=0..2,z=0..2").unwrap();
+        let second = Cuboid::parse("x=1..1,y=1..1,z=1..1").unwrap();
+        let pieces = first.rachel_split_by(&second);
+        assert_eq!(
+            vec![
+                "x=0..2,y=0..2,z=0..0",
+                "x=0..0,y=0..2,z=1..1",
+                "x=1..1,y=0..0,z=1..1",
+                "x=1..1,y=1..1,z=1..1",
+                "x=1..1,y=2..2,z=1..1",
+                "x=2..2,y=0..2,z=1..1",
+                "x=0..2,y=0..2,z=2..2",
+            ].iter().map(|x| Cuboid::parse(x).unwrap()).collect::<Vec<Cuboid>>(),
+            pieces
+        );
+    }
+
+    #[test]
+    fn test_rachel_stuff_2() {
+        let first = Cuboid::parse("x=-22..28,y=-29..23,z=-38..16").unwrap();
+        println!("First: {}", first);
+        let second = Cuboid::parse("x=-27..23,y=-28..26,z=-21..29").unwrap();
+        println!("second: {}", second);
+        let pieces = first.rachel_split_by(&second);
+        let mut subtraction_pieces = Vec::new();
+        for piece in pieces.iter() {
+            match piece.compare_with(&second) {
+                Comparison::Separate => {
+                    subtraction_pieces.push(piece.clone());
+                },
+                Comparison::Equal | Comparison::ContainedBy => {
+                    println!("    intersection: {}", piece);
+                },
+                _ => panic!("Split pieces shouldn't Intersect or Surround.")
+            }
+        }
+        println!("Subtracted Pieces:");
+        for piece in subtraction_pieces.iter() {
+            println!("    {}", piece);
+        }
     }
 }
