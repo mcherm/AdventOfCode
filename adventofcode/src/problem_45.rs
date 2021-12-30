@@ -57,30 +57,49 @@ enum AmphipodType {
     Desert,
 }
 
+
+enum Location {
+    Hall0 = 0,
+    Hall1 = 1,
+    Hall2 = 2,
+    Hall3 = 3,
+    Hall4 = 4,
+    Hall5 = 5,
+    Hall6 = 6,
+    FrontOfA = 7,
+    FrontOfB = 8,
+    FrontOfC = 9,
+    FrontOfD = 10,
+    BackOfA = 11,
+    BackOfB = 12,
+    BackOfC = 13,
+    BackOfD = 14,
+}
+
 #[derive(Debug, Eq, PartialEq, Clone)]
 struct Positions {
-    slot1: [Option<AmphipodType>; 2],
-    slot2: [Option<AmphipodType>; 2],
-    slot3: [Option<AmphipodType>; 2],
-    slot4: [Option<AmphipodType>; 2],
-    hallway: [Option<AmphipodType>; 11],
+    slots: [Option<AmphipodType>; Location::NUM_VALUES],
 }
+
 
 
 // ======== Implementations ========
 
 impl AmphipodType {
-    fn parse_nom(input: &str) -> nom::IResult<&str, Self> {
+    /// Reads a field which could be an AmphipodType or a "." for None.
+    fn parse_nom(input: &str) -> nom::IResult<&str, Option<Self>> {
         nom_alt((
             nom_tag("A"),
             nom_tag("B"),
             nom_tag("C"),
             nom_tag("D"),
+            nom_tag("."),
         ))(input).map(|(rest, res)| (rest, match res {
-            "A" => AmphipodType::Amber,
-            "B" => AmphipodType::Bronze,
-            "C" => AmphipodType::Copper,
-            "D" => AmphipodType::Desert,
+            "A" => Some(AmphipodType::Amber),
+            "B" => Some(AmphipodType::Bronze),
+            "C" => Some(AmphipodType::Copper),
+            "D" => Some(AmphipodType::Desert),
+            "." => None,
             _ => panic!("should never happen")
         }))
     }
@@ -101,38 +120,68 @@ impl Display for AmphipodType {
     }
 }
 
+
+impl Location {
+    const NUM_VALUES: usize = 15;
+}
+
+
 impl Positions {
     fn parse_nom(input: &str) -> nom::IResult<&str, Self> {
+        // This tuple was so long we had to break it into 2 separate tuples
         nom_tuple((
-            nom_tag("#############\n#...........#\n###"),
-            AmphipodType::parse_nom,
-            nom_tag("#"),
-            AmphipodType::parse_nom,
-            nom_tag("#"),
-            AmphipodType::parse_nom,
-            nom_tag("#"),
-            AmphipodType::parse_nom,
-            nom_tag("###\n  #"),
-            AmphipodType::parse_nom,
-            nom_tag("#"),
-            AmphipodType::parse_nom,
-            nom_tag("#"),
-            AmphipodType::parse_nom,
-            nom_tag("#"),
-            AmphipodType::parse_nom,
-            nom_tag("#\n  #########\n"),
-        ))(input).map(|(rest, (_, s10, _, s20, _, s30, _, s40, _, s11, _, s21, _, s31, _, s41, _))| {
-            (
+            nom_tuple((
+                nom_tag("#############\n#"),
+                AmphipodType::parse_nom,
+                AmphipodType::parse_nom,
+                nom_tag("."),
+                AmphipodType::parse_nom,
+                nom_tag("."),
+                AmphipodType::parse_nom,
+                nom_tag("."),
+                AmphipodType::parse_nom,
+                nom_tag("."),
+                AmphipodType::parse_nom,
+                AmphipodType::parse_nom,
+                nom_tag("#\n"),
+            )),
+            nom_tuple((
+                nom_tag("###"),
+                AmphipodType::parse_nom,
+                nom_tag("#"),
+                AmphipodType::parse_nom,
+                nom_tag("#"),
+                AmphipodType::parse_nom,
+                nom_tag("#"),
+                AmphipodType::parse_nom,
+                nom_tag("###\n  #"),
+                AmphipodType::parse_nom,
+                nom_tag("#"),
+                AmphipodType::parse_nom,
+                nom_tag("#"),
+                AmphipodType::parse_nom,
+                nom_tag("#"),
+                AmphipodType::parse_nom,
+                nom_tag("#\n  #########\n"),
+            )),
+        ))(input).map(
+            |(rest, (
+                (_, h0, h1, _, h2, _, h3, _, h4, _, h5, h6, _),
+                (_, fa, _, fb, _, fc, _, fd, _, ba, _, bb, _, bc, _, bd, _)
+            ))| {(
                 rest,
                 Positions{
-                    slot1: [Some(s10), Some(s11)],
-                    slot2: [Some(s20), Some(s21)],
-                    slot3: [Some(s30), Some(s31)],
-                    slot4: [Some(s40), Some(s41)],
-                    hallway: [None; 11],
+                    slots: [h0, h1, h2, h3, h4, h5, h6, fa, fb, fc, fd, ba, bb, bc, bd],
                 }
-            )
-        })
+            )}
+        )
+    }
+    
+    fn show_opt_amphipod_at(&self, loc: Location) -> &'static str {
+        match self.slots[loc as usize] {
+            None => ".",
+            Some(a) => a.to_str(),
+        }
     }
 }
 
@@ -142,30 +191,26 @@ impl Display for Positions {
             f,
             "\
 #############
-#{}{}{}{}{}{}{}{}{}{}{}#
+#{}{}.{}.{}.{}.{}{}#
 ###{}#{}#{}#{}###
   #{}#{}#{}#{}#
   #########
 ",
-            show_opt_amphipod(self.hallway[0]),
-            show_opt_amphipod(self.hallway[1]),
-            show_opt_amphipod(self.hallway[2]),
-            show_opt_amphipod(self.hallway[3]),
-            show_opt_amphipod(self.hallway[4]),
-            show_opt_amphipod(self.hallway[5]),
-            show_opt_amphipod(self.hallway[6]),
-            show_opt_amphipod(self.hallway[7]),
-            show_opt_amphipod(self.hallway[8]),
-            show_opt_amphipod(self.hallway[9]),
-            show_opt_amphipod(self.hallway[10]),
-            show_opt_amphipod(self.slot1[0]),
-            show_opt_amphipod(self.slot2[0]),
-            show_opt_amphipod(self.slot3[0]),
-            show_opt_amphipod(self.slot4[0]),
-            show_opt_amphipod(self.slot1[1]),
-            show_opt_amphipod(self.slot2[1]),
-            show_opt_amphipod(self.slot3[1]),
-            show_opt_amphipod(self.slot4[1]),
+            self.show_opt_amphipod_at(Location::Hall0),
+            self.show_opt_amphipod_at(Location::Hall1),
+            self.show_opt_amphipod_at(Location::Hall2),
+            self.show_opt_amphipod_at(Location::Hall3),
+            self.show_opt_amphipod_at(Location::Hall4),
+            self.show_opt_amphipod_at(Location::Hall5),
+            self.show_opt_amphipod_at(Location::Hall6),
+            self.show_opt_amphipod_at(Location::FrontOfA),
+            self.show_opt_amphipod_at(Location::FrontOfB),
+            self.show_opt_amphipod_at(Location::FrontOfC),
+            self.show_opt_amphipod_at(Location::FrontOfD),
+            self.show_opt_amphipod_at(Location::BackOfA),
+            self.show_opt_amphipod_at(Location::BackOfB),
+            self.show_opt_amphipod_at(Location::BackOfC),
+            self.show_opt_amphipod_at(Location::BackOfD),
         )
     }
 }
@@ -173,12 +218,6 @@ impl Display for Positions {
 
 // ======== Functions ========
 
-fn show_opt_amphipod(oa: Option<AmphipodType>) -> &'static str {
-    match oa {
-        None => ".",
-        Some(a) => a.to_str(),
-    }
-}
 
 // ======== run() and main() ========
 
