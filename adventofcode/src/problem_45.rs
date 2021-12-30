@@ -502,15 +502,14 @@ fn distance(loc1: Location, loc2: Location) -> Cost {
 
 /// Returns some Vec<Move> that will "solve" this position or None if it
 /// is unsolvable.
-fn solve(position: Position) -> Option<Vec<Move>> {
+fn solve(position: &Position) -> Option<Vec<Move>> {
     println!("solve()");
     if position.is_complete() {
         Some(vec![])
     } else {
         for mv in position.legal_moves() {
             println!("  mv: {:?}", mv);
-            let recurse = solve(position.perform(mv));
-            if let Some(path) = recurse {
+            if let Some(path) = solve(&position.perform(mv)) {
                 let mut answer = Vec::with_capacity(path.len() + 1);
                 answer.push(mv);
                 answer.extend(path);
@@ -521,17 +520,63 @@ fn solve(position: Position) -> Option<Vec<Move>> {
     }
 }
 
+/// Returns some (Vec<Move>, Cost) that will "solve" this position or None if it
+/// is unsolvable.
+fn best_solution(position: &Position) -> Option<(Vec<Move>, Cost)> {
+    if position.is_complete() {
+        Some((vec![], 0))
+    } else {
+        let mut answer: Option<(Vec<Move>, Cost)> = None;
+        for mv in position.legal_moves() {
+            if let Some((path, cost)) = best_solution(&position.perform(mv)) {
+                let new_cost = cost + mv.cost();
+                match answer {
+                    None => {
+                        let mut full_path = Vec::with_capacity(path.len() + 1);
+                        full_path.push(mv);
+                        full_path.extend(path);
+                        answer = Some((full_path, new_cost));
+                    },
+                    Some((_, old_cost)) => {
+                        if old_cost > new_cost {
+                            let mut full_path = Vec::with_capacity(path.len() + 1);
+                            full_path.push(mv);
+                            full_path.extend(path);
+                            answer = Some((full_path, new_cost));
+                        }
+                    },
+                }
+            }
+        }
+        answer
+    }
+}
+
+
 // ======== run() and main() ========
 
 
 fn run() -> Result<(),InputError> {
     let position: Position = read_maze_file()?;
 
-    let path_opt = solve(position);
-    match path_opt {
+    // let path_opt = solve(&position);
+    // match path_opt {
+    //     None => println!("There were no solutions."),
+    //     Some(path) => {
+    //         println!("Solution:");
+    //         for mv in path {
+    //             println!("    {:?}", mv);
+    //         }
+    //     }
+    // }
+
+    println!("---------------------");
+
+    let best_opt = best_solution(&position);
+    match best_opt {
         None => println!("There were no solutions."),
-        Some(path) => {
-            println!("Solution:");
+        Some((path, cost)) => {
+            println!("At at cost of {} we can do this:", cost);
             for mv in path {
                 println!("    {:?}", mv);
             }
