@@ -1,3 +1,4 @@
+use std::cmp::Ordering;
 use std::fmt;
 use std::fmt::{Display, Formatter};
 use std::fs;
@@ -55,7 +56,7 @@ fn read_maze_file() -> Result<Position, InputError> {
 
 // ======== Types ========
 
-#[derive(Debug, Eq, PartialEq, Copy, Clone)]
+#[derive(Debug, Eq, PartialEq, Copy, Clone, Ord, PartialOrd)]
 enum AmphipodType {
     Amber,
     Bronze,
@@ -64,7 +65,7 @@ enum AmphipodType {
 }
 
 
-#[derive(Debug, Eq, PartialEq, Copy, Clone)]
+#[derive(Debug, Eq, PartialEq, Copy, Clone, Ord, PartialOrd)]
 enum Location {
     Hall0 = 0,
     Hall1 = 1,
@@ -88,7 +89,6 @@ struct Position {
     slots: [Option<AmphipodType>; Location::NUM_VALUES],
 }
 
-#[allow(dead_code)]
 type Cost = u32;
 
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]
@@ -138,6 +138,16 @@ impl AmphipodType {
             Bronze => 1,
             Copper => 2,
             Desert => 3,
+        }
+    }
+
+    /// Returns the cost per step for this AmphipodType
+    fn step_cost(&self) -> Cost {
+        match self {
+            Amber => 1,
+            Bronze => 10,
+            Copper => 100,
+            Desert => 1000,
         }
     }
 }
@@ -281,7 +291,8 @@ impl Position {
         }
     }
 
-    /// Returns a vector of all legal moves from this position.
+    /// Returns a vector of all legal moves from this position. They will be sorted
+    /// in order from most expensive to least.
     fn legal_moves(&self) -> Vec<Move> {
         let mut answer = Vec::new();
 
@@ -353,7 +364,8 @@ impl Position {
             }
         }
 
-        // -- Return answer --
+        // -- Sort and return answer --
+        answer.sort_by_key(|x| std::cmp::Reverse(*x));
         answer
     }
 
@@ -397,8 +409,63 @@ impl Display for Position {
 }
 
 
+impl Move {
+    /// Calculate the cost of this move
+    fn cost(&self) -> Cost {
+        distance(self.from, self.to) * self.amph.step_cost()
+    }
+
+    /// Calculate the "value" of this move -- which a heuristic for the order I want
+    /// to try things
+    fn value(&self) -> Cost {
+        // FIXME: I want things like putting away valuable thing before getting out other stuff.
+        //   But for now it's just pretty much "use cheapest".
+        self.cost()
+    }
+
+    fn sort_tuple(&self) -> (Cost, Location, Location, AmphipodType) {
+        (self.value(), self.to, self.from, self.amph)
+    }
+}
+
+impl Ord for Move {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.sort_tuple().cmp(&other.sort_tuple())
+    }
+}
+
+impl PartialOrd for Move {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+
 // ======== Functions ========
 
+const DISTANCE_MAP: [[Cost; Location::NUM_VALUES]; Location::NUM_VALUES] = [
+    //h0 h1 h2 h3 h4 h5 h6 fa fb fc fd ba bb bc bd
+    [  0, 1, 3, 5, 7, 9,10, 3, 5, 7, 9, 4, 6, 8,10],
+    [  1, 0, 2, 4, 6, 8, 9, 2, 4, 6, 8, 3, 5, 7, 9],
+    [  3, 2, 0, 2, 4, 6, 7, 2, 2, 4, 6, 3, 3, 5, 7],
+    [  5, 4, 2, 0, 2, 4, 5, 4, 2, 2, 4, 5, 3, 3, 5],
+    [  7, 6, 4, 2, 0, 2, 3, 6, 4, 2, 2, 7, 5, 3, 3],
+    [  9, 8, 6, 4, 2, 0, 1, 8, 6, 4, 2, 9, 7, 5, 3],
+    [ 10, 9, 7, 5, 3, 1, 0, 9, 7, 5, 3,10, 8, 6, 4],
+    [  3, 2, 2, 4, 6, 8, 9, 0, 4, 6, 8, 1, 5, 7, 9],
+    [  5, 4, 2, 2, 4, 6, 7, 4, 0, 4, 6, 5, 1, 5, 7],
+    [  7, 6, 4, 2, 2, 4, 5, 6, 4, 0, 4, 7, 5, 1, 5],
+    [  9, 8, 6, 4, 2, 2, 3, 8, 6, 4, 0, 9, 7, 5, 1],
+    [  4, 3, 3, 5, 7, 9,10, 1, 5, 7, 9, 0, 6, 8,10],
+    [  6, 5, 3, 3, 5, 7, 8, 5, 1, 5, 7, 6, 0, 6, 8],
+    [  8, 7, 5, 3, 3, 5, 6, 7, 5, 1, 5, 8, 6, 0, 6],
+    [ 10, 9, 7, 5, 3, 3, 4, 9, 7, 5, 1,10, 7, 6, 0],
+];
+
+/// Returns the number of "steps" between 2 locations.
+fn distance(loc1: Location, loc2: Location) -> Cost {
+    DISTANCE_MAP[loc1 as usize][loc2 as usize]
+}
 
 // ======== run() and main() ========
 
@@ -468,12 +535,12 @@ mod test {
   #########\n");
         assert_eq!(
             vec![
-                Move{amph: Bronze, from: FrontOfC, to: Hall4},
-                Move{amph: Bronze, from: FrontOfC, to: Hall5},
-                Move{amph: Bronze, from: FrontOfC, to: Hall6},
-                Move{amph: Desert, from: FrontOfD, to: Hall4},
-                Move{amph: Desert, from: FrontOfD, to: Hall5},
                 Move{amph: Desert, from: FrontOfD, to: Hall6},
+                Move{amph: Desert, from: FrontOfD, to: Hall5},
+                Move{amph: Desert, from: FrontOfD, to: Hall4},
+                Move{amph: Bronze, from: FrontOfC, to: Hall6},
+                Move{amph: Bronze, from: FrontOfC, to: Hall5},
+                Move{amph: Bronze, from: FrontOfC, to: Hall4},
                 Move{amph: Amber, from: Hall2, to: BackOfA},
             ],
             position.legal_moves()
