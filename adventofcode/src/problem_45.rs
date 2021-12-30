@@ -220,7 +220,6 @@ impl Display for Location {
 
 
 
-
 impl Position {
     /// Parses a position, assuming it is valid and panicking if it isn't.
     #[allow(dead_code)]
@@ -291,19 +290,39 @@ impl Position {
         }
     }
 
+    /// Returns true if the problem is solved.
+    fn is_complete(&self) -> bool {
+        *self == FINAL_POSITION
+    }
+
     /// Returns a vector of all legal moves from this position. They will be sorted
     /// in order from most expensive to least.
     fn legal_moves(&self) -> Vec<Move> {
         let mut answer = Vec::new();
 
-        // -- Moves out of a nook --
+        // -- Moves out of a nook (if it's not YOUR nook or if you are blocking someone) --
         for a in AmphipodType::ALL {
             let front = Location::FRONT_SLOTS[a.nook()];
             let back = Location::BACK_SLOTS[a.nook()];
             let from_opt: Option<Location> = match self.at(front) {
-                Some(_) => Some(front),
+                Some(amph) => {
+                    if amph == a { // it's my row; I can only move if I'm blocking someone
+                        match self.at(back) {
+                            Some(x) if x != a => Some(front),
+                            _ => None
+                        }
+                    } else {
+                        Some(front)
+                    }
+                },
                 None => match self.at(back) {
-                    Some(_) => Some(back),
+                    Some(amph) => {
+                        if amph == a { // it's my row
+                            None
+                        } else { // not my row; I'm allowed to leave
+                            Some(back)
+                        }
+                    },
                     None => None
                 },
             };
@@ -332,7 +351,13 @@ impl Position {
             let to_opt: Option<Location> = match self.at(front) {
                 Some(_) => None,
                 None => match self.at(back) {
-                    Some(_) => Some(front),
+                    Some(amph) => {
+                        if amph == a { // back is filled in properly
+                            Some(front)
+                        } else { // back has someone else; we can't go in yet
+                            None
+                        }
+                    },
                     None => Some(back),
                 },
             };
@@ -365,7 +390,7 @@ impl Position {
         }
 
         // -- Sort and return answer --
-        answer.sort_by_key(|x| std::cmp::Reverse(*x));
+        answer.sort();
         answer
     }
 
@@ -407,6 +432,13 @@ impl Display for Position {
         )
     }
 }
+
+const FINAL_POSITION: Position = Position{slots: [
+    None, None, None, None, None, None, None,
+    Some(Amber), Some(Bronze), Some(Copper), Some(Desert),
+    Some(Amber), Some(Bronze), Some(Copper), Some(Desert),
+]};
+
 
 
 impl Move {
@@ -467,39 +499,43 @@ fn distance(loc1: Location, loc2: Location) -> Cost {
     DISTANCE_MAP[loc1 as usize][loc2 as usize]
 }
 
+
+/// Returns some Vec<Move> that will "solve" this position or None if it
+/// is unsolvable.
+fn solve(position: Position) -> Option<Vec<Move>> {
+    println!("solve()");
+    if position.is_complete() {
+        Some(vec![])
+    } else {
+        for mv in position.legal_moves() {
+            println!("  mv: {:?}", mv);
+            let recurse = solve(position.perform(mv));
+            if let Some(path) = recurse {
+                let mut answer = Vec::with_capacity(path.len() + 1);
+                answer.push(mv);
+                answer.extend(path);
+                return Some(answer);
+            }
+        }
+        None
+    }
+}
+
 // ======== run() and main() ========
 
 
 fn run() -> Result<(),InputError> {
-    let mut position: Position = read_maze_file()?;
-    println!("{}", position);
-    let legal_moves = position.legal_moves();
-    for mv in legal_moves.iter() {
-        println!("Move: {:?}", mv);
-    }
+    let position: Position = read_maze_file()?;
 
-    position = position.perform(legal_moves[0]);
-    println!();
-    println!("{}", position);
-    let legal_moves = position.legal_moves();
-    for mv in legal_moves.iter() {
-        println!("Move: {:?}", mv);
-    }
-
-    position = position.perform(legal_moves[0]);
-    println!();
-    println!("{}", position);
-    let legal_moves = position.legal_moves();
-    for mv in legal_moves.iter() {
-        println!("Move: {:?}", mv);
-    }
-
-    position = position.perform(legal_moves[0]);
-    println!();
-    println!("{}", position);
-    let legal_moves = position.legal_moves();
-    for mv in legal_moves.iter() {
-        println!("Move: {:?}", mv);
+    let path_opt = solve(position);
+    match path_opt {
+        None => println!("There were no solutions."),
+        Some(path) => {
+            println!("Solution:");
+            for mv in path {
+                println!("    {:?}", mv);
+            }
+        }
     }
 
     Ok(())
@@ -535,13 +571,54 @@ mod test {
   #########\n");
         assert_eq!(
             vec![
-                Move{amph: Desert, from: FrontOfD, to: Hall6},
-                Move{amph: Desert, from: FrontOfD, to: Hall5},
-                Move{amph: Desert, from: FrontOfD, to: Hall4},
-                Move{amph: Bronze, from: FrontOfC, to: Hall6},
-                Move{amph: Bronze, from: FrontOfC, to: Hall5},
-                Move{amph: Bronze, from: FrontOfC, to: Hall4},
                 Move{amph: Amber, from: Hall2, to: BackOfA},
+                Move{amph: Bronze, from: FrontOfC, to: Hall4},
+                Move{amph: Bronze, from: FrontOfC, to: Hall5},
+                Move{amph: Bronze, from: FrontOfC, to: Hall6},
+                Move{amph: Desert, from: FrontOfD, to: Hall4},
+                Move{amph: Desert, from: FrontOfD, to: Hall5},
+                Move{amph: Desert, from: FrontOfD, to: Hall6},
+            ],
+            position.legal_moves()
+        );
+    }
+
+    #[test]
+    fn test_legal_moves_2() {
+        let position = Position::parse_good("#############
+#A..........#
+###.#B#C#D###
+  #A#B#C#D#
+  #########\n");
+        assert_eq!(
+            vec![
+                Move{amph: Amber, from: Hall0, to: FrontOfA},
+            ],
+            position.legal_moves()
+        );
+    }
+
+    #[test]
+    fn test_legal_moves_3() {
+        let position = Position::parse_good("#############
+#A..........#
+###.#A#C#D###
+  #B#B#C#D#
+  #########\n");
+        assert_eq!(
+            vec![
+                Move{amph: Amber, from: FrontOfB, to: Hall2},
+                Move{amph: Amber, from: FrontOfB, to: Hall3},
+                Move{amph: Amber, from: FrontOfB, to: Hall1},
+                Move{amph: Amber, from: FrontOfB, to: Hall4},
+                Move{amph: Amber, from: FrontOfB, to: Hall5},
+                Move{amph: Amber, from: FrontOfB, to: Hall6},
+                Move{amph: Bronze, from: BackOfA, to: Hall1},
+                Move{amph: Bronze, from: BackOfA, to: Hall2},
+                Move{amph: Bronze, from: BackOfA, to: Hall3},
+                Move{amph: Bronze, from: BackOfA, to: Hall4},
+                Move{amph: Bronze, from: BackOfA, to: Hall5},
+                Move{amph: Bronze, from: BackOfA, to: Hall6},
             ],
             position.legal_moves()
         );
