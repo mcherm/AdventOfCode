@@ -5,12 +5,92 @@ use std::fs;
 use nom::bytes::complete::tag as nom_tag;
 use nom::sequence::tuple as nom_tuple;
 use nom::branch::alt as nom_alt;
+use single_linked_list::List;
 use Location::{
     Hall0, Hall1, Hall2, Hall3, Hall4, Hall5, Hall6,
     FrontOfA, FrontOfB, FrontOfC, FrontOfD,
     BackOfA, BackOfB, BackOfC, BackOfD
 };
 use AmphipodType::{Amber, Bronze, Copper, Desert};
+
+
+// ======== Single Linked List ========
+
+mod single_linked_list {
+    // Source: https://rust-unofficial.github.io/too-many-lists/third-final.html
+    use std::rc::Rc;
+
+    pub struct List<T> {
+        head: Link<T>,
+    }
+
+    type Link<T> = Option<Rc<Node<T>>>;
+
+    struct Node<T> {
+        elem: T,
+        next: Link<T>,
+    }
+
+    impl<T> List<T> {
+        pub fn new() -> Self {
+            List { head: None }
+        }
+
+        // pub fn is_empty(&self) -> bool {
+        //     match self.head {
+        //         None => true,
+        //         Some(_) => false,
+        //     }
+        // }
+
+        pub fn prepend(&self, elem: T) -> List<T> {
+            List { head: Some(Rc::new(Node {
+                elem: elem,
+                next: self.head.clone(),
+            }))}
+        }
+
+        // pub fn tail(&self) -> List<T> {
+        //     List { head: self.head.as_ref().and_then(|node| node.next.clone()) }
+        // }
+
+        // pub fn head(&self) -> Option<&T> {
+        //     self.head.as_ref().map(|node| &node.elem)
+        // }
+
+        pub fn iter(&self) -> Iter<'_, T> {
+            Iter { next: self.head.as_deref() }
+        }
+    }
+
+    impl<T> Drop for List<T> {
+        fn drop(&mut self) {
+            let mut head = self.head.take();
+            while let Some(node) = head {
+                if let Ok(mut node) = Rc::try_unwrap(node) {
+                    head = node.next.take();
+                } else {
+                    break;
+                }
+            }
+        }
+    }
+
+    pub struct Iter<'a, T> {
+        next: Option<&'a Node<T>>,
+    }
+
+    impl<'a, T> Iterator for Iter<'a, T> {
+        type Item = &'a T;
+
+        fn next(&mut self) -> Option<Self::Item> {
+            self.next.map(|node| {
+                self.next = node.next.as_deref();
+                &node.elem
+            })
+        }
+    }
+}
 
 
 // ======== Reading Input ========
@@ -500,51 +580,43 @@ fn distance(loc1: Location, loc2: Location) -> Cost {
 }
 
 
-/// Returns some Vec<Move> that will "solve" this position or None if it
-/// is unsolvable.
-fn solve(position: &Position) -> Option<Vec<Move>> {
-    println!("solve()");
-    if position.is_complete() {
-        Some(vec![])
-    } else {
-        for mv in position.legal_moves() {
-            println!("  mv: {:?}", mv);
-            if let Some(path) = solve(&position.perform(mv)) {
-                let mut answer = Vec::with_capacity(path.len() + 1);
-                answer.push(mv);
-                answer.extend(path);
-                return Some(answer);
-            }
-        }
-        None
-    }
-}
 
 /// Returns some (Vec<Move>, Cost) that will "solve" this position or None if it
 /// is unsolvable.
 fn best_solution(position: &Position) -> Option<(Vec<Move>, Cost)> {
+    match best_solution_internal(position, 0, None) {
+        None => None,
+        Some((path_list, cost)) => {
+            let mut path_vec: Vec<Move> = Vec::new();
+            path_vec.extend(path_list.iter());
+            Some((path_vec, cost))
+        },
+    }
+}
+
+/// Internal recursive routine for best_solution().
+/// Inputs: position, cost of moves taken so far, best known cost (prune if we exceed this).
+/// Outputs: moves from here to the end, cost of the entire path
+fn best_solution_internal(position: &Position, cost_to_here: Cost, mut best_known_cost: Option<Cost>) -> Option<(List<Move>, Cost)> {
     if position.is_complete() {
-        Some((vec![], 0))
+        Some((List::new(), cost_to_here))
     } else {
-        let mut answer: Option<(Vec<Move>, Cost)> = None;
+        let mut answer: Option<(List<Move>, Cost)> = None;
         for mv in position.legal_moves() {
-            if let Some((path, cost)) = best_solution(&position.perform(mv)) {
-                let new_cost = cost + mv.cost();
-                match answer {
-                    None => {
-                        let mut full_path = Vec::with_capacity(path.len() + 1);
-                        full_path.push(mv);
-                        full_path.extend(path);
-                        answer = Some((full_path, new_cost));
-                    },
-                    Some((_, old_cost)) => {
-                        if old_cost > new_cost {
-                            let mut full_path = Vec::with_capacity(path.len() + 1);
-                            full_path.push(mv);
-                            full_path.extend(path);
-                            answer = Some((full_path, new_cost));
-                        }
-                    },
+            let cost_to_next = cost_to_here + mv.cost();
+            if best_known_cost.is_none() || cost_to_next < best_known_cost.unwrap() {
+                if let Some((path, cost)) = best_solution_internal(&position.perform(mv), cost_to_next, best_known_cost) {
+                    match answer {
+                        None => {
+                            best_known_cost = Some(cost); // we found our first cost
+                            answer = Some((path.prepend(mv), cost));
+                        },
+                        Some((_, answer_cost)) => {
+                            if answer_cost > cost {
+                                answer = Some((path.prepend(mv), cost));
+                            }
+                        },
+                    }
                 }
             }
         }
@@ -553,26 +625,19 @@ fn best_solution(position: &Position) -> Option<(Vec<Move>, Cost)> {
 }
 
 
+
 // ======== run() and main() ========
 
 
 fn run() -> Result<(),InputError> {
     let position: Position = read_maze_file()?;
 
-    // let path_opt = solve(&position);
-    // match path_opt {
-    //     None => println!("There were no solutions."),
-    //     Some(path) => {
-    //         println!("Solution:");
-    //         for mv in path {
-    //             println!("    {:?}", mv);
-    //         }
-    //     }
-    // }
-
     println!("---------------------");
 
+    let start = std::time::Instant::now();
     let best_opt = best_solution(&position);
+    println!("The solution took took {:?}", start.elapsed());
+
     match best_opt {
         None => println!("There were no solutions."),
         Some((path, cost)) => {
@@ -669,3 +734,27 @@ mod test {
         );
     }
 }
+
+/*
+Answer to my problem:
+
+The solution took took 707.11074539s
+At at cost of 15412 we can do this:
+    Move { amph: Amber, from: FrontOfD, to: Hall6 }
+    Move { amph: Copper, from: BackOfD, to: Hall5 }
+    Move { amph: Desert, from: FrontOfC, to: Hall4 }
+    Move { amph: Amber, from: BackOfC, to: Hall1 }
+    Move { amph: Bronze, from: FrontOfB, to: Hall2 }
+    Move { amph: Copper, from: BackOfB, to: Hall3 }
+    Move { amph: Bronze, from: Hall2, to: BackOfB }
+    Move { amph: Bronze, from: FrontOfA, to: Hall2 }
+    Move { amph: Bronze, from: Hall2, to: FrontOfB }
+    Move { amph: Copper, from: Hall3, to: BackOfC }
+    Move { amph: Desert, from: BackOfA, to: Hall2 }
+    Move { amph: Amber, from: Hall1, to: BackOfA }
+    Move { amph: Desert, from: Hall4, to: BackOfD }
+    Move { amph: Copper, from: Hall5, to: FrontOfC }
+    Move { amph: Desert, from: Hall2, to: FrontOfD }
+    Move { amph: Amber, from: Hall6, to: FrontOfA }
+
+ */
