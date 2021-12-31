@@ -251,12 +251,19 @@ impl Display for AmphipodType {
 
 impl Location {
     const NUM_VALUES: usize = 23;
+    const ALL: [Location; Location::NUM_VALUES] = [
+        Hall0, Hall1, Hall2, Hall3, Hall4, Hall5, Hall6,
+        FrontOfA, FrontOfB, FrontOfC, FrontOfD,
+        BackOfA, BackOfB, BackOfC, BackOfD,
+        FarBackOfA, FarBackOfB, FarBackOfC, FarBackOfD,
+        WayBackOfA, WayBackOfB, WayBackOfC, WayBackOfD,
+    ];
+    #[allow(dead_code)]
+    const HALL_SLOTS: [Location; 7] = [Hall0, Hall1, Hall2, Hall3, Hall4, Hall5, Hall6];
     const FRONT_SLOTS: [Location; 4] = [FrontOfA, FrontOfB, FrontOfC, FrontOfD];
     const BACK_SLOTS: [Location; 4] = [BackOfA, BackOfB, BackOfC, BackOfD];
     const FAR_BACK_SLOTS: [Location; 4] = [FarBackOfA, FarBackOfB, FarBackOfC, FarBackOfD];
     const WAY_BACK_SLOTS: [Location; 4] = [WayBackOfA, WayBackOfB, WayBackOfC, WayBackOfD];
-    #[allow(dead_code)]
-    const HALL_SLOTS: [Location; 7] = [Hall0, Hall1, Hall2, Hall3, Hall4, Hall5, Hall6];
 
     fn to_str(&self) -> &'static str {
         match self {
@@ -286,27 +293,32 @@ impl Location {
         }
     }
 
-    /// Pass this a nook number and it will return two vectors of Hall
-    /// locations: the first is those reachable by turning left, the
-    /// second is those reachable by turning right. They are in the
-    /// order in which the locations need to be entered.
-    fn hall_from(nook: AmphipodType) -> (Vec<Location>, Vec<Location>) {
+    /// Pass this a nook number and it will return three vectors of Locations:
+    /// The first is those Hall locations reachable by turning left; the
+    /// second is those Hall lcoations reachable by turning right; the third
+    /// is those locations IN the nook. Each list is in the order in which the
+    /// locations need to be entered.
+    fn hall_from(nook: AmphipodType) -> (Vec<Location>, Vec<Location>, Vec<Location>) {
         match nook {
             Amber => (
                 vec![Hall1, Hall0],
-                vec![Hall2, Hall3, Hall4, Hall5, Hall6]
+                vec![Hall2, Hall3, Hall4, Hall5, Hall6],
+                vec![FrontOfA, BackOfA, FarBackOfA, WayBackOfA],
             ),
             Bronze => (
                 vec![Hall2, Hall1, Hall0],
-                vec![Hall3, Hall4, Hall5, Hall6]
+                vec![Hall3, Hall4, Hall5, Hall6],
+                vec![FrontOfB, BackOfB, FarBackOfB, WayBackOfB],
             ),
             Copper => (
                 vec![Hall3, Hall2, Hall1, Hall0],
-                vec![Hall4, Hall5, Hall6]
+                vec![Hall4, Hall5, Hall6],
+                vec![FrontOfC, BackOfC, FarBackOfC, WayBackOfC],
             ),
             Desert => (
                 vec![Hall4, Hall3, Hall2, Hall1, Hall0],
-                vec![Hall5, Hall6]
+                vec![Hall5, Hall6],
+                vec![FrontOfD, BackOfD, FarBackOfD, WayBackOfD],
             ),
         }
     }
@@ -392,7 +404,7 @@ impl Position {
                 nom_tag("#\n"),
             )),
             nom_tuple((
-                nom_tag("  #########\n")
+                nom_tag("  #########\n"),
             ))
         ))(input).map(
             |(rest, (
@@ -401,7 +413,7 @@ impl Position {
                 (_, ba, _, bb, _, bc, _, bd, _),
                 (_, ra, _, rb, _, rc, _, rd, _),
                 (_, wa, _, wb, _, wc, _, wd, _),
-                (_),
+                (_,),
             ))| {(
                 rest,
                 Position {
@@ -621,24 +633,31 @@ impl PartialOrd for Move {
 
 // ======== Functions ========
 
-// FIXME: Need to expand this map to far and way slots.
 const DISTANCE_MAP: [[Cost; Location::NUM_VALUES]; Location::NUM_VALUES] = [
-    //h0 h1 h2 h3 h4 h5 h6 fa fb fc fd ba bb bc bd
-    [  0, 1, 3, 5, 7, 9,10, 3, 5, 7, 9, 4, 6, 8,10],
-    [  1, 0, 2, 4, 6, 8, 9, 2, 4, 6, 8, 3, 5, 7, 9],
-    [  3, 2, 0, 2, 4, 6, 7, 2, 2, 4, 6, 3, 3, 5, 7],
-    [  5, 4, 2, 0, 2, 4, 5, 4, 2, 2, 4, 5, 3, 3, 5],
-    [  7, 6, 4, 2, 0, 2, 3, 6, 4, 2, 2, 7, 5, 3, 3],
-    [  9, 8, 6, 4, 2, 0, 1, 8, 6, 4, 2, 9, 7, 5, 3],
-    [ 10, 9, 7, 5, 3, 1, 0, 9, 7, 5, 3,10, 8, 6, 4],
-    [  3, 2, 2, 4, 6, 8, 9, 0, 4, 6, 8, 1, 5, 7, 9],
-    [  5, 4, 2, 2, 4, 6, 7, 4, 0, 4, 6, 5, 1, 5, 7],
-    [  7, 6, 4, 2, 2, 4, 5, 6, 4, 0, 4, 7, 5, 1, 5],
-    [  9, 8, 6, 4, 2, 2, 3, 8, 6, 4, 0, 9, 7, 5, 1],
-    [  4, 3, 3, 5, 7, 9,10, 1, 5, 7, 9, 0, 6, 8,10],
-    [  6, 5, 3, 3, 5, 7, 8, 5, 1, 5, 7, 6, 0, 6, 8],
-    [  8, 7, 5, 3, 3, 5, 6, 7, 5, 1, 5, 8, 6, 0, 6],
-    [ 10, 9, 7, 5, 3, 3, 4, 9, 7, 5, 1,10, 7, 6, 0],
+    //h0 h1 h2 h3 h4 h5 h6 fa fb fc fd ba bb bc bd ra rb rc rd wa wb wc wd
+    [  0, 1, 3, 5, 7, 9,10, 3, 5, 7, 9, 4, 6, 8,10, 5, 7, 9,11, 6, 8,10,12], // h0
+    [  1, 0, 2, 4, 6, 8, 9, 2, 4, 6, 8, 3, 5, 7, 9, 4, 6, 8,10, 5, 7, 9,11], // h1
+    [  3, 2, 0, 2, 4, 6, 7, 2, 2, 4, 6, 3, 3, 5, 7, 4, 4, 6, 8, 5, 5, 7, 9], // h2
+    [  5, 4, 2, 0, 2, 4, 5, 4, 2, 2, 4, 5, 3, 3, 5, 6, 4, 4, 6, 7, 5, 5, 7], // h3
+    [  7, 6, 4, 2, 0, 2, 3, 6, 4, 2, 2, 7, 5, 3, 3, 8, 6, 4, 4, 9, 7, 5, 5], // h4
+    [  9, 8, 6, 4, 2, 0, 1, 8, 6, 4, 2, 9, 7, 5, 3,10, 8, 6, 4,11, 9, 7, 5], // h5
+    [ 10, 9, 7, 5, 3, 1, 0, 9, 7, 5, 3,10, 8, 6, 4,11, 9, 7, 5,12,10, 8, 6], // h6
+    [  3, 2, 2, 4, 6, 8, 9, 0, 4, 6, 8, 1, 5, 7, 9, 2, 6, 8,10, 3, 7, 9,11], // fa
+    [  5, 4, 2, 2, 4, 6, 7, 4, 0, 4, 6, 5, 1, 5, 7, 6, 2, 6, 8, 7, 3, 7, 9], // fb
+    [  7, 6, 4, 2, 2, 4, 5, 6, 4, 0, 4, 7, 5, 1, 5, 8, 6, 2, 6, 9, 7, 3, 7], // fc
+    [  9, 8, 6, 4, 2, 2, 3, 8, 6, 4, 0, 9, 7, 5, 1,10, 8, 6, 2,11, 9, 7, 3], // fd
+    [  4, 3, 3, 5, 7, 9,10, 1, 5, 7, 9, 0, 6, 8,10, 1, 7, 9,11, 2, 8,10,12], // ba
+    [  6, 5, 3, 3, 5, 7, 8, 5, 1, 5, 7, 6, 0, 6, 8, 7, 1, 7, 9, 8, 2, 8,10], // bb
+    [  8, 7, 5, 3, 3, 5, 6, 7, 5, 1, 5, 8, 6, 0, 6, 9, 7, 1, 7,10, 8, 2, 8], // bc
+    [ 10, 9, 7, 5, 3, 3, 4, 9, 7, 5, 1,10, 8, 6, 0,11, 9, 7, 1,12,10, 8, 2], // bd
+    [  5, 4, 4, 6, 8,10,11, 2, 6, 8,10, 1, 7, 9,11, 0, 8,10,12, 1, 9,11,13], // ra
+    [  7, 6, 4, 4, 6, 8, 9, 6, 2, 6, 8, 7, 1, 7, 9, 8, 0, 8,10, 9, 1, 9,11], // rb
+    [  9, 8, 6, 4, 4, 6, 7, 8, 6, 2, 6, 9, 7, 1, 7,10, 8, 0, 8,11, 9, 1, 9], // rc
+    [ 11,10, 8, 6, 4, 4, 5,10, 8, 6, 2,11, 9, 7, 1,12,10, 8, 0,13,11, 9, 1], // rd
+    [  6, 5, 5, 7, 9,11,12, 3, 7, 9,11, 2, 8,10,12, 1, 9,11,13, 0,10,12,14], // wa
+    [  8, 7, 5, 5, 7, 9,10, 7, 3, 7, 9, 8, 2, 8,10, 9, 1, 9,11,10, 0,10,12], // wb
+    [ 10, 9, 7, 5, 5, 7, 8, 9, 7, 3, 7,10, 8, 2, 8,11, 9, 1, 9,12,10, 0,10], // wc
+    [ 12,11, 9, 7, 5, 5, 6,11, 9, 7, 3,12,10, 8, 2,13,11, 9, 1,14,12,10, 0], // wd
 ];
 
 /// Returns the number of "steps" between 2 locations.
@@ -745,6 +764,8 @@ mod test {
 #B..A.C.....#
 ###.#.#B#D###
   #.#D#C#A#
+  #A#B#C#D#
+  #A#B#C#D#
   #########\n");
         assert_eq!(
             vec![
@@ -766,6 +787,8 @@ mod test {
 #A..........#
 ###.#B#C#D###
   #A#B#C#D#
+  #A#B#C#D#
+  #A#B#C#D#
   #########\n");
         assert_eq!(
             vec![
@@ -781,6 +804,8 @@ mod test {
 #A..........#
 ###.#A#C#D###
   #B#B#C#D#
+  #A#B#C#D#
+  #A#B#C#D#
   #########\n");
         assert_eq!(
             vec![
@@ -799,6 +824,15 @@ mod test {
             ],
             position.legal_moves()
         );
+    }
+
+    #[test]
+    fn test_distance_map_is_symmetric() {
+        for loc_1 in Location::ALL {
+            for loc_2 in Location::ALL {
+                assert_eq!(DISTANCE_MAP[loc_1 as usize][loc_2 as usize], DISTANCE_MAP[loc_2 as usize][loc_1 as usize]);
+            }
+        }
     }
 }
 
