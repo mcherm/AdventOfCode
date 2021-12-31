@@ -439,17 +439,17 @@ impl Position {
         *self == FINAL_POSITION
     }
 
+
     /// Returns a vector of all legal moves from this position. They will be sorted
-    /// in order from most expensive to least.
-    fn legal_moves(&self) -> Vec<Move> {
+    /// by value.
+    #[allow(dead_code)]
+    fn legal_moves_old(&self) -> Vec<Move> {
         let mut answer = Vec::new();
 
         // -- Moves out of a nook (if it's not YOUR nook or if you are blocking someone) --
         for a in AmphipodType::ALL {
             let front = Location::FRONT_SLOTS[a.nook()];
             let back = Location::BACK_SLOTS[a.nook()];
-            let far_back = Location::FAR_BACK_SLOTS[a.nook()];
-            let way_back = Location::WAY_BACK_SLOTS[a.nook()];
             let from_opt: Option<Location> = match self.at(front) { // FIXME: Need to apply "deeper" logic for far and way slots
                 Some(amph) => {
                     if amph == a { // it's my row; I can only move if I'm blocking someone
@@ -474,7 +474,7 @@ impl Position {
             };
             if let Some(from) = from_opt {
                 let amph: AmphipodType = self.at(from).unwrap();
-                let (left_hall, right_hall) = Location::hall_from(a);
+                let (left_hall, right_hall, _) = Location::hall_from(a);
                 for to in left_hall {
                     match self.at(to) {
                         Some(_) => break, // no more space on the left
@@ -508,7 +508,7 @@ impl Position {
                 },
             };
             if let Some(to) = to_opt {
-                let (left_hall, right_hall) = Location::hall_from(a);
+                let (left_hall, right_hall, _) = Location::hall_from(a);
                 'left_hall:
                 for from in left_hall {
                     match self.at(from) {
@@ -537,6 +537,103 @@ impl Position {
 
         // -- Sort and return answer --
         answer.sort();
+        answer
+    }
+
+
+    /// Returns a vector of all legal moves from this position. They will be sorted
+    /// by value.
+    fn legal_moves(&self) -> Vec<Move> {
+        let mut answer = Vec::new();
+        for nook_a in AmphipodType::ALL {
+            answer.extend(self.legal_moves_out_of_nook(nook_a));
+            answer.extend(self.legal_moves_into_nook(nook_a));
+        }
+        answer.sort();
+        answer
+    }
+
+    fn legal_moves_out_of_nook(&self, nook_a: AmphipodType) -> Vec<Move> {
+        let (left_hall, right_hall, nook) = Location::hall_from(nook_a);
+        let amph: AmphipodType;
+        let from: Location;
+        let mut nook_iter = nook.iter();
+        loop {
+            match nook_iter.next() {
+                None => { // out of nook locations
+                    return Vec::new();
+                },
+                Some(nook_loc) => {
+                    match self.at(*nook_loc) {
+                        None => {}, // this nook_loc is empty; continue the loop
+                        Some(amph_found) => {
+                            // if it's in its own nook then it can move ONLY if it's blocking someone
+                            if amph_found == nook_a && nook_iter.all(|x| self.at(*x).expect("empty slot behind full one") == nook_a) {
+                                return Vec::new();
+                            }
+                            from = *nook_loc;
+                            amph = amph_found;
+                            break; // exit loop
+                        }
+                    }
+                },
+            }
+        }
+
+        let mut answer: Vec<Move> = Vec::new();
+        for hall in [left_hall, right_hall] {
+            'hall:
+            for to in hall {
+                match self.at(to) {
+                    Some(_) => break 'hall, // no more space on this side
+                    None => answer.push(Move{amph, from, to: to}),
+                }
+            }
+        }
+        answer
+    }
+
+    fn legal_moves_into_nook(&self, nook_a: AmphipodType) -> Vec<Move> {
+        let (left_hall, right_hall, nook) = Location::hall_from(nook_a);
+        let amph: AmphipodType = nook_a;
+        let to: Location;
+        let mut nook_iter = nook.iter().rev();
+        loop {
+            match nook_iter.next() {
+                None => { // out of nook locations
+                    return Vec::new();
+                },
+                Some(nook_loc) => {
+                    match self.at(*nook_loc) {
+                        Some(a) if a == nook_a => {}, // properly filled, continue upward
+                        Some(_) => { // wrong type found; can't fill this nook yet
+                            return Vec::new();
+                        }
+                        None => { // found the first open slot
+                            to = *nook_loc;
+                            break;
+                        },
+                    }
+                },
+            }
+        }
+
+        let mut answer: Vec<Move> = Vec::new();
+        // -- Try moving from each hall --
+        for hall in [left_hall, right_hall] {
+            'hall:
+            for from in hall {
+                match self.at(from) {
+                    None => {}, // it's empty, so we can keep searching
+                    Some(a) if a == amph => { // found a valid one
+                        answer.push(Move{amph, from, to});
+                    },
+                    Some(_) => { // found a wrong amph; this hall won't work
+                        break 'hall;
+                    }
+                }
+            }
+        }
         answer
     }
 
