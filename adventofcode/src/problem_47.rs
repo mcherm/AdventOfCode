@@ -15,6 +15,7 @@ use nom::character::complete::i64 as nom_value;
 enum InputError {
     IoError(std::io::Error),
     InvalidInstruction,
+    NoStartingInputInstruction,
 }
 
 impl From<std::io::Error> for InputError {
@@ -28,30 +29,54 @@ impl fmt::Display for InputError {
         match self {
             InputError::IoError(err) => write!(f, "{}", err),
             InputError::InvalidInstruction => write!(f, "Invalid Instruction"),
+            InputError::NoStartingInputInstruction => write!(f, "No starting input instruction"),
         }
     }
 }
 
 /// Read in the input file.
-fn read_alu_file() -> Result<Vec<Instruction>, InputError> {
+fn read_alu_file() -> Result<Vec<Segment>, InputError> {
     // --- open file ---
     let filename = "data/2021/day/24/input.txt";
     let file = File::open(filename)?;
     let lines = BufReader::new(file).lines();
 
     // --- read instructions ---
-    let mut instructions: Vec<Instruction> = Vec::new();
+    let mut segments: Vec<Segment> = Vec::new();
+    let mut input_register: Option<Register> = None;
+    let mut computes: Vec<Compute> = Vec::new();
     for line in lines {
         let text: String = line?;
         match Instruction::parse(&text) {
-            Ok(("", instruction)) => instructions.push(instruction), // the parse was OK
+            Ok(("", instruction)) => {  // the parse was OK
+                match instruction {
+                    Instruction::Input(reg) => {
+                        // -- Start a new segment --
+                        if let Some(input) = input_register {
+                            segments.push(Segment{input, computes: computes.clone()});
+                        }
+                        input_register = Some(reg);
+                        computes.clear();
+                    }
+                    Instruction::Compute(compute) => {
+                        if input_register.is_none() {
+                            return Err(InputError::NoStartingInputInstruction);
+                        }
+                        computes.push(compute)
+                    }
+                }
+            },
             Ok((_, _)) => return Err(InputError::InvalidInstruction), // if extra stuff on the line
             Err(_) => return Err(InputError::InvalidInstruction), // if parse failed
         };
     }
+    match input_register {
+        None => return Err(InputError::NoStartingInputInstruction),
+        Some(input) => segments.push(Segment{input, computes: computes.clone()}),
+    }
 
     // --- return result ---
-    Ok(instructions)
+    Ok(segments)
 }
 
 
@@ -84,6 +109,13 @@ enum Compute {
 enum Instruction {
     Input(Register),
     Compute(Compute),
+}
+
+/// One segment of instructions consists of one Input instruction followed
+/// by a series of Compute instructions.
+struct Segment {
+    input: Register,
+    computes: Vec<Compute>,
 }
 
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]
@@ -270,31 +302,29 @@ impl Alu {
         }
     }
 
-
     /// Executes any instruction OTHER than input.
-    fn eval_internal(&self, instruction: Instruction) -> Alu {
+    fn eval_internal(&self, compute: Compute) -> Alu {
         let mut values: [Value; Register::NUM_ITEMS] = self.values.clone();
-        match instruction {
-            Instruction::Input(_) => panic!(),
-            Instruction::Compute(Compute::Add(reg, param)) => {
+        match compute {
+            Compute::Add(reg, param) => {
                 values[reg.id()] = self.value_in(reg) + self.value_of(param);
             },
-            Instruction::Compute(Compute::Mul(reg, param)) => {
+            Compute::Mul(reg, param) => {
                 values[reg.id()] = self.value_in(reg) * self.value_of(param);
             },
-            Instruction::Compute(Compute::Div(reg, param)) => {
+            Compute::Div(reg, param) => {
                 let p = self.value_of(param);
                 assert!(p != 0);
                 values[reg.id()] = self.value_in(reg) / p;
             },
-            Instruction::Compute(Compute::Mod(reg, param)) => {
+            Compute::Mod(reg, param) => {
                 let r = self.value_in(reg);
                 let p = self.value_of(param);
                 assert!(r >= 0);
                 assert!(p > 0);
                 values[reg.id()] = r % p;
             },
-            Instruction::Compute(Compute::Eql(reg, param)) => {
+            Compute::Eql(reg, param) => {
                 values[reg.id()] = if self.value_in(reg) == self.value_of(param) {1} else {0};
             },
         }
@@ -316,12 +346,12 @@ impl Display for Alu {
 
 
 fn run() -> Result<(),InputError> {
-    let instructions: Vec<Instruction> = read_alu_file()?;
+    let segments: Vec<Segment> = read_alu_file()?;
 
     let mut alu = Alu{values: [0;Register::NUM_ITEMS]};
-    for ins in instructions.iter() {
-        if !matches!(ins, Instruction::Input(_)) {
-            alu = alu.eval_internal(*ins);
+    for seg in segments.iter() {
+        for compute in seg.computes.iter() {
+            alu = alu.eval_internal(*compute);
             println!("alu: {}", alu);
         }
     }
