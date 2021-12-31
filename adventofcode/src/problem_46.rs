@@ -122,7 +122,7 @@ impl fmt::Display for InputError {
 /// Read in the input file.
 fn read_maze_file() -> Result<Position, InputError> {
     // --- read file ---
-    let filename = "data/2021/day/23/input.txt";
+    let filename = "data/2021/day/23/input2.txt";
     let contents = fs::read_to_string(filename)?;
     // NOTE: I should raise an error, not unwrap but I don't know how.
     let (rest, positions) = Position::parse_nom(&contents).unwrap();
