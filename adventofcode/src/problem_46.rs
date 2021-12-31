@@ -221,16 +221,6 @@ impl AmphipodType {
         }
     }
 
-    /// Returns the nook index for a given AmphipodType
-    fn nook(&self) -> usize {
-        match self {
-            Amber => 0,
-            Bronze => 1,
-            Copper => 2,
-            Desert => 3,
-        }
-    }
-
     /// Returns the cost per step for this AmphipodType
     fn step_cost(&self) -> Cost {
         match self {
@@ -251,22 +241,6 @@ impl Display for AmphipodType {
 
 impl Location {
     const NUM_VALUES: usize = 23;
-    #[allow(dead_code)]
-    const ALL: [Location; Location::NUM_VALUES] = [
-        Hall0, Hall1, Hall2, Hall3, Hall4, Hall5, Hall6,
-        FrontOfA, FrontOfB, FrontOfC, FrontOfD,
-        BackOfA, BackOfB, BackOfC, BackOfD,
-        FarBackOfA, FarBackOfB, FarBackOfC, FarBackOfD,
-        WayBackOfA, WayBackOfB, WayBackOfC, WayBackOfD,
-    ];
-    #[allow(dead_code)]
-    const HALL_SLOTS: [Location; 7] = [Hall0, Hall1, Hall2, Hall3, Hall4, Hall5, Hall6];
-    const FRONT_SLOTS: [Location; 4] = [FrontOfA, FrontOfB, FrontOfC, FrontOfD];
-    const BACK_SLOTS: [Location; 4] = [BackOfA, BackOfB, BackOfC, BackOfD];
-    #[allow(dead_code)]
-    const FAR_BACK_SLOTS: [Location; 4] = [FarBackOfA, FarBackOfB, FarBackOfC, FarBackOfD];
-    #[allow(dead_code)]
-    const WAY_BACK_SLOTS: [Location; 4] = [WayBackOfA, WayBackOfB, WayBackOfC, WayBackOfD];
 
     fn to_str(&self) -> &'static str {
         match self {
@@ -337,7 +311,7 @@ impl Display for Location {
 
 impl Position {
     /// Parses a position, assuming it is valid and panicking if it isn't.
-    #[allow(dead_code)]
+    #[allow(dead_code)] // because it is only used in tests.
     fn parse_good(input: &str) -> Self {
         let (rest, answer) = Self::parse_nom(input).unwrap();
         assert!(rest.len() == 0);
@@ -443,117 +417,26 @@ impl Position {
     }
 
 
-    /// Returns a vector of all legal moves from this position. They will be sorted
-    /// by value.
-    #[allow(dead_code)]
-    fn legal_moves_old(&self) -> Vec<Move> {
-        let mut answer = Vec::new();
-
-        // -- Moves out of a nook (if it's not YOUR nook or if you are blocking someone) --
-        for a in AmphipodType::ALL {
-            let front = Location::FRONT_SLOTS[a.nook()];
-            let back = Location::BACK_SLOTS[a.nook()];
-            let from_opt: Option<Location> = match self.at(front) { // FIXME: Need to apply "deeper" logic for far and way slots
-                Some(amph) => {
-                    if amph == a { // it's my row; I can only move if I'm blocking someone
-                        match self.at(back) {
-                            Some(x) if x != a => Some(front),
-                            _ => None
-                        }
-                    } else {
-                        Some(front)
-                    }
-                },
-                None => match self.at(back) {
-                    Some(amph) => {
-                        if amph == a { // it's my row
-                            None
-                        } else { // not my row; I'm allowed to leave
-                            Some(back)
-                        }
-                    },
-                    None => None
-                },
-            };
-            if let Some(from) = from_opt {
-                let amph: AmphipodType = self.at(from).unwrap();
-                let (left_hall, right_hall, _) = Location::hall_from(a);
-                for to in left_hall {
-                    match self.at(to) {
-                        Some(_) => break, // no more space on the left
-                        None => answer.push(Move{amph, from, to}),
-                    }
-                }
-                for to in right_hall {
-                    match self.at(to) {
-                        Some(_) => break, // no more space on the right
-                        None => answer.push(Move{amph, from, to}),
-                    }
-                }
-            }
-        }
-
-        // -- Moves into a nook --
-        for a in AmphipodType::ALL {
-            let front = Location::FRONT_SLOTS[a.nook()];
-            let back = Location::BACK_SLOTS[a.nook()];
-            let to_opt: Option<Location> = match self.at(front) {
-                Some(_) => None,
-                None => match self.at(back) {
-                    Some(amph) => {
-                        if amph == a { // back is filled in properly
-                            Some(front)
-                        } else { // back has someone else; we can't go in yet
-                            None
-                        }
-                    },
-                    None => Some(back),
-                },
-            };
-            if let Some(to) = to_opt {
-                let (left_hall, right_hall, _) = Location::hall_from(a);
-                'left_hall:
-                for from in left_hall {
-                    match self.at(from) {
-                        Some(amph) => {
-                            if amph == a {
-                                answer.push(Move{amph, from, to});
-                            }
-                            break 'left_hall; // no more to the left
-                        },
-                        None => {}, // keep looking to the left
-                    }
-                }
-                for from in right_hall {
-                    match self.at(from) {
-                        Some(amph) => {
-                            if amph == a {
-                                answer.push(Move{amph, from, to});
-                            }
-                            break; // no more to the right
-                        },
-                        None => {}, // keep looking to the right
-                    }
-                }
-            }
-        }
-
-        // -- Sort and return answer --
-        answer.sort();
-        answer
-    }
 
 
     /// Returns a vector of all legal moves from this position. They will be sorted
     /// by value.
     fn legal_moves(&self) -> Vec<Move> {
-        let mut answer = Vec::new();
+        let mut in_moves = Vec::new();
         for nook_a in AmphipodType::ALL {
-            answer.extend(self.legal_moves_out_of_nook(nook_a));
-            answer.extend(self.legal_moves_into_nook(nook_a));
+            in_moves.extend(self.legal_moves_into_nook(nook_a));
         }
-        answer.sort();
-        answer
+        if in_moves.len() > 0 {
+            in_moves.sort();
+            return in_moves;
+        }
+
+        let mut out_moves = Vec::new();
+        for nook_a in AmphipodType::ALL {
+            out_moves.extend(self.legal_moves_out_of_nook(nook_a));
+        }
+        out_moves.sort();
+        out_moves
     }
 
     fn legal_moves_out_of_nook(&self, nook_a: AmphipodType) -> Vec<Move> {
@@ -872,12 +755,12 @@ mod test {
         assert_eq!(
             vec![
                 Move{amph: Amber, from: Hall2, to: BackOfA},
-                Move{amph: Bronze, from: FrontOfC, to: Hall4},
-                Move{amph: Bronze, from: FrontOfC, to: Hall5},
-                Move{amph: Bronze, from: FrontOfC, to: Hall6},
-                Move{amph: Desert, from: FrontOfD, to: Hall4},
-                Move{amph: Desert, from: FrontOfD, to: Hall5},
-                Move{amph: Desert, from: FrontOfD, to: Hall6},
+                // Move{amph: Bronze, from: FrontOfC, to: Hall4},
+                // Move{amph: Bronze, from: FrontOfC, to: Hall5},
+                // Move{amph: Bronze, from: FrontOfC, to: Hall6},
+                // Move{amph: Desert, from: FrontOfD, to: Hall4},
+                // Move{amph: Desert, from: FrontOfD, to: Hall5},
+                // Move{amph: Desert, from: FrontOfD, to: Hall6},
             ],
             position.legal_moves()
         );
@@ -930,9 +813,9 @@ mod test {
 
     #[test]
     fn test_distance_map_is_symmetric() {
-        for loc_1 in Location::ALL {
-            for loc_2 in Location::ALL {
-                assert_eq!(DISTANCE_MAP[loc_1 as usize][loc_2 as usize], DISTANCE_MAP[loc_2 as usize][loc_1 as usize]);
+        for i in 0..Location::NUM_VALUES {
+            for j in 0..Location::NUM_VALUES {
+                assert_eq!(DISTANCE_MAP[i][j], DISTANCE_MAP[j][i]);
             }
         }
     }
