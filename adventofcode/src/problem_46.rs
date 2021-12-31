@@ -251,6 +251,7 @@ impl Display for AmphipodType {
 
 impl Location {
     const NUM_VALUES: usize = 23;
+    #[allow(dead_code)]
     const ALL: [Location; Location::NUM_VALUES] = [
         Hall0, Hall1, Hall2, Hall3, Hall4, Hall5, Hall6,
         FrontOfA, FrontOfB, FrontOfC, FrontOfD,
@@ -262,7 +263,9 @@ impl Location {
     const HALL_SLOTS: [Location; 7] = [Hall0, Hall1, Hall2, Hall3, Hall4, Hall5, Hall6];
     const FRONT_SLOTS: [Location; 4] = [FrontOfA, FrontOfB, FrontOfC, FrontOfD];
     const BACK_SLOTS: [Location; 4] = [BackOfA, BackOfB, BackOfC, BackOfD];
+    #[allow(dead_code)]
     const FAR_BACK_SLOTS: [Location; 4] = [FarBackOfA, FarBackOfB, FarBackOfC, FarBackOfD];
+    #[allow(dead_code)]
     const WAY_BACK_SLOTS: [Location; 4] = [WayBackOfA, WayBackOfB, WayBackOfC, WayBackOfD];
 
     fn to_str(&self) -> &'static str {
@@ -857,13 +860,15 @@ mod test {
 
     #[test]
     fn test_legal_moves_1() {
-        let position = Position::parse_good("#############
+        let position = Position::parse_good("\
+#############
 #B..A.C.....#
 ###.#.#B#D###
   #.#D#C#A#
   #A#B#C#D#
   #A#B#C#D#
-  #########\n");
+  #########
+");
         assert_eq!(
             vec![
                 Move{amph: Amber, from: Hall2, to: BackOfA},
