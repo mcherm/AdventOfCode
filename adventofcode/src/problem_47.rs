@@ -1,8 +1,6 @@
 use std::fmt;
-// use std::fmt::{Display, Formatter};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
-use std::convert::TryFrom;
 use std::fmt::{Display, Formatter};
 use nom::bytes::complete::tag as nom_tag;
 use nom::sequence::tuple as nom_tuple;
@@ -45,7 +43,7 @@ fn read_alu_file() -> Result<Vec<Instruction>, InputError> {
     let mut instructions: Vec<Instruction> = Vec::new();
     for line in lines {
         let text: String = line?;
-        match Instruction::parse_nom(&text) {
+        match Instruction::parse(&text) {
             Ok(("", instruction)) => instructions.push(instruction), // the parse was OK
             Ok((_, _)) => return Err(InputError::InvalidInstruction), // if extra stuff on the line
             Err(_) => return Err(InputError::InvalidInstruction), // if parse failed
@@ -88,7 +86,7 @@ enum Instruction {
 
 impl Register {
 
-    fn parse_nom(input: &str) -> nom::IResult<&str, Self> {
+    fn parse(input: &str) -> nom::IResult<&str, Self> {
         nom_alt((
             nom_tag("w"),
             nom_tag("x"),
@@ -104,19 +102,6 @@ impl Register {
     }
 }
 
-impl TryFrom<&str> for Register {
-    type Error = (); // FIXME: Maybe a real error type here?
-
-    fn try_from(value: &str) -> Result<Self, Self::Error> {
-        match value {
-            "w" => Ok(Register::W),
-            "x" => Ok(Register::X),
-            "y" => Ok(Register::Y),
-            "z" => Ok(Register::Z),
-            _ => Err(())
-        }
-    }
-}
 impl Display for Register {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, "{}", match self {
@@ -131,18 +116,18 @@ impl Display for Register {
 
 
 impl Parameter {
-    fn parse_constant_nom(input: &str) -> nom::IResult<&str, Self> {
+    fn parse_constant(input: &str) -> nom::IResult<&str, Self> {
         nom_value(input).map(|(rest, x)| (rest, Parameter::Constant(x)))
     }
 
-    fn parse_register_nom(input: &str) -> nom::IResult<&str, Self> {
-        Register::parse_nom(input).map(|(rest, x)| (rest, Parameter::Register(x)))
+    fn parse_register(input: &str) -> nom::IResult<&str, Self> {
+        Register::parse(input).map(|(rest, x)| (rest, Parameter::Register(x)))
     }
 
-    fn parse_nom(input: &str) -> nom::IResult<&str, Self> {
+    fn parse(input: &str) -> nom::IResult<&str, Self> {
         nom_alt((
-            Parameter::parse_constant_nom,
-            Parameter::parse_register_nom,
+            Parameter::parse_constant,
+            Parameter::parse_register,
         ))(input)
     }
 }
@@ -157,61 +142,61 @@ impl Display for Parameter {
 
 
 impl Instruction {
-    fn parse_inp_nom(input: &str) -> nom::IResult<&str, Self> {
+    fn parse_inp(input: &str) -> nom::IResult<&str, Self> {
         nom_tuple((
             nom_tag("inp "),
-            Register::parse_nom,
+            Register::parse,
         ))(input).map(|(rest, (_, reg))| (rest, Instruction::Inp(reg)))
     }
-    fn parse_add_nom(input: &str) -> nom::IResult<&str, Self> {
+    fn parse_add(input: &str) -> nom::IResult<&str, Self> {
         nom_tuple((
             nom_tag("add "),
-            Register::parse_nom,
+            Register::parse,
             nom_tag(" "),
-            Parameter::parse_nom,
+            Parameter::parse,
         ))(input).map(|(rest, (_, reg, _, param))| (rest, Instruction::Add(reg, param)))
     }
-    fn parse_mul_nom(input: &str) -> nom::IResult<&str, Self> {
+    fn parse_mul(input: &str) -> nom::IResult<&str, Self> {
         nom_tuple((
             nom_tag("mul "),
-            Register::parse_nom,
+            Register::parse,
             nom_tag(" "),
-            Parameter::parse_nom,
+            Parameter::parse,
         ))(input).map(|(rest, (_, reg, _, param))| (rest, Instruction::Mul(reg, param)))
     }
-    fn parse_div_nom(input: &str) -> nom::IResult<&str, Self> {
+    fn parse_div(input: &str) -> nom::IResult<&str, Self> {
         nom_tuple((
             nom_tag("div "),
-            Register::parse_nom,
+            Register::parse,
             nom_tag(" "),
-            Parameter::parse_nom,
+            Parameter::parse,
         ))(input).map(|(rest, (_, reg, _, param))| (rest, Instruction::Div(reg, param)))
     }
-    fn parse_mod_nom(input: &str) -> nom::IResult<&str, Self> {
+    fn parse_mod(input: &str) -> nom::IResult<&str, Self> {
         nom_tuple((
             nom_tag("mod "),
-            Register::parse_nom,
+            Register::parse,
             nom_tag(" "),
-            Parameter::parse_nom,
+            Parameter::parse,
         ))(input).map(|(rest, (_, reg, _, param))| (rest, Instruction::Mod(reg, param)))
     }
-    fn parse_eql_nom(input: &str) -> nom::IResult<&str, Self> {
+    fn parse_eql(input: &str) -> nom::IResult<&str, Self> {
         nom_tuple((
             nom_tag("eql "),
-            Register::parse_nom,
+            Register::parse,
             nom_tag(" "),
-            Parameter::parse_nom,
+            Parameter::parse,
         ))(input).map(|(rest, (_, reg, _, param))| (rest, Instruction::Eql(reg, param)))
     }
 
-    fn parse_nom(input: &str) -> nom::IResult<&str, Self> {
+    fn parse(input: &str) -> nom::IResult<&str, Self> {
         nom_alt((
-            Instruction::parse_inp_nom,
-            Instruction::parse_add_nom,
-            Instruction::parse_mul_nom,
-            Instruction::parse_div_nom,
-            Instruction::parse_mod_nom,
-            Instruction::parse_eql_nom,
+            Instruction::parse_inp,
+            Instruction::parse_add,
+            Instruction::parse_mul,
+            Instruction::parse_div,
+            Instruction::parse_mod,
+            Instruction::parse_eql,
         ))(input)
     }
 
@@ -268,10 +253,5 @@ mod test {
         let _ = read_alu_file().unwrap();
     }
 
-    #[test]
-    fn test_into_register() {
-        let s: &str = &"w";
-        assert_eq!(Ok(Register::W), s.try_into());
-    }
 }
 
