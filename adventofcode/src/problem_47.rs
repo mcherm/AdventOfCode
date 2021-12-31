@@ -5,7 +5,7 @@ use std::fmt::{Display, Formatter};
 use nom::bytes::complete::tag as nom_tag;
 use nom::sequence::tuple as nom_tuple;
 use nom::branch::alt as nom_alt;
-use nom::character::complete::i32 as nom_value;
+use nom::character::complete::i64 as nom_value;
 
 
 // ======== Reading Input ========
@@ -58,7 +58,7 @@ fn read_alu_file() -> Result<Vec<Instruction>, InputError> {
 
 // ======== Types ========
 
-type Value = i32;
+type Value = i64;
 
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]
 enum Register {
@@ -81,10 +81,24 @@ enum Instruction {
     Eql(Register, Parameter),
 }
 
+#[derive(Debug, Eq, PartialEq, Copy, Clone)]
+struct Alu {
+    values: [Value; Register::NUM_ITEMS],
+}
 
 // ======== Implementations ========
 
 impl Register {
+    const NUM_ITEMS: usize = 4;
+
+    fn id(&self) -> usize {
+        match self {
+            Register::W => 0,
+            Register::X => 1,
+            Register::Y => 2,
+            Register::Z => 3,
+        }
+    }
 
     fn parse(input: &str) -> nom::IResult<&str, Self> {
         nom_alt((
@@ -216,6 +230,58 @@ impl Display for Instruction {
 }
 
 
+impl Alu {
+    /// Given a register, tells the value stored in that register.
+    fn value_in(&self, reg: Register) -> Value {
+        self.values[reg.id()]
+    }
+
+    // Given a param, tells the value of that parameter.
+    fn value_of(&self, param: Parameter) -> Value {
+        match param {
+            Parameter::Constant(val) => val,
+            Parameter::Register(reg) => self.value_in(reg),
+        }
+    }
+
+
+    /// Executes any instruction OTHER than input.
+    fn eval_internal(&self, instruction: Instruction) -> Alu {
+        let mut values: [Value; Register::NUM_ITEMS] = self.values.clone();
+        match instruction {
+            Instruction::Inp(_) => panic!(),
+            Instruction::Add(reg, param) => {
+                values[reg.id()] = self.value_in(reg) + self.value_of(param);
+            },
+            Instruction::Mul(reg, param) => {
+                values[reg.id()] = self.value_in(reg) * self.value_of(param);
+            },
+            Instruction::Div(reg, param) => {
+                let p = self.value_of(param);
+                assert!(p != 0);
+                values[reg.id()] = self.value_in(reg) / p;
+            },
+            Instruction::Mod(reg, param) => {
+                let r = self.value_in(reg);
+                let p = self.value_of(param);
+                assert!(r >= 0);
+                assert!(p > 0);
+                values[reg.id()] = r % p;
+            },
+            Instruction::Eql(reg, param) => {
+                values[reg.id()] = if self.value_in(reg) == self.value_of(param) {1} else {0};
+            },
+        }
+        Alu{values}
+    }
+}
+
+impl Display for Alu {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "[{} {} {} {}]", self.values[0], self.values[1], self.values[2], self.values[3])
+    }
+}
+
 // ======== Functions ========
 
 
@@ -225,8 +291,16 @@ impl Display for Instruction {
 
 fn run() -> Result<(),InputError> {
     let instructions: Vec<Instruction> = read_alu_file()?;
-    for instruction in instructions {
+    for instruction in instructions.iter() {
         println!("{}", instruction);
+    }
+
+    let mut alu = Alu{values: [0;Register::NUM_ITEMS]};
+    for ins in instructions.iter() {
+        if !matches!(ins, Instruction::Inp(_)) {
+            alu = alu.eval_internal(*ins);
+            println!("alu: {}", alu);
+        }
     }
 
     Ok(())
