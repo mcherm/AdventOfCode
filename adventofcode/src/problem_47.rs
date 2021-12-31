@@ -72,8 +72,7 @@ enum Parameter {
 }
 
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]
-enum Instruction {
-    Inp(Register),
+enum Compute {
     Add(Register, Parameter),
     Mul(Register, Parameter),
     Div(Register, Parameter),
@@ -82,9 +81,16 @@ enum Instruction {
 }
 
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]
+enum Instruction {
+    Input(Register),
+    Compute(Compute),
+}
+
+#[derive(Debug, Eq, PartialEq, Copy, Clone)]
 struct Alu {
     values: [Value; Register::NUM_ITEMS],
 }
+
 
 // ======== Implementations ========
 
@@ -154,21 +160,14 @@ impl Display for Parameter {
     }
 }
 
-
-impl Instruction {
-    fn parse_inp(input: &str) -> nom::IResult<&str, Self> {
-        nom_tuple((
-            nom_tag("inp "),
-            Register::parse,
-        ))(input).map(|(rest, (_, reg))| (rest, Instruction::Inp(reg)))
-    }
+impl Compute {
     fn parse_add(input: &str) -> nom::IResult<&str, Self> {
         nom_tuple((
             nom_tag("add "),
             Register::parse,
             nom_tag(" "),
             Parameter::parse,
-        ))(input).map(|(rest, (_, reg, _, param))| (rest, Instruction::Add(reg, param)))
+        ))(input).map(|(rest, (_, reg, _, param))| (rest, Compute::Add(reg, param)))
     }
     fn parse_mul(input: &str) -> nom::IResult<&str, Self> {
         nom_tuple((
@@ -176,7 +175,7 @@ impl Instruction {
             Register::parse,
             nom_tag(" "),
             Parameter::parse,
-        ))(input).map(|(rest, (_, reg, _, param))| (rest, Instruction::Mul(reg, param)))
+        ))(input).map(|(rest, (_, reg, _, param))| (rest, Compute::Mul(reg, param)))
     }
     fn parse_div(input: &str) -> nom::IResult<&str, Self> {
         nom_tuple((
@@ -184,7 +183,7 @@ impl Instruction {
             Register::parse,
             nom_tag(" "),
             Parameter::parse,
-        ))(input).map(|(rest, (_, reg, _, param))| (rest, Instruction::Div(reg, param)))
+        ))(input).map(|(rest, (_, reg, _, param))| (rest, Compute::Div(reg, param)))
     }
     fn parse_mod(input: &str) -> nom::IResult<&str, Self> {
         nom_tuple((
@@ -192,7 +191,7 @@ impl Instruction {
             Register::parse,
             nom_tag(" "),
             Parameter::parse,
-        ))(input).map(|(rest, (_, reg, _, param))| (rest, Instruction::Mod(reg, param)))
+        ))(input).map(|(rest, (_, reg, _, param))| (rest, Compute::Mod(reg, param)))
     }
     fn parse_eql(input: &str) -> nom::IResult<&str, Self> {
         nom_tuple((
@@ -200,17 +199,48 @@ impl Instruction {
             Register::parse,
             nom_tag(" "),
             Parameter::parse,
-        ))(input).map(|(rest, (_, reg, _, param))| (rest, Instruction::Eql(reg, param)))
+        ))(input).map(|(rest, (_, reg, _, param))| (rest, Compute::Eql(reg, param)))
+    }
+
+    fn parse(input: &str) -> nom::IResult<&str, Self> {
+        nom_alt((
+            Compute::parse_add,
+            Compute::parse_mul,
+            Compute::parse_div,
+            Compute::parse_mod,
+            Compute::parse_eql,
+        ))(input)
+    }
+}
+
+impl Display for Compute {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            Compute::Add(reg, param) => write!(f, "add {} {}", reg, param),
+            Compute::Mul(reg, param) => write!(f, "mul {} {}", reg, param),
+            Compute::Div(reg, param) => write!(f, "div {} {}", reg, param),
+            Compute::Mod(reg, param) => write!(f, "mod {} {}", reg, param),
+            Compute::Eql(reg, param) => write!(f, "eql {} {}", reg, param),
+        }
+    }
+}
+
+
+impl Instruction {
+    fn parse_inp(input: &str) -> nom::IResult<&str, Self> {
+        nom_tuple((
+            nom_tag("inp "),
+            Register::parse,
+        ))(input).map(|(rest, (_, reg))| (rest, Instruction::Input(reg)))
+    }
+    fn parse_compute(input: &str) -> nom::IResult<&str, Self> {
+        Compute::parse(input).map(|(rest, ci)| (rest, Instruction::Compute(ci)))
     }
 
     fn parse(input: &str) -> nom::IResult<&str, Self> {
         nom_alt((
             Instruction::parse_inp,
-            Instruction::parse_add,
-            Instruction::parse_mul,
-            Instruction::parse_div,
-            Instruction::parse_mod,
-            Instruction::parse_eql,
+            Instruction::parse_compute,
         ))(input)
     }
 
@@ -219,12 +249,8 @@ impl Instruction {
 impl Display for Instruction {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
-            Instruction::Inp(reg) => write!(f, "inp {}", reg),
-            Instruction::Add(reg, param) => write!(f, "add {} {}", reg, param),
-            Instruction::Mul(reg, param) => write!(f, "mul {} {}", reg, param),
-            Instruction::Div(reg, param) => write!(f, "div {} {}", reg, param),
-            Instruction::Mod(reg, param) => write!(f, "mod {} {}", reg, param),
-            Instruction::Eql(reg, param) => write!(f, "eql {} {}", reg, param),
+            Instruction::Input(reg) => write!(f, "inp {}", reg),
+            Instruction::Compute(ci) => write!(f, "{}", ci),
         }
     }
 }
@@ -249,26 +275,26 @@ impl Alu {
     fn eval_internal(&self, instruction: Instruction) -> Alu {
         let mut values: [Value; Register::NUM_ITEMS] = self.values.clone();
         match instruction {
-            Instruction::Inp(_) => panic!(),
-            Instruction::Add(reg, param) => {
+            Instruction::Input(_) => panic!(),
+            Instruction::Compute(Compute::Add(reg, param)) => {
                 values[reg.id()] = self.value_in(reg) + self.value_of(param);
             },
-            Instruction::Mul(reg, param) => {
+            Instruction::Compute(Compute::Mul(reg, param)) => {
                 values[reg.id()] = self.value_in(reg) * self.value_of(param);
             },
-            Instruction::Div(reg, param) => {
+            Instruction::Compute(Compute::Div(reg, param)) => {
                 let p = self.value_of(param);
                 assert!(p != 0);
                 values[reg.id()] = self.value_in(reg) / p;
             },
-            Instruction::Mod(reg, param) => {
+            Instruction::Compute(Compute::Mod(reg, param)) => {
                 let r = self.value_in(reg);
                 let p = self.value_of(param);
                 assert!(r >= 0);
                 assert!(p > 0);
                 values[reg.id()] = r % p;
             },
-            Instruction::Eql(reg, param) => {
+            Instruction::Compute(Compute::Eql(reg, param)) => {
                 values[reg.id()] = if self.value_in(reg) == self.value_of(param) {1} else {0};
             },
         }
@@ -291,13 +317,10 @@ impl Display for Alu {
 
 fn run() -> Result<(),InputError> {
     let instructions: Vec<Instruction> = read_alu_file()?;
-    for instruction in instructions.iter() {
-        println!("{}", instruction);
-    }
 
     let mut alu = Alu{values: [0;Register::NUM_ITEMS]};
     for ins in instructions.iter() {
-        if !matches!(ins, Instruction::Inp(_)) {
+        if !matches!(ins, Instruction::Input(_)) {
             alu = alu.eval_internal(*ins);
             println!("alu: {}", alu);
         }
