@@ -537,6 +537,16 @@ impl PathSet {
 // ======== Functions ========
 
 
+/// Applies a Path and set of Segments to an Alu and returns the result.
+fn apply_path(caches: &mut Vec<SegmentCache>, path: &Path, start_alu: Alu) -> Result<Alu,()> {
+    let mut alu = start_alu;
+    for (i, v) in path.iter().enumerate() {
+        alu = caches[i].apply_segment(alu, *v)?;
+    }
+    Ok(alu)
+}
+
+
 /// caches: the vector of SegmentCaches
 /// pos: the position of that vector we are evaluating
 /// start_alu: the starting Alu
@@ -610,7 +620,7 @@ fn evaluate_from_start_internal(
         match apply_result {
             Err(()) => {}, // that failed... move on
             Ok(alu) => { // found an output
-                let path: Path = path_so_far.append(input);
+                let path: Path = path_so_far.prepend(input);
                 if qualified(&path, alu) {
                     if pos + 1 == stop_pos {
                         // -- last one; return results --
@@ -691,12 +701,12 @@ fn run() -> Result<(),InputError> {
 
                     // -- Work From Start --
                     let stop_pos = 14;
-                    let num_results = 500;
+                    let num_results = 1;
                     let mut data = evaluate_from_start(&mut caches, stop_pos, start_alu, num_results);
                     println!("Got results from start:");
                     data.sort();
                     for (path, alu) in data.iter().rev() {
-                        println!("    {} -> {}", path, alu)
+                        println!("    {} -> {}", path, alu);
                     }
 
                     // -- Work Toward End --
