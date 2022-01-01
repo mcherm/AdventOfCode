@@ -6,6 +6,7 @@ use std::collections::{HashMap, HashSet};
 use itertools;
 use itertools::Itertools;
 use std::fmt::Write;
+use std::ops::Add;
 use nom::bytes::complete::tag as nom_tag;
 use nom::sequence::tuple as nom_tuple;
 use nom::branch::alt as nom_alt;
@@ -135,12 +136,16 @@ struct SegmentCache {
     cache: HashMap<(Alu, Value), Result<Alu,()>>, // map from (start_alu, input_value) to output Alu
 }
 
-type Path = Vec<Value>;
+/// Represents an input number.
+#[derive(Debug, Eq, PartialEq, Clone, Hash, Ord, PartialOrd)]
+struct Path {
+    str: String,
+}
 
 /// A class I am creating to track a bunch of valid paths and print out some interesting
 /// information about them.
 struct PathSet {
-    paths: HashSet<String>,
+    paths: HashSet<Path>,
     path_len: Option<usize>,
 }
 
@@ -407,6 +412,66 @@ impl SegmentCache {
 }
 
 
+impl Path {
+    /// Return an empty path.
+    fn empty() -> Self {
+        Path{str: String::new()}
+    }
+
+    fn iter(&self) -> PathIterator {
+        PathIterator{chars: self.str.chars()}
+    }
+
+    fn len(&self) -> usize {
+        self.str.len()
+    }
+
+    fn prepend(&self, v: Value) -> Path {
+        assert!(v >= 1 && v <= 9);
+        Path{str: self.str.to_owned().add(&v.to_string())}
+    }
+
+    fn append(&self, v: Value) -> Path {
+        assert!(v >= 1 && v <= 9);
+        Path{str: v.to_string().add(&self.str)}
+    }
+
+    fn concat(&self, other: &Path) -> Path {
+        Path{str: self.str.to_owned().add(&other.str)}
+    }
+}
+impl Display for Path {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.str)
+    }
+}
+struct PathIterator<'a> {
+    chars: core::str::Chars<'a>,
+}
+impl<'a> Iterator for PathIterator<'a> {
+    type Item = &'a Value;
+
+    fn next(&mut self) -> Option<&'a Value> {
+        match self.chars.next() {
+            None => None,
+            Some(c) => {
+                Some(match c {
+                    '1' => &1,
+                    '2' => &2,
+                    '3' => &3,
+                    '4' => &4,
+                    '5' => &5,
+                    '6' => &6,
+                    '7' => &7,
+                    '8' => &8,
+                    '9' => &9,
+                    _ => panic!()
+                })
+            },
+        }
+    }
+}
+
 
 impl PathSet {
     fn new() -> Self {
@@ -414,12 +479,12 @@ impl PathSet {
     }
 
     /// Add a path into PathSet.
-    fn add(&mut self, path: &Path) {
+    fn add(&mut self, path: Path) {
         match self.path_len {
             None => self.path_len = Some(path.len()),
             Some(len) => if path.len() != len {panic!("PathSet with paths of different lengths")},
         }
-        self.paths.insert(print_path(path));
+        self.paths.insert(path);
     }
 
     fn print_all(&self) {
@@ -444,15 +509,14 @@ impl PathSet {
         let mut counts: Vec<HashSet<Value>> = (0..path_len).map(|_| HashSet::new()).collect();
         let mut diffs: Vec<HashSet<Value>> = (0..(path_len - 1)).map(|_| HashSet::new()).collect();
         for path in self.paths.iter() {
-            let mut prev_v = -99999; // the initial value won't be used
-            for (i, c) in path.chars().enumerate() {
-                let v: Value = c.to_string().parse::<Value>().unwrap();
-                counts[i].insert(v);
+            let mut prev_v: Option<Value> = None; // None will never be used
+            for (i, v) in path.iter().enumerate() {
+                counts[i].insert(*v);
                 if i > 0 {
-                    let diff = prev_v - v;
+                    let diff = prev_v.unwrap() - v;
                     diffs[i-1].insert(diff);
                 }
-                prev_v = v;
+                prev_v = Some(*v);
             }
         }
 
@@ -469,27 +533,6 @@ impl PathSet {
 
 
 // ======== Functions ========
-
-fn empty_path() -> Path {
-    Vec::new()
-}
-fn prepend_path(v: Value, vals: &Path) -> Path {
-    itertools::chain((&[v]).iter().copied(), vals.iter().copied()).collect()
-}
-
-fn append_path(vals: &Path, v: Value) -> Path {
-    itertools::chain(vals.iter().copied(), (&[v]).iter().copied()).collect()
-}
-fn print_path(path: &Path) -> String {
-    let mut path_as_string: String = "".into();
-    for val in path.iter() {
-        write!(path_as_string, "{}", val).unwrap();
-    }
-    path_as_string
-}
-fn concat_path(p1: &Path, p2: &Path) -> Path {
-    itertools::chain(p1.iter().copied(), p2.iter().copied()).collect()
-}
 
 
 /// caches: the vector of SegmentCaches
@@ -508,13 +551,13 @@ fn evaluate_to_end(caches: &mut Vec<SegmentCache>, pos: usize, start_alu: Alu) -
                 if pos + 1 == caches.len() {
                     // -- last one; check for validity --
                     if alu.valid() {
-                        answer.push(vec![input]);
+                        let path = Path::empty().append(input);
+                        answer.push(path);
                     }
                 } else {
                     // -- not last one; recurse --
                     for tail in evaluate_to_end(caches, pos + 1, alu) {
-                        let tail_end_of_number = prepend_path(input, &tail);
-                        answer.push(tail_end_of_number);
+                        answer.push(tail.prepend(input));
                     }
                 }
             },
@@ -544,7 +587,7 @@ fn evaluate_from_start(
     assert!(caches.len() >= 1);
     assert!(stop_pos < caches.len());
     let mut answer: Vec<(Path,Alu)> = Vec::new();
-    evaluate_from_start_internal(caches, 0, stop_pos, start_alu, empty_path(), num_results, &mut answer);
+    evaluate_from_start_internal(caches, 0, stop_pos, start_alu, Path::empty(), num_results, &mut answer);
     answer
 }
 
@@ -563,7 +606,7 @@ fn evaluate_from_start_internal(
         match apply_result {
             Err(()) => {}, // that failed... move on
             Ok(alu) => { // found an output
-                let path: Path = append_path(&path_so_far, input);
+                let path: Path = path_so_far.append(input);
                 if pos == stop_pos {
                     // -- last one; return results --
                     answer.push((path, alu));
@@ -616,11 +659,11 @@ fn run() -> Result<(),InputError> {
 
                     // -- Work From Start --
                     let stop_pos = 8;
-                    let num_results = 2000;
+                    let num_results = 100;
                     let data = evaluate_from_start(&mut caches, stop_pos, start_alu, num_results);
                     // println!("Got results from start:");
                     // for (path, alu) in data.iter().rev() {
-                    //     println!("    {} -> {}", print_path(path), alu)
+                    //     println!("    {} -> {}", path, alu)
                     // }
 
                     // -- Work Toward End --
@@ -628,7 +671,7 @@ fn run() -> Result<(),InputError> {
                         let start_pos = caches.len() - 5;
                         let paths = evaluate_to_end(&mut caches, start_pos, *alu);
                         for end_path in paths.iter() {
-                            valid_paths.add(&concat_path(start_path, end_path));
+                            valid_paths.add(start_path.concat(end_path));
                         }
                     }
 
