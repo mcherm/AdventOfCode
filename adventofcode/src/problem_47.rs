@@ -2,6 +2,7 @@ use std::fmt;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::fmt::{Display, Formatter};
+use std::collections::{HashMap, HashSet};
 use nom::bytes::complete::tag as nom_tag;
 use nom::sequence::tuple as nom_tuple;
 use nom::branch::alt as nom_alt;
@@ -113,16 +114,23 @@ enum Instruction {
 
 /// One segment of instructions consists of one Input instruction followed
 /// by a series of Compute instructions.
+#[derive(Debug, Clone)]
 struct Segment {
     input: Register,
     computes: Vec<Compute>,
 }
 
-#[derive(Debug, Eq, PartialEq, Copy, Clone)]
+#[derive(Debug, Eq, PartialEq, Copy, Clone, Hash)]
 struct Alu {
     values: [Value; Register::NUM_ITEMS],
 }
 
+
+/// Cache for ONE particular segment.
+struct SegmentCache {
+    segment: Segment,
+    cache: HashMap<(Alu, Value), Alu>, // map from (start_alu, input_value) to output Alu
+}
 
 // ======== Implementations ========
 
@@ -288,13 +296,17 @@ impl Display for Instruction {
 }
 
 
+impl Segment {
+}
+
+
 impl Alu {
     /// Given a register, tells the value stored in that register.
     fn value_in(&self, reg: Register) -> Value {
         self.values[reg.id()]
     }
 
-    // Given a param, tells the value of that parameter.
+    /// Given a param, tells the value of that parameter.
     fn value_of(&self, param: Parameter) -> Value {
         match param {
             Parameter::Constant(val) => val,
@@ -302,8 +314,14 @@ impl Alu {
         }
     }
 
+
+    /// Returns true if the ALU is a valid final accept state.
+    fn valid(&self) -> bool {
+        self.values[Register::Z.id()] == 0
+    }
+
     /// Executes any instruction OTHER than input.
-    fn eval_internal(&self, compute: Compute) -> Alu {
+    fn eval_compute(&self, compute: Compute) -> Alu {
         let mut values: [Value; Register::NUM_ITEMS] = self.values.clone();
         match compute {
             Compute::Add(reg, param) => {
@@ -330,6 +348,12 @@ impl Alu {
         }
         Alu{values}
     }
+
+    fn eval_input(&self, input_reg: Register, input: Value) -> Alu {
+        let mut values: [Value; Register::NUM_ITEMS] = self.values.clone();
+        values[input_reg.id()] = input;
+        Alu{values}
+    }
 }
 
 impl Display for Alu {
@@ -338,8 +362,36 @@ impl Display for Alu {
     }
 }
 
+
+impl SegmentCache {
+    fn new(segment: Segment) -> Self {
+        SegmentCache{segment, cache: HashMap::new()}
+    }
+
+    fn apply_segment(&mut self, start_alu: Alu, input: Value) -> Alu {
+        let cached = self.cache.get(&(start_alu, input));
+        match cached {
+            Some(alu) => *alu,
+            None => {
+                let answer: Alu = apply_segment(start_alu, &self.segment, input);
+                self.cache.insert((start_alu, input), answer);
+                answer
+            },
+        }
+    }
+}
+
 // ======== Functions ========
 
+
+fn apply_segment(start_alu: Alu, seg: &Segment, input: Value) -> Alu {
+    let mut alu = start_alu;
+    alu = alu.eval_input(seg.input, input);
+    for compute in seg.computes.iter() {
+        alu = alu.eval_compute(*compute);
+    }
+    alu
+}
 
 
 // ======== run() and main() ========
@@ -348,12 +400,44 @@ impl Display for Alu {
 fn run() -> Result<(),InputError> {
     let segments: Vec<Segment> = read_alu_file()?;
 
-    let mut alu = Alu{values: [0;Register::NUM_ITEMS]};
-    for seg in segments.iter() {
-        for compute in seg.computes.iter() {
-            alu = alu.eval_internal(*compute);
-            println!("alu: {}", alu);
+    // let mut alu = Alu{values: [0;Register::NUM_ITEMS]};
+    // for seg in segments.iter() {
+    //     for compute in seg.computes.iter() {
+    //         alu = alu.eval_compute(*compute);
+    //         println!("alu: {}", alu);
+    //     }
+    // }
+
+    let last_seg: Segment = segments[segments.len() - 1].clone();
+    let last_2_seg: Segment = segments[segments.len() - 1].clone();
+    let mut last_cache = SegmentCache::new(last_seg);
+    let mut last_2_cache = SegmentCache::new(last_2_seg);
+    let min_val = 0;
+    let max_val = 15;
+    let mut valid_pairs: HashSet<[Value;2]> = HashSet::new();
+    for a in min_val..=max_val {
+        for b in min_val..=max_val {
+            for c in min_val..=max_val {
+                for d in min_val..=max_val {
+                    let start_alu = Alu{values: [a, b, c, d]};
+                    for input_2 in 1..9 {
+                        let end_2_alu = last_2_cache.apply_segment(start_alu, input_2);
+                        for input_1 in 1..9 {
+                            let end_alu = last_cache.apply_segment(end_2_alu, input_1);
+                            if end_alu.valid() {
+                                valid_pairs.insert([input_2, input_1]);
+                                // println!("Works for {}{} if you start with {}", input_2, input_1, start_alu);
+                            }
+                        }
+                    }
+                }
+            }
         }
+    }
+    println!();
+    println!("The valid pairs are:");
+    for pair in valid_pairs {
+        println!("{}{}", pair[0], pair[1]);
     }
 
     Ok(())
