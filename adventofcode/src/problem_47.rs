@@ -4,6 +4,8 @@ use std::io::{BufRead, BufReader};
 use std::fmt::{Display, Formatter};
 use std::collections::{HashMap, HashSet};
 use itertools;
+use itertools::Itertools;
+use std::fmt::Write;
 use nom::bytes::complete::tag as nom_tag;
 use nom::sequence::tuple as nom_tuple;
 use nom::branch::alt as nom_alt;
@@ -131,6 +133,15 @@ struct Alu {
 struct SegmentCache {
     segment: Segment,
     cache: HashMap<(Alu, Value), Result<Alu,()>>, // map from (start_alu, input_value) to output Alu
+}
+
+type Path = Vec<Value>;
+
+/// A class I am creating to track a bunch of valid paths and print out some interesting
+/// information about them.
+struct PathSet {
+    paths: HashSet<String>,
+    path_len: Option<usize>,
 }
 
 // ======== Implementations ========
@@ -395,10 +406,67 @@ impl SegmentCache {
     }
 }
 
+
+
+impl PathSet {
+    fn new() -> Self {
+        PathSet{paths: HashSet::new(), path_len: None}
+    }
+
+    /// Add a path into PathSet.
+    fn add(&mut self, path: &Path) {
+        match self.path_len {
+            None => self.path_len = Some(path.len()),
+            Some(len) => if path.len() != len {panic!("PathSet with paths of different lengths")},
+        }
+        let mut path_as_string: String = "".into();
+        for val in path.iter() {
+            write!(path_as_string, "{}", val).unwrap();
+        }
+        self.paths.insert(path_as_string);
+    }
+
+    fn print_all(&self) {
+        println!("The valid paths are:");
+        for path in self.paths.iter().sorted() {
+            println!("{}", path);
+        }
+    }
+
+    fn print_analysis(&self) {
+        println!("Analyzing {} paths:", self.paths.len());
+        let path_len = self.path_len.unwrap();
+        let mut counts: Vec<HashSet<Value>> = (0..path_len).map(|_| HashSet::new()).collect();
+        let mut diffs: Vec<HashSet<Value>> = (0..(path_len - 1)).map(|_| HashSet::new()).collect();
+        for path in self.paths.iter() {
+            let mut prev_v = -99999; // the initial value won't be used
+            for (i, c) in path.chars().enumerate() {
+                let v: Value = c.to_string().parse::<Value>().unwrap();
+                counts[i].insert(v);
+                if i > 0 {
+                    let diff = prev_v - v;
+                    diffs[i-1].insert(diff);
+                }
+                prev_v = v;
+            }
+        }
+
+        println!("Frequencies:");
+        for i in 0..path_len {
+            println!("    Position {}: {}", i, print_value_set(&counts[i]));
+        }
+        println!("Diffs:");
+        for i in 0..(path_len - 1) {
+            println!("    Position {} to {}: {}", i, i+1, print_value_set(&counts[i]));
+        }
+    }
+}
+
+
 // ======== Functions ========
 
-fn prepend(v: Value, vals: Vec<Value>) -> Vec<Value> {
-    itertools::chain((&[v]).iter().copied(), vals.iter().copied()).collect::<Vec<Value>>()
+fn prepend(v: Value, vals: Path) -> Path {
+    itertools::chain((&[v]).iter().copied(), vals.iter().copied()).collect::<Path>()
 }
 
 
@@ -408,8 +476,8 @@ fn prepend(v: Value, vals: Vec<Value>) -> Vec<Value> {
 ///
 /// This evaluates possible inputs for a segment. It returns a list of
 /// input value sequences that will give valid results.
-fn evaluate(caches: &mut Vec<SegmentCache>, pos: usize, start_alu: Alu) -> Vec<Vec<Value>> {
-    let mut answer: Vec<Vec<Value>> = Vec::new();
+fn evaluate(caches: &mut Vec<SegmentCache>, pos: usize, start_alu: Alu) -> Vec<Path> {
+    let mut answer: Vec<Path> = Vec::new();
     for input in (1..=9).rev() {
         let apply_result = caches[pos].apply_segment(start_alu, input);
         match apply_result {
@@ -434,57 +502,51 @@ fn evaluate(caches: &mut Vec<SegmentCache>, pos: usize, start_alu: Alu) -> Vec<V
 }
 
 
+fn print_value_set(set: &HashSet<Value>) -> String {
+    let mut s: String = "".into();
+    write!(s, "{{").unwrap();
+    let mut first_item = true;
+    for v in set.iter().sorted() {
+        if !first_item {
+            write!(s, ", ").unwrap();
+        }
+        first_item = false;
+        write!(s, "{}", v).unwrap();
+    }
+    write!(s, "}}").unwrap();
+    s
+}
+
 // ======== run() and main() ========
 
 
 fn run() -> Result<(),InputError> {
     let segments: Vec<Segment> = read_alu_file()?;
 
-    // let last_seg: Segment = segments[segments.len() - 1].clone();
-    // let last_2_seg: Segment = segments[segments.len() - 2].clone();
-    // let mut last_cache = SegmentCache::new(last_seg);
-    // let mut last_2_cache = SegmentCache::new(last_2_seg);
-    // let mut valid_pairs: HashSet<[Value;2]> = HashSet::new();
-
-
     let mut caches: Vec<SegmentCache> = segments.iter().map(|x| SegmentCache::new(x.clone())).collect();
     let min_val = 0;
     let max_val = 0;
-    let mut valid_paths: HashSet<[Value;2]> = HashSet::new();
+    let mut valid_paths = PathSet::new();
     for a in min_val..=max_val {
         for b in min_val..=max_val {
             for c in min_val..=max_val {
                 for d in min_val..=max_val {
                     let start_alu = Alu{values: [a, b, c, d]};
-                    let start_pos = caches.len() - 2;
+                    let start_pos = caches.len() - 7;
                     let paths = evaluate(&mut caches, start_pos, start_alu);
                     for path in paths.iter() {
-                        let path_as_array = [path[0],path[1]];
-                        valid_paths.insert(path_as_array);
+                        valid_paths.add(path);
                     }
                 }
             }
         }
     }
     println!();
-    println!("The valid paths are:");
-    for path in valid_paths {
-        println!("{}{}", path[0], path[1]);
-    }
+    valid_paths.print_all();
+    println!();
+    println!();
+    valid_paths.print_analysis();
 
-    // println!();
-    // println!("---------------");
-    // println!("Just checking...");
-    // {
-    //     let alu = Alu{values: [0,0,0,0]};
-    //     let mut pentultimate: SegmentCache = SegmentCache::new(segments[0].clone());
-    //     let mut ultimate: SegmentCache = SegmentCache::new(segments[1].clone());
-    //     println!("alu = {}", alu);
-    //     let alu = pentultimate.apply_segment(alu, 2).unwrap();
-    //     println!("input 7 and then alu = {}", alu);
-    //     let alu = ultimate.apply_segment(alu, 9).unwrap();
-    //     println!("input 9 and then alu = {}", alu);
-    // }
 
     Ok(())
 }
@@ -524,5 +586,22 @@ NOTES:
     57
     68
   Interestingly, all of those work with a starting value of [0,0,0,0].
+
+    Analyzing 38232 paths:
+    Frequencies:
+        Position 0: {1, 2, 3, 4, 5, 6, 7, 8, 9}
+        Position 1: {1, 2, 3, 4, 5, 6, 7, 8, 9}
+        Position 2: {1, 2, 3, 4, 5, 6, 7, 8, 9}
+        Position 3: {1, 2, 3, 4, 5, 6, 7, 8, 9}
+        Position 4: {1, 2, 3, 4, 5, 6, 7, 8, 9}
+        Position 5: {1, 2, 3, 4, 5, 6, 7, 8, 9}
+        Position 6: {3, 4, 5, 6, 7, 8, 9}
+    Diffs:
+        Position 0 to 1: {1, 2, 3, 4, 5, 6, 7, 8, 9}
+        Position 1 to 2: {1, 2, 3, 4, 5, 6, 7, 8, 9}
+        Position 2 to 3: {1, 2, 3, 4, 5, 6, 7, 8, 9}
+        Position 3 to 4: {1, 2, 3, 4, 5, 6, 7, 8, 9}
+        Position 4 to 5: {1, 2, 3, 4, 5, 6, 7, 8, 9}
+        Position 5 to 6: {1, 2, 3, 4, 5, 6, 7, 8, 9}
 
  */
