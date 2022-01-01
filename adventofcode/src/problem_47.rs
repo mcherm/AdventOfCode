@@ -538,6 +538,7 @@ impl PathSet {
 
 
 /// Applies a Path and set of Segments to an Alu and returns the result.
+#[allow(dead_code)]
 fn apply_path(caches: &mut Vec<SegmentCache>, path: &Path, start_alu: Alu) -> Result<Alu,()> {
     let mut alu = start_alu;
     for (i, v) in path.iter().enumerate() {
