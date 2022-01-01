@@ -434,8 +434,17 @@ impl PathSet {
     }
 
     fn print_analysis(&self) {
+        if self.paths.len() == 0 {
+            println!("There were no paths!");
+            return;
+        }
         println!("Analyzing {} paths:", self.paths.len());
         let path_len = self.path_len.unwrap();
+        println!("The top few are:");
+        for path in self.paths.iter().sorted().rev().take(15) {
+            println!("    {}", path);
+        }
+
         let mut counts: Vec<HashSet<Value>> = (0..path_len).map(|_| HashSet::new()).collect();
         let mut diffs: Vec<HashSet<Value>> = (0..(path_len - 1)).map(|_| HashSet::new()).collect();
         for path in self.paths.iter() {
@@ -476,7 +485,7 @@ fn prepend(v: Value, vals: Path) -> Path {
 ///
 /// This evaluates possible inputs for a segment. It returns a list of
 /// input value sequences that will give valid results.
-fn evaluate(caches: &mut Vec<SegmentCache>, pos: usize, start_alu: Alu) -> Vec<Path> {
+fn evaluate_to_end(caches: &mut Vec<SegmentCache>, pos: usize, start_alu: Alu) -> Vec<Path> {
     let mut answer: Vec<Path> = Vec::new();
     for input in (1..=9).rev() {
         let apply_result = caches[pos].apply_segment(start_alu, input);
@@ -490,7 +499,7 @@ fn evaluate(caches: &mut Vec<SegmentCache>, pos: usize, start_alu: Alu) -> Vec<P
                     }
                 } else {
                     // -- not last one; recurse --
-                    for tail in evaluate(caches, pos + 1, alu) {
+                    for tail in evaluate_to_end(caches, pos + 1, alu) {
                         let tail_end_of_number = prepend(input, tail);
                         answer.push(tail_end_of_number);
                     }
@@ -523,17 +532,17 @@ fn print_value_set(set: &HashSet<Value>) -> String {
 fn run() -> Result<(),InputError> {
     let segments: Vec<Segment> = read_alu_file()?;
 
-    let mut caches: Vec<SegmentCache> = segments.iter().map(|x| SegmentCache::new(x.clone())).collect();
+    let mut caches: Vec<SegmentCache> = segments[..5].iter().map(|x| SegmentCache::new(x.clone())).collect();
     let min_val = 0;
-    let max_val = 0;
+    let max_val = 2;
     let mut valid_paths = PathSet::new();
     for a in min_val..=max_val {
         for b in min_val..=max_val {
             for c in min_val..=max_val {
                 for d in min_val..=max_val {
                     let start_alu = Alu{values: [a, b, c, d]};
-                    let start_pos = caches.len() - 7;
-                    let paths = evaluate(&mut caches, start_pos, start_alu);
+                    let start_pos = caches.len() - 5;
+                    let paths = evaluate_to_end(&mut caches, start_pos, start_alu);
                     for path in paths.iter() {
                         valid_paths.add(path);
                     }
@@ -588,6 +597,22 @@ NOTES:
   Interestingly, all of those work with a starting value of [0,0,0,0].
 
     Analyzing 38232 paths:
+    The top few are:
+        9699979
+        9699968
+        9699957
+        9699946
+        9699935
+        9699924
+        9699913
+        9699879
+        9699868
+        9699857
+        9699846
+        9699835
+        9699824
+        9699813
+        9699779
     Frequencies:
         Position 0: {1, 2, 3, 4, 5, 6, 7, 8, 9}
         Position 1: {1, 2, 3, 4, 5, 6, 7, 8, 9}
@@ -603,5 +628,10 @@ NOTES:
         Position 3 to 4: {1, 2, 3, 4, 5, 6, 7, 8, 9}
         Position 4 to 5: {1, 2, 3, 4, 5, 6, 7, 8, 9}
         Position 5 to 6: {1, 2, 3, 4, 5, 6, 7, 8, 9}
+
+    I don't learn much more ending at position 13. But if I end anywhere BEFORE 13 then I get
+    absolutely no valid paths. Apparently it's only in the last (and second-to-last?) place
+    where we ever set z=0.
+
 
  */
