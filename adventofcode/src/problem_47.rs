@@ -124,7 +124,7 @@ struct Segment {
     computes: Vec<Compute>,
 }
 
-#[derive(Debug, Eq, PartialEq, Copy, Clone, Hash)]
+#[derive(Debug, Eq, PartialEq, Copy, Clone, Hash, Ord, PartialOrd)]
 struct Alu {
     values: [Value; Register::NUM_ITEMS],
 }
@@ -436,6 +436,7 @@ impl Path {
         Path{str: v.to_string().add(&self.str)}
     }
 
+    #[allow(dead_code)]
     fn concat(&self, other: &Path) -> Path {
         Path{str: self.str.to_owned().add(&other.str)}
     }
@@ -479,6 +480,7 @@ impl PathSet {
     }
 
     /// Add a path into PathSet.
+    #[allow(dead_code)]
     fn add(&mut self, path: Path) {
         match self.path_len {
             None => self.path_len = Some(path.len()),
@@ -541,6 +543,7 @@ impl PathSet {
 ///
 /// This evaluates possible inputs for a series of segments. It returns a list of
 /// input value sequences that will give valid results.
+#[allow(dead_code)]
 fn evaluate_to_end(caches: &mut Vec<SegmentCache>, pos: usize, start_alu: Alu) -> Vec<Path> {
     let mut answer: Vec<Path> = Vec::new();
     for input in (1..=9).rev() {
@@ -578,6 +581,7 @@ fn evaluate_to_end(caches: &mut Vec<SegmentCache>, pos: usize, start_alu: Alu) -
 /// inputs starting from 999... and working downward, skipping any that cause errors
 /// and continuing until it has collected num_results values OR all possible values.
 /// For each, it returns a (path, alu) pair.
+#[allow(dead_code)]
 fn evaluate_from_start(
     caches: &mut Vec<SegmentCache>,
     stop_pos: usize,
@@ -585,7 +589,7 @@ fn evaluate_from_start(
     num_results: usize,
 ) -> Vec<(Path,Alu)> {
     assert!(caches.len() >= 1);
-    assert!(stop_pos < caches.len());
+    assert!(stop_pos <= caches.len());
     let mut answer: Vec<(Path,Alu)> = Vec::new();
     evaluate_from_start_internal(caches, 0, stop_pos, start_alu, Path::empty(), num_results, &mut answer);
     answer
@@ -607,17 +611,19 @@ fn evaluate_from_start_internal(
             Err(()) => {}, // that failed... move on
             Ok(alu) => { // found an output
                 let path: Path = path_so_far.append(input);
-                if pos == stop_pos {
-                    // -- last one; return results --
-                    answer.push((path, alu));
-                    if answer.len() == num_results {
-                        return;
-                    }
-                } else {
-                    // -- not last one; recurse --
-                    evaluate_from_start_internal(caches, pos + 1, stop_pos, alu, path, num_results, answer);
-                    if answer.len() == num_results {
-                        return;
+                if qualified(&path, alu) {
+                    if pos + 1 == stop_pos {
+                        // -- last one; return results --
+                        answer.push((path, alu));
+                        if answer.len() == num_results {
+                            return;
+                        }
+                    } else {
+                        // -- not last one; recurse --
+                        evaluate_from_start_internal(caches, pos + 1, stop_pos, alu, path, num_results, answer);
+                        if answer.len() == num_results {
+                            return;
+                        }
                     }
                 }
             },
@@ -641,6 +647,31 @@ fn print_value_set(set: &HashSet<Value>) -> String {
     s
 }
 
+
+/// So, I have some guesses about what might be required. I'm going to have
+/// this function return true for the ones I want to explore further (and prune
+/// the rest).
+fn qualified(path: &Path, alu: Alu) -> bool {
+    match path.len() {
+        0 => true,
+        1 => true,
+        2 => true,
+        3 => true,
+        4 => true,
+        5 => alu.values[1] != 1,
+        6 => true,
+        7 => true,
+        8 => alu.values[1] != 1,
+        9 => true,
+        10 => alu.values[1] != 1,
+        11 => alu.values[1] != 1,
+        12 => alu.values[1] != 1,
+        13 => true,
+        14 => alu.values[3] == 0,
+        _ => panic!("Invalid path length")
+    }
+}
+
 // ======== run() and main() ========
 
 
@@ -650,6 +681,7 @@ fn run() -> Result<(),InputError> {
     let mut caches: Vec<SegmentCache> = segments.iter().map(|x| SegmentCache::new(x.clone())).collect();
     let min_val = 0;
     let max_val = 0;
+    #[allow(unused_mut)]
     let mut valid_paths = PathSet::new();
     for a in min_val..=max_val {
         for b in min_val..=max_val {
@@ -658,22 +690,23 @@ fn run() -> Result<(),InputError> {
                     let start_alu = Alu{values: [a, b, c, d]};
 
                     // -- Work From Start --
-                    let stop_pos = 8;
-                    let num_results = 100;
-                    let data = evaluate_from_start(&mut caches, stop_pos, start_alu, num_results);
-                    // println!("Got results from start:");
-                    // for (path, alu) in data.iter().rev() {
-                    //     println!("    {} -> {}", path, alu)
-                    // }
+                    let stop_pos = 14;
+                    let num_results = 500;
+                    let mut data = evaluate_from_start(&mut caches, stop_pos, start_alu, num_results);
+                    println!("Got results from start:");
+                    data.sort();
+                    for (path, alu) in data.iter().rev() {
+                        println!("    {} -> {}", path, alu)
+                    }
 
                     // -- Work Toward End --
-                    for (start_path, alu) in data.iter().rev() {
-                        let start_pos = caches.len() - 5;
-                        let paths = evaluate_to_end(&mut caches, start_pos, *alu);
-                        for end_path in paths.iter() {
-                            valid_paths.add(start_path.concat(end_path));
-                        }
-                    }
+                    // for (start_path, alu) in data.iter().rev() {
+                    //     let start_pos = caches.len() - 5;
+                    //     let paths = evaluate_to_end(&mut caches, start_pos, *alu);
+                    //     for end_path in paths.iter() {
+                    //         valid_paths.add(start_path.concat(end_path));
+                    //     }
+                    // }
 
                 }
             }
@@ -708,6 +741,30 @@ mod test {
     #[test]
     fn test_read_file() {
         let _ = read_alu_file().unwrap();
+    }
+
+    #[test]
+    fn test_sort_path() {
+        let mut paths: Vec<Path> = vec![
+            "96158517619692",
+            "96159617619692",
+            "96154128619692",
+            "96155228619692",
+            "96156328619692",
+            "96157428619692",
+            "96158528619692",
+            // "8517",
+            // "9617",
+            // "4128",
+            // "5228",
+            // "6328",
+            // "7428",
+            // "8528",
+        ].iter().map(|x| Path{str: x.to_string()}).collect();
+        paths.sort();
+        for p in paths.iter() {
+            println!("{}", p);
+        }
     }
 
 }
@@ -773,4 +830,6 @@ NOTES:
            x -> set to 1
            y -> set to 2 + 2nd input digit
            z -> set to some bigger number
+
+   I guessed 96489639919992 as a solution, but it was too high.
  */
