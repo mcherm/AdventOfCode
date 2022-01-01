@@ -3,6 +3,7 @@ use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::fmt::{Display, Formatter};
 use std::collections::{HashMap, HashSet};
+use itertools;
 use nom::bytes::complete::tag as nom_tag;
 use nom::sequence::tuple as nom_tuple;
 use nom::branch::alt as nom_alt;
@@ -129,7 +130,7 @@ struct Alu {
 /// Cache for ONE particular segment.
 struct SegmentCache {
     segment: Segment,
-    cache: HashMap<(Alu, Value), Alu>, // map from (start_alu, input_value) to output Alu
+    cache: HashMap<(Alu, Value), Result<Alu,()>>, // map from (start_alu, input_value) to output Alu
 }
 
 // ======== Implementations ========
@@ -297,6 +298,16 @@ impl Display for Instruction {
 
 
 impl Segment {
+    /// Applies the segment. Either returns Ok(alu) for the Alu that results OR
+    /// returns Err(()) if the computation would result in an illegal operation.
+    fn apply(&self, start_alu: Alu, input: Value) -> Result<Alu,()> {
+        let mut alu = start_alu;
+        alu = alu.eval_input(self.input, input);
+        for compute in self.computes.iter() {
+            alu = alu.eval_compute(*compute)?;
+        }
+        Ok(alu)
+    }
 }
 
 
@@ -320,8 +331,9 @@ impl Alu {
         self.values[Register::Z.id()] == 0
     }
 
-    /// Executes any instruction OTHER than input.
-    fn eval_compute(&self, compute: Compute) -> Alu {
+    /// Executes any instruction OTHER than input. Either returns the Alu
+    /// that results OR Err(()) if the computation hit an invalid snag.
+    fn eval_compute(&self, compute: Compute) -> Result<Alu, ()> {
         let mut values: [Value; Register::NUM_ITEMS] = self.values.clone();
         match compute {
             Compute::Add(reg, param) => {
@@ -332,21 +344,24 @@ impl Alu {
             },
             Compute::Div(reg, param) => {
                 let p = self.value_of(param);
-                assert!(p != 0);
+                if p == 0 {
+                    return Err(());
+                }
                 values[reg.id()] = self.value_in(reg) / p;
             },
             Compute::Mod(reg, param) => {
                 let r = self.value_in(reg);
                 let p = self.value_of(param);
-                assert!(r >= 0);
-                assert!(p > 0);
+                if r < 0 || p <= 0 {
+                    return Err(());
+                }
                 values[reg.id()] = r % p;
             },
             Compute::Eql(reg, param) => {
                 values[reg.id()] = if self.value_in(reg) == self.value_of(param) {1} else {0};
             },
         }
-        Alu{values}
+        Ok(Alu{values})
     }
 
     fn eval_input(&self, input_reg: Register, input: Value) -> Alu {
@@ -368,12 +383,11 @@ impl SegmentCache {
         SegmentCache{segment, cache: HashMap::new()}
     }
 
-    fn apply_segment(&mut self, start_alu: Alu, input: Value) -> Alu {
-        let cached = self.cache.get(&(start_alu, input));
-        match cached {
+    fn apply_segment(&mut self, start_alu: Alu, input: Value) -> Result<Alu,()> {
+        match self.cache.get(&(start_alu, input)) {
             Some(alu) => *alu,
             None => {
-                let answer: Alu = apply_segment(start_alu, &self.segment, input);
+                let answer: Result<Alu,()> = self.segment.apply(start_alu, input);
                 self.cache.insert((start_alu, input), answer);
                 answer
             },
@@ -383,14 +397,40 @@ impl SegmentCache {
 
 // ======== Functions ========
 
+fn prepend(v: Value, vals: Vec<Value>) -> Vec<Value> {
+    itertools::chain((&[v]).iter().copied(), vals.iter().copied()).collect::<Vec<Value>>()
+}
 
-fn apply_segment(start_alu: Alu, seg: &Segment, input: Value) -> Alu {
-    let mut alu = start_alu;
-    alu = alu.eval_input(seg.input, input);
-    for compute in seg.computes.iter() {
-        alu = alu.eval_compute(*compute);
+
+/// caches: the vector of SegmentCaches
+/// pos: the position of that vector we are evaluating
+/// start_alu: the starting Alu
+///
+/// This evaluates possible inputs for a segment. It returns a list of
+/// input value sequences that will give valid results.
+fn evaluate(caches: &mut Vec<SegmentCache>, pos: usize, start_alu: Alu) -> Vec<Vec<Value>> {
+    let mut answer: Vec<Vec<Value>> = Vec::new();
+    for input in (1..=9).rev() {
+        let apply_result = caches[pos].apply_segment(start_alu, input);
+        match apply_result {
+            Err(()) => {}, // that failed... move on
+            Ok(alu) => { // found an output
+                if pos + 1 == caches.len() {
+                    // -- last one; check for validity --
+                    if alu.valid() {
+                        answer.push(vec![input]);
+                    }
+                } else {
+                    // -- not last one; recurse --
+                    for tail in evaluate(caches, pos + 1, alu) {
+                        let tail_end_of_number = prepend(input, tail);
+                        answer.push(tail_end_of_number);
+                    }
+                }
+            },
+        }
     }
-    alu
+    answer
 }
 
 
@@ -400,45 +440,51 @@ fn apply_segment(start_alu: Alu, seg: &Segment, input: Value) -> Alu {
 fn run() -> Result<(),InputError> {
     let segments: Vec<Segment> = read_alu_file()?;
 
-    // let mut alu = Alu{values: [0;Register::NUM_ITEMS]};
-    // for seg in segments.iter() {
-    //     for compute in seg.computes.iter() {
-    //         alu = alu.eval_compute(*compute);
-    //         println!("alu: {}", alu);
-    //     }
-    // }
+    // let last_seg: Segment = segments[segments.len() - 1].clone();
+    // let last_2_seg: Segment = segments[segments.len() - 2].clone();
+    // let mut last_cache = SegmentCache::new(last_seg);
+    // let mut last_2_cache = SegmentCache::new(last_2_seg);
+    // let mut valid_pairs: HashSet<[Value;2]> = HashSet::new();
 
-    let last_seg: Segment = segments[segments.len() - 1].clone();
-    let last_2_seg: Segment = segments[segments.len() - 1].clone();
-    let mut last_cache = SegmentCache::new(last_seg);
-    let mut last_2_cache = SegmentCache::new(last_2_seg);
+
+    let mut caches: Vec<SegmentCache> = segments.iter().map(|x| SegmentCache::new(x.clone())).collect();
     let min_val = 0;
-    let max_val = 15;
-    let mut valid_pairs: HashSet<[Value;2]> = HashSet::new();
+    let max_val = 0;
+    let mut valid_paths: HashSet<[Value;2]> = HashSet::new();
     for a in min_val..=max_val {
         for b in min_val..=max_val {
             for c in min_val..=max_val {
                 for d in min_val..=max_val {
                     let start_alu = Alu{values: [a, b, c, d]};
-                    for input_2 in 1..9 {
-                        let end_2_alu = last_2_cache.apply_segment(start_alu, input_2);
-                        for input_1 in 1..9 {
-                            let end_alu = last_cache.apply_segment(end_2_alu, input_1);
-                            if end_alu.valid() {
-                                valid_pairs.insert([input_2, input_1]);
-                                // println!("Works for {}{} if you start with {}", input_2, input_1, start_alu);
-                            }
-                        }
+                    let start_pos = caches.len() - 2;
+                    let paths = evaluate(&mut caches, start_pos, start_alu);
+                    for path in paths.iter() {
+                        let path_as_array = [path[0],path[1]];
+                        valid_paths.insert(path_as_array);
                     }
                 }
             }
         }
     }
     println!();
-    println!("The valid pairs are:");
-    for pair in valid_pairs {
-        println!("{}{}", pair[0], pair[1]);
+    println!("The valid paths are:");
+    for path in valid_paths {
+        println!("{}{}", path[0], path[1]);
     }
+
+    // println!();
+    // println!("---------------");
+    // println!("Just checking...");
+    // {
+    //     let alu = Alu{values: [0,0,0,0]};
+    //     let mut pentultimate: SegmentCache = SegmentCache::new(segments[0].clone());
+    //     let mut ultimate: SegmentCache = SegmentCache::new(segments[1].clone());
+    //     println!("alu = {}", alu);
+    //     let alu = pentultimate.apply_segment(alu, 2).unwrap();
+    //     println!("input 7 and then alu = {}", alu);
+    //     let alu = ultimate.apply_segment(alu, 9).unwrap();
+    //     println!("input 9 and then alu = {}", alu);
+    // }
 
     Ok(())
 }
@@ -466,3 +512,17 @@ mod test {
 
 }
 
+/*
+NOTES:
+  For the last 2 digits, I tried all combinations from -10 to +20
+  The ONLY input values that passed the checks were
+    79
+    35
+    24
+    13
+    46
+    57
+    68
+  Interestingly, all of those work with a starting value of [0,0,0,0].
+
+ */
