@@ -59,6 +59,8 @@ enum Occupant {
 #[derive(Debug)]
 struct CucumberRegion {
     data: Vec<Vec<Occupant>>,
+    height: usize,
+    width: usize,
 }
 
 // ======== Implementations ========
@@ -90,6 +92,22 @@ impl Display for Occupant {
 
 
 impl CucumberRegion {
+    fn new(data: Vec<Vec<Occupant>>) -> Self {
+        let height = data.len();
+        assert!(height >= 2);
+        let width = data[0].len();
+        assert!(data.iter().all(|x| x.len() == width));
+        CucumberRegion{data, height, width}
+    }
+
+
+    /// Returns the occupant at location (x,y). Will wrap around if
+    /// x or y is larger than the region.
+    fn occupant(&self, x: usize, y: usize) -> Occupant {
+        self.data[y % self.height][x % self.width]
+    }
+
+    /// Parse one line of the input
     fn parse_line(input: &str) -> nom::IResult<&str, Vec<Occupant>> {
         nom_pair(
             nom_many1(Occupant::parse),
@@ -97,17 +115,18 @@ impl CucumberRegion {
         )(input).map(|(rest, (line, _))| (rest, line))
     }
 
+    /// Parse the entire input
     fn parse(input: &str) -> nom::IResult<&str, Self> {
         nom_many1(
             CucumberRegion::parse_line
-        )(input).map(|(rest, data)| (rest, CucumberRegion{data}))
+        )(input).map(|(rest, data)| (rest, CucumberRegion::new(data)))
     }
 }
 impl Display for CucumberRegion {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        for line in self.data.iter() {
-            for occ in line {
-                write!(f, "{}", occ)?;
+        for y in 0..self.height {
+            for x in 0..self.width {
+                write!(f, "{}", self.occupant(x,y))?;
             }
             writeln!(f)?
         }
