@@ -419,11 +419,7 @@ impl PathSet {
             None => self.path_len = Some(path.len()),
             Some(len) => if path.len() != len {panic!("PathSet with paths of different lengths")},
         }
-        let mut path_as_string: String = "".into();
-        for val in path.iter() {
-            write!(path_as_string, "{}", val).unwrap();
-        }
-        self.paths.insert(path_as_string);
+        self.paths.insert(print_path(path));
     }
 
     fn print_all(&self) {
@@ -474,8 +470,25 @@ impl PathSet {
 
 // ======== Functions ========
 
-fn prepend(v: Value, vals: Path) -> Path {
-    itertools::chain((&[v]).iter().copied(), vals.iter().copied()).collect::<Path>()
+fn empty_path() -> Path {
+    Vec::new()
+}
+fn prepend_path(v: Value, vals: &Path) -> Path {
+    itertools::chain((&[v]).iter().copied(), vals.iter().copied()).collect()
+}
+
+fn append_path(vals: &Path, v: Value) -> Path {
+    itertools::chain(vals.iter().copied(), (&[v]).iter().copied()).collect()
+}
+fn print_path(path: &Path) -> String {
+    let mut path_as_string: String = "".into();
+    for val in path.iter() {
+        write!(path_as_string, "{}", val).unwrap();
+    }
+    path_as_string
+}
+fn concat_path(p1: &Path, p2: &Path) -> Path {
+    itertools::chain(p1.iter().copied(), p2.iter().copied()).collect()
 }
 
 
@@ -483,7 +496,7 @@ fn prepend(v: Value, vals: Path) -> Path {
 /// pos: the position of that vector we are evaluating
 /// start_alu: the starting Alu
 ///
-/// This evaluates possible inputs for a segment. It returns a list of
+/// This evaluates possible inputs for a series of segments. It returns a list of
 /// input value sequences that will give valid results.
 fn evaluate_to_end(caches: &mut Vec<SegmentCache>, pos: usize, start_alu: Alu) -> Vec<Path> {
     let mut answer: Vec<Path> = Vec::new();
@@ -500,7 +513,7 @@ fn evaluate_to_end(caches: &mut Vec<SegmentCache>, pos: usize, start_alu: Alu) -
                 } else {
                     // -- not last one; recurse --
                     for tail in evaluate_to_end(caches, pos + 1, alu) {
-                        let tail_end_of_number = prepend(input, tail);
+                        let tail_end_of_number = prepend_path(input, &tail);
                         answer.push(tail_end_of_number);
                     }
                 }
@@ -508,6 +521,65 @@ fn evaluate_to_end(caches: &mut Vec<SegmentCache>, pos: usize, start_alu: Alu) -
         }
     }
     answer
+}
+
+
+
+/// caches: the vector of SegmentCaches
+/// pos: the position of that vector where we are analyzing.
+/// stop_pos: the position of that vector where we will stop.
+/// start_alu: the starting Alu
+/// num_results: the number of results we should attempt to obtain
+///
+/// This evaluates possible inputs for a series of segments. It will consider possible
+/// inputs starting from 999... and working downward, skipping any that cause errors
+/// and continuing until it has collected num_results values OR all possible values.
+/// For each, it returns a (path, alu) pair.
+fn evaluate_from_start(
+    caches: &mut Vec<SegmentCache>,
+    stop_pos: usize,
+    start_alu: Alu,
+    num_results: usize,
+) -> Vec<(Path,Alu)> {
+    assert!(caches.len() >= 1);
+    assert!(stop_pos < caches.len());
+    let mut answer: Vec<(Path,Alu)> = Vec::new();
+    evaluate_from_start_internal(caches, 0, stop_pos, start_alu, empty_path(), num_results, &mut answer);
+    answer
+}
+
+/// Internal recursive part of evaluate_from_start()
+fn evaluate_from_start_internal(
+    caches: &mut Vec<SegmentCache>,
+    pos: usize,
+    stop_pos: usize,
+    start_alu: Alu,
+    path_so_far: Path,
+    num_results: usize,
+    answer: &mut Vec<(Path,Alu)>,
+) {
+    for input in (1..=9).rev() {
+        let apply_result = caches[pos].apply_segment(start_alu, input);
+        match apply_result {
+            Err(()) => {}, // that failed... move on
+            Ok(alu) => { // found an output
+                let path: Path = append_path(&path_so_far, input);
+                if pos == stop_pos {
+                    // -- last one; return results --
+                    answer.push((path, alu));
+                    if answer.len() == num_results {
+                        return;
+                    }
+                } else {
+                    // -- not last one; recurse --
+                    evaluate_from_start_internal(caches, pos + 1, stop_pos, alu, path, num_results, answer);
+                    if answer.len() == num_results {
+                        return;
+                    }
+                }
+            },
+        }
+    }
 }
 
 
@@ -532,20 +604,34 @@ fn print_value_set(set: &HashSet<Value>) -> String {
 fn run() -> Result<(),InputError> {
     let segments: Vec<Segment> = read_alu_file()?;
 
-    let mut caches: Vec<SegmentCache> = segments[..5].iter().map(|x| SegmentCache::new(x.clone())).collect();
+    let mut caches: Vec<SegmentCache> = segments.iter().map(|x| SegmentCache::new(x.clone())).collect();
     let min_val = 0;
-    let max_val = 2;
+    let max_val = 0;
     let mut valid_paths = PathSet::new();
     for a in min_val..=max_val {
         for b in min_val..=max_val {
             for c in min_val..=max_val {
                 for d in min_val..=max_val {
                     let start_alu = Alu{values: [a, b, c, d]};
-                    let start_pos = caches.len() - 5;
-                    let paths = evaluate_to_end(&mut caches, start_pos, start_alu);
-                    for path in paths.iter() {
-                        valid_paths.add(path);
+
+                    // -- Work From Start --
+                    let stop_pos = 8;
+                    let num_results = 2000;
+                    let data = evaluate_from_start(&mut caches, stop_pos, start_alu, num_results);
+                    // println!("Got results from start:");
+                    // for (path, alu) in data.iter().rev() {
+                    //     println!("    {} -> {}", print_path(path), alu)
+                    // }
+
+                    // -- Work Toward End --
+                    for (start_path, alu) in data.iter().rev() {
+                        let start_pos = caches.len() - 5;
+                        let paths = evaluate_to_end(&mut caches, start_pos, *alu);
+                        for end_path in paths.iter() {
+                            valid_paths.add(&concat_path(start_path, end_path));
+                        }
                     }
+
                 }
             }
         }
@@ -633,5 +719,15 @@ NOTES:
     absolutely no valid paths. Apparently it's only in the last (and second-to-last?) place
     where we ever set z=0.
 
-
+    FROM START:
+       Assuming you begin with [0,0,0,0], the first Segment does the following:
+           w -> set to input digit
+           x -> set to 1
+           y -> set to 9 + input digit
+           z -> set to 9 + input digit
+       The first, then second Segment does the following
+           w -> set to 2nd input digit
+           x -> set to 1
+           y -> set to 2 + 2nd input digit
+           z -> set to some bigger number
  */
