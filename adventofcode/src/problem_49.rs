@@ -49,14 +49,14 @@ fn read_cucumber_file() -> Result<CucumberRegion, InputError> {
 
 // ======== Types ========
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
 enum Occupant {
     Eastward,
     Southward,
     Empty,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Eq, PartialEq)]
 struct CucumberRegion {
     data: Vec<Vec<Occupant>>,
     height: usize,
@@ -107,6 +107,60 @@ impl CucumberRegion {
         self.data[y % self.height][x % self.width]
     }
 
+    /// Used to update an occupant.
+    fn set_occupant(&mut self, x: usize, y: usize, value: Occupant) {
+        self.data[y % self.height][x % self.width] = value;
+    }
+
+    /// Performs one step of motion. Returns true if anything changed; false if not.
+    fn perform_step(&mut self) -> bool {
+        let mut anything_moved = false;
+        // -- Decide who will move east --
+        let will_move: Vec<Vec<bool>> = (0..self.height).map(|y| {
+            (0..self.width).map(|x| {
+                self.occupant(x,y) == Occupant::Eastward && self.occupant(x+1,y) == Occupant::Empty
+            }).collect()
+        }).collect();
+        // -- Move them --
+        for y in 0..self.height {
+            for x in 0..self.width {
+                if will_move[y][x] {
+                    self.set_occupant(x, y, Occupant::Empty);
+                    self.set_occupant(x+1, y, Occupant::Eastward);
+                    anything_moved = true;
+                }
+            }
+        }
+        // -- Decide who will move south --
+        let will_move: Vec<Vec<bool>> = (0..self.height).map(|y| {
+            (0..self.width).map(|x| {
+                self.occupant(x,y) == Occupant::Southward && self.occupant(x,y+1) == Occupant::Empty
+            }).collect()
+        }).collect();
+        // -- Move them --
+        for y in 0..self.height {
+            for x in 0..self.width {
+                if will_move[y][x] {
+                    self.set_occupant(x, y, Occupant::Empty);
+                    self.set_occupant(x, y+1, Occupant::Southward);
+                    anything_moved = true;
+                }
+            }
+        }
+        // -- Return result --
+        anything_moved
+    }
+
+    /// This takes steps repeatedly until nothing changes. It returns the first step on
+    /// which no cucumbers moved (one more than the count of the steps where things moved).
+    fn run_to_completion(&mut self) -> usize {
+        let mut count: usize = 0;
+        while self.perform_step() {
+            count += 1;
+        }
+        count + 1
+    }
+
     /// Parse one line of the input
     fn parse_line(input: &str) -> nom::IResult<&str, Vec<Occupant>> {
         nom_pair(
@@ -141,8 +195,11 @@ impl Display for CucumberRegion {
 
 
 fn run() -> Result<(),InputError> {
-    let region: CucumberRegion = read_cucumber_file()?;
+    let mut region: CucumberRegion = read_cucumber_file()?;
+    let steps = region.run_to_completion();
     println!("Region: \n{}", region);
+    println!();
+    println!("After just {} steps.", steps);
 
     Ok(())
 }
@@ -168,4 +225,27 @@ mod test {
         let _ = read_cucumber_file().unwrap();
     }
 
+    #[test]
+    fn test_single_step() {
+        let (_, mut region_1) = CucumberRegion::parse("\
+            ...>...\n\
+            .......\n\
+            ......>\n\
+            v.....>\n\
+            ......>\n\
+            .......\n\
+            ..vvv..\n\
+        ").unwrap();
+        let (_, region_2) = CucumberRegion::parse("\
+            ..vv>..\n\
+            .......\n\
+            >......\n\
+            v.....>\n\
+            >......\n\
+            .......\n\
+            ....v..\n\
+        ").unwrap();
+        region_1.perform_step();
+        assert_eq!(region_2, region_1);
+    }
 }
