@@ -54,7 +54,7 @@ mod problem_50;
 
 
 fn main() {
-    match 49 {
+    match 50 {
         1 => problem_1::main(),
         2 => problem_2::main(),
         3 => problem_3::main(),
