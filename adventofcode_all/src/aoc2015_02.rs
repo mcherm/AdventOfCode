@@ -5,6 +5,7 @@ use nom::sequence::tuple as nom_tuple;
 use nom::character::complete::u32 as nom_value;
 use nom::bytes::complete::tag as nom_tag;
 use nom::multi::many0 as nom_many0;
+use nom::character::complete::newline as nom_newline;
 
 
 type Dim = u32;
@@ -18,6 +19,25 @@ impl Box {
         Box{dims: [x,y,z]}
     }
 
+    fn smallest_side_area(&self) -> Dim {
+        self.dims.iter().product::<Dim>() / self.dims.iter().max().unwrap()
+    }
+
+    fn surface_area(&self) -> Dim {
+        let [l,w,h] = self.dims;
+        2*l*w + 2*w*h + 2*h*l
+    }
+
+    fn paper_needed(&self) -> Dim {
+        self.surface_area() + self.smallest_side_area()
+    }
+
+    fn ribbon_needed(&self) -> Dim {
+        let small_side_perimeter: Dim = 2 * (self.dims.iter().sum::<Dim>() - self.dims.iter().max().unwrap());
+        let bow: Dim = self.dims.iter().product();
+        small_side_perimeter + bow
+    }
+
     fn parse(input: &str) -> nom::IResult<&str, Self> {
         nom_tuple((
             nom_value,
@@ -25,7 +45,7 @@ impl Box {
             nom_value,
             nom_tag("x"),
             nom_value,
-            nom_tag("\n"),
+            nom_newline,
         ))(input).map(|(rest, (x, _, y, _, z, _))| (rest, Box::new(x,y,z)))
     }
 }
@@ -51,13 +71,14 @@ fn input() -> Result<Vec<Box>, io::Error> {
 }
 
 fn part_a(boxes: &Vec<Box>) -> Result<(), io::Error> {
-    for b in boxes {
-        println!("{}", b);
-    }
+    let paper_to_order: Dim = boxes.iter().map(|x| x.paper_needed()).sum();
+    println!("Need to order {} square feet of paper.", paper_to_order);
     Ok(())
 }
 
 fn part_b(boxes: &Vec<Box>) -> Result<(), io::Error> {
+    let ribbon: Dim = boxes.iter().map(|x| x.ribbon_needed()).sum();
+    println!("Need to order {} feet of ribbon.", ribbon);
     Ok(())
 }
 
