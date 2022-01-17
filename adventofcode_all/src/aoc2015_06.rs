@@ -21,10 +21,10 @@ mod rect {
 
     #[derive(Debug, Eq, PartialEq, Copy, Clone)]
     pub struct Rect {
-        x0: Coord,
-        y0: Coord,
-        x1: Coord,
-        y1: Coord,
+        pub x0: Coord,
+        pub y0: Coord,
+        pub x1: Coord,
+        pub y1: Coord,
     }
 
     impl Rect {
@@ -233,6 +233,11 @@ struct LightGrid {
 }
 
 
+struct SimpleLightGrid {
+    on: [[bool; 1000]; 1000]
+}
+
+
 impl Instruction {
     fn parse(input: &str) -> nom::IResult<&str, Self> {
         nom_alt((
@@ -354,13 +359,61 @@ impl LightGrid {
     }
 }
 
+impl SimpleLightGrid {
+    fn new() -> Self {
+        SimpleLightGrid{on: [[false; 1000]; 1000]}
+    }
+
+    fn area(&self) -> i32 {
+        let mut count = 0;
+        for x in 0..1000 {
+            for y in 0..1000 {
+                if self.on[y][x] {
+                    count += 1
+                };
+            }
+        }
+        count
+    }
+
+    fn apply(&mut self, instruction: &Instruction) {
+        match instruction {
+            Instruction::TurnOn(rect) => {
+                for x in rect.x0..rect.x1 {
+                    for y in rect.y0..rect.y1 {
+                        self.on[y as usize][x as usize] = true;
+                    }
+                }
+            },
+            Instruction::TurnOff(rect) => {
+                for x in rect.x0..rect.x1 {
+                    for y in rect.y0..rect.y1 {
+                        self.on[y as usize][x as usize] = false;
+                    }
+                }
+            },
+            Instruction::Toggle(rect) => {
+                for x in rect.x0..rect.x1 {
+                    for y in rect.y0..rect.y1 {
+                        self.on[y as usize][x as usize] = !self.on[y as usize][x as usize];
+                    }
+                }
+            },
+        }
+    }
+}
+
 
 fn part_a(instructions: &Vec<Instruction>) -> Result<(), io::Error> {
-    let mut grid: LightGrid = LightGrid::new();
+    let mut s_grid: SimpleLightGrid = SimpleLightGrid::new();
+    let mut c_grid: LightGrid = LightGrid::new();
     for instruction in instructions {
-        grid.apply(instruction);
+        println!("Applying {}", instruction);
+        s_grid.apply(instruction);
+        c_grid.apply(instruction);
+        assert_eq!(s_grid.area(), c_grid.area());
     }
-    println!("The area is {}", grid.area());
+    println!("The area is {}", c_grid.area());
     Ok(())
 }
 
@@ -378,3 +431,4 @@ fn main() -> Result<(), io::Error> {
 
 
 // It is NOT 647473 (that's too high).
+// Simple version says 377891
