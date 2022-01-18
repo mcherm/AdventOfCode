@@ -110,27 +110,21 @@ fn parse_wire_id(input: &str) -> nom::IResult<&str, String> {
 
 
 impl Instruction {
-    fn parse_nop(input: &str) -> nom::IResult<&str, Self> {
-        nom_tuple((
+    fn parse(input: &str) -> nom::IResult<&str, Self> {
+        let recognize_nop = |s| nom_tuple((
             Input::parse,
             nom_tag(" -> "),
             parse_wire_id,
             nom_newline,
-        ))(input).map(|(rest, (arg, _, output, _))| (rest, Instruction{op: Operation::Nop, args: vec![arg], output}))
-    }
-
-    fn parse_not(input: &str) -> nom::IResult<&str, Self> {
-        nom_tuple((
+        ))(s);
+        let recognize_not = |s| nom_tuple((
             nom_tag("NOT "),
             Input::parse,
             nom_tag(" -> "),
             parse_wire_id,
             nom_newline,
-        ))(input).map(|(rest, (_, arg, _, output, _))| (rest, Instruction{op: Operation::Not, args: vec![arg], output}))
-    }
-
-    fn parse_binary(input: &str) -> nom::IResult<&str, Self> {
-        nom_tuple((
+        ))(s);
+        let recognize_binary_op = |s| nom_tuple((
             Input::parse,
             nom_tag(" "),
             Operation::parse_binary_op,
@@ -139,14 +133,16 @@ impl Instruction {
             nom_tag(" -> "),
             parse_wire_id,
             nom_newline,
-        ))(input).map(|(rest, (arg1, _, op, _, arg2, _, output, _))| (rest, Instruction{op, args: vec![arg1, arg2], output}))
-    }
+        ))(s);
 
-    fn parse(input: &str) -> nom::IResult<&str, Self> {
+        let build_nop = |(arg, _, output, _)| Instruction{op: Operation::Nop, args: vec![arg], output};
+        let build_not = |(_, arg, _, output, _)| Instruction{op: Operation::Not, args: vec![arg], output};
+        let build_binary_op = |(arg1, _, op, _, arg2, _, output, _)| Instruction{op, args: vec![arg1, arg2], output};
+
         nom_alt((
-            Instruction::parse_nop,
-            Instruction::parse_not,
-            Instruction::parse_binary,
+            type_builder(recognize_nop, build_nop),
+            type_builder(recognize_not, build_not),
+            type_builder(recognize_binary_op, build_binary_op),
         ))(input)
     }
 }
