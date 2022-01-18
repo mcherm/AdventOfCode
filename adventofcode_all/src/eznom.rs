@@ -1,5 +1,6 @@
 
-pub fn type_builder<'a, FRecog, FBuild, TParsed, TOut>(recognizer: FRecog, builder: FBuild) -> impl Fn(&'a str) -> nom::IResult<&'a str, TOut>
+pub fn type_builder<'a, FRecog, FBuild, TParsed, TOut>(recognizer: FRecog, builder: FBuild)
+    -> impl Fn(&'a str) -> nom::IResult<&'a str, TOut>
     where
         FRecog: Fn(&'a str) -> nom::IResult<&'a str, TParsed>,
         FBuild: Fn(TParsed) -> TOut,

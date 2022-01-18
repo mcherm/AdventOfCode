@@ -54,18 +54,10 @@ struct Instruction {
 
 
 impl Input {
-    fn parse_wire(input: &str) -> nom::IResult<&str, Self> {
-        type_builder(nom_alpha1, |s| Input::Wire(s.to_string()))(input)
-    }
-
-    fn parse_const(input: &str) -> nom::IResult<&str, Self> {
-        type_builder(nom_value, |x: u16| Input::Const(x))(input)
-    }
-
     pub fn parse(input: &str) -> nom::IResult<&str, Self> {
         nom_alt((
-            Input::parse_wire,
-            Input::parse_const,
+            type_builder(nom_alpha1, |s| Input::Wire(s.to_string())),
+            type_builder(nom_value, |x| Input::Const(x)),
         ))(input)
     }
 }
@@ -81,18 +73,21 @@ impl Display for Input {
 
 impl Operation {
     fn parse_binary_op(input: &str) -> nom::IResult<&str, Self> {
-        nom_alt((
-            nom_tag("AND"),
-            nom_tag("OR"),
-            nom_tag("LSHIFT"),
-            nom_tag("RSHIFT"),
-        ))(input).map(|(rest, s)| (rest, match s {
-            "AND" => Operation::And,
-            "OR" => Operation::Or,
-            "LSHIFT" => Operation::Lshift,
-            "RSHIFT" => Operation::Rshift,
-            _ => panic!()
-        }))
+        type_builder(
+            |input| nom_alt((
+                nom_tag("AND"),
+                nom_tag("OR"),
+                nom_tag("LSHIFT"),
+                nom_tag("RSHIFT"),
+            ))(input),
+            |s| match s {
+                "AND" => Operation::And,
+                "OR" => Operation::Or,
+                "LSHIFT" => Operation::Lshift,
+                "RSHIFT" => Operation::Rshift,
+                _ => panic!()
+            }
+        )(input)
     }
 }
 
