@@ -3,6 +3,7 @@ mod eznom;
 use std::fmt::{Display, Formatter};
 use std::fs;
 use std::io;
+use std::collections::HashMap;
 use nom::sequence::tuple as nom_tuple;
 use nom::bytes::complete::tag as nom_tag;
 use nom::multi::many0 as nom_many0;
@@ -52,6 +53,14 @@ struct Instruction {
     output: String,
 }
 
+/// Represents a fully wired system.
+struct WiredSystem {
+    connections: HashMap<String, Instruction>,
+    cache: HashMap<String, Option<Value>>,
+    overrides: HashMap<String, Value>,
+}
+
+
 
 impl Input {
     pub fn parse(input: &str) -> nom::IResult<&str, Self> {
@@ -59,6 +68,13 @@ impl Input {
             type_builder(nom_alpha1, |s| Input::Wire(s.to_string())),
             type_builder(nom_value, |x| Input::Const(x)),
         ))(input)
+    }
+
+    pub fn eval(&self, system: &mut WiredSystem) -> Option<Value>{
+        match self {
+            Input::Const(value) => Some(*value),
+            Input::Wire(wire_id) => system.eval(wire_id),
+        }
     }
 }
 
@@ -145,6 +161,48 @@ impl Instruction {
             type_builder(recognize_binary_op, build_binary_op),
         ))(input)
     }
+
+    /// Find the output from this instruction; system is used to provide the
+    /// inputs. Returns None if the value can't be evaluated due to some missing
+    /// input.
+    fn eval(&self, system: &mut WiredSystem) -> Option<Value> {
+        match self.op {
+            Operation::And => {
+                assert!(self.args.len() == 2);
+                let arg0: Value = self.args[0].eval(system)?;
+                let arg1: Value = self.args[1].eval(system)?;
+                Some(arg0 & arg1)
+            },
+            Operation::Or => {
+                assert!(self.args.len() == 2);
+                let arg0: Value = self.args[0].eval(system)?;
+                let arg1: Value = self.args[1].eval(system)?;
+                Some(arg0 | arg1)
+            },
+            Operation::Lshift => {
+                assert!(self.args.len() == 2);
+                let arg0: Value = self.args[0].eval(system)?;
+                let arg1: Value = self.args[1].eval(system)?;
+                Some(arg0 << arg1)
+            },
+            Operation::Rshift => {
+                assert!(self.args.len() == 2);
+                let arg0: Value = self.args[0].eval(system)?;
+                let arg1: Value = self.args[1].eval(system)?;
+                Some(arg0 >> arg1)
+            },
+            Operation::Not => {
+                assert!(self.args.len() == 1);
+                let arg0: Value = self.args[0].eval(system)?;
+                Some(!arg0)
+            },
+            Operation::Nop => {
+                assert!(self.args.len() == 1);
+                let arg0: Value = self.args[0].eval(system)?;
+                Some(arg0)
+            },
+        }
+    }
 }
 
 impl Display for Instruction {
@@ -170,16 +228,66 @@ fn parse_instructions(input: &str) -> nom::IResult<&str, Vec<Instruction>> {
     nom_many0(Instruction::parse)(input)
 }
 
+impl WiredSystem {
+    fn new(instructions: &Vec<Instruction>) -> Self {
+        let mut connections = HashMap::new();
+        for instruction in instructions {
+            connections.insert(instruction.output.clone(), instruction.clone());
+        }
+        let cache = HashMap::new();
+        let overrides = HashMap::new();
+        WiredSystem{connections, cache, overrides}
+    }
+
+    fn eval(&mut self, wire_id: &str) -> Option<Value> {
+        match self.overrides.get(wire_id) {
+            Some(v) => Some(*v),
+            None => match self.cache.get(wire_id) {
+                Some(v) => *v,
+                None => {
+                    // have to clone the instruction since it's borrowed from the WiredSystem
+                    let answer = match self.connections.get(wire_id).cloned() {
+                        None => None,
+                        Some(instruction) => instruction.eval(self),
+                    };
+                    self.cache.insert(wire_id.to_owned(), answer);
+                    answer
+                },
+            },
+        }
+    }
+
+    /// Replaces the given wire_id with the given value, regardless of what
+    /// value it used to have. This also clears the cache since who knows
+    /// what other changes might have been made
+    fn override_value(&mut self, wire_id: &str, value: Value) {
+        self.overrides.insert(wire_id.to_owned(), value);
+        self.cache.clear();
+    }
+}
+
 
 
 fn part_a(instructions: &Vec<Instruction>) -> Result<(), io::Error> {
-    for instruction in instructions.iter() {
-        println!("{:?}", instruction);
+    let mut system = WiredSystem::new(instructions);
+    let wire_id = "a";
+    match system.eval(&wire_id) {
+        Some(v) => println!("{} = {}", wire_id, v),
+        None => println!("{} is invalid", wire_id),
     }
     Ok(())
 }
 
-fn part_b(_instructions: &Vec<Instruction>) -> Result<(), io::Error> {
+fn part_b(instructions: &Vec<Instruction>) -> Result<(), io::Error> {
+    let mut system = WiredSystem::new(instructions);
+    let wire_id = "a";
+    let second_wire_id = "b";
+    let orig_a_value = system.eval(wire_id).unwrap();
+    system.override_value(second_wire_id, orig_a_value);
+    match system.eval(wire_id) {
+        Some(v) => println!("Plugging {} back in for {}, {} = {}", orig_a_value, second_wire_id, wire_id, v),
+        None => println!("Plugging {} back in for {}, {} is invalid", orig_a_value, second_wire_id, wire_id),
+    }
     Ok(())
 }
 
