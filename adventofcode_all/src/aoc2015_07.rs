@@ -1,3 +1,5 @@
+mod eznom;
+
 use std::fmt::{Display, Formatter};
 use std::fs;
 use std::io;
@@ -8,6 +10,7 @@ use nom::character::complete::newline as nom_newline;
 use nom::branch::alt as nom_alt;
 use nom::character::complete::alpha1 as nom_alpha1;
 use nom::character::complete::u16 as nom_value;
+use eznom::type_builder;
 
 
 
@@ -52,11 +55,11 @@ struct Instruction {
 
 impl Input {
     fn parse_wire(input: &str) -> nom::IResult<&str, Self> {
-        nom_alpha1(input).map(|(rest, wire_id)| (rest, Input::Wire(wire_id.to_string())))
+        type_builder(nom_alpha1, |s| Input::Wire(s.to_string()))(input)
     }
 
     fn parse_const(input: &str) -> nom::IResult<&str, Self> {
-        nom_value(input).map(|(rest, val)| (rest, Input::Const(val)))
+        type_builder(nom_value, |x: u16| Input::Const(x))(input)
     }
 
     pub fn parse(input: &str) -> nom::IResult<&str, Self> {
