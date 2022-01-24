@@ -182,6 +182,21 @@ fn part_a(ingredients: &Vec<Ingredient>) -> Result<(), io::Error> {
 
 fn part_b(ingredients: &Vec<Ingredient>) -> Result<(), io::Error> {
     assert!(ingredients.len() > 0);
+    let mut high_score = -1; // invalid, but it will be replaced
+    let mut high_recipe: Vec<(&Ingredient, i32)> = Vec::new(); // invalid, but it will be replaced
+    let ipi = IngredientPermutationIter::new(ingredients.len(), RECIPE_SIZE as i32);
+    for amounts in ipi {
+        let items_and_amounts: Vec<(&Ingredient, i32)> = ingredients.iter().zip_eq(amounts).collect();
+        if items_and_amounts.iter().map(|(i,a)| i.calories * a).sum::<i32>() == 500 {
+            let s = score(&items_and_amounts);
+            if s > high_score {
+                high_score = s;
+                high_recipe = items_and_amounts;
+            }
+        }
+    }
+    let recipe_description = high_recipe.iter().map(|(i,a)| format!("{}tsp of {}", a, i.name)).join(", ");
+    println!("At 500 calories, the highest score is: {} which comes from {}", high_score, recipe_description);
     Ok(())
 }
 
