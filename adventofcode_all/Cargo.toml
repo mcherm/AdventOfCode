@@ -65,9 +65,14 @@ path = "src/aoc2015_14.rs"
 name = "aoc2015_15"
 path = "src/aoc2015_15.rs"
 
+[[bin]]
+name = "aoc2015_16"
+path = "src/aoc2015_16.rs"
+
 
 [dependencies]
 nom = "7.1.0"
 itertools = "0.10.3"
 md5 = "0.7.0"
 json = "0.12.4"
+lazy_static = "1.4.0"
