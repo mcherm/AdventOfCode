@@ -73,6 +73,10 @@ path = "src/aoc2015_16.rs"
 name = "aoc2015_17"
 path = "src/aoc2015_17.rs"
 
+[[bin]]
+name = "aoc2015_18"
+path = "src/aoc2015_18.rs"
+
 
 [dependencies]
 nom = "7.1.0"
