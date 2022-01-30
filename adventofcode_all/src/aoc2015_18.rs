@@ -1,3 +1,5 @@
+mod hash_life;
+
 use std::fs;
 use std::io;
 use std::fmt::{Display, Formatter};
