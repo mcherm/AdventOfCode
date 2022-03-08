@@ -7,6 +7,7 @@ use std::io;
 use std::num::ParseIntError;
 use cached::proc_macro::cached;
 use primal::Primes;
+use std::collections::btree_map::BTreeMap;
 
 
 
@@ -125,7 +126,36 @@ fn part_a(presents: u64) {
 
 // 831600
 
-fn part_b(_presents: u64) {
+
+const ELF_STOP_AT: usize = 50;
+
+
+fn simulate_elves(desired_presents: u64) -> u64 {
+    let mut pending_presents: BTreeMap<u64,u64> = BTreeMap::new();
+    let mut house: u64 = 1;
+    let mut max_presents_seen: u64 = 0;
+    loop {
+        let elf_num = house;
+        let previous_presents = pending_presents.remove(&house).unwrap_or(0);
+        let house_presents = previous_presents + elf_num * 11;
+        if house_presents >= desired_presents {
+            println!("FOUND IT AT HOUSE {}", house);
+            return house;
+        }
+        if house_presents > max_presents_seen {
+            println!("House {} has {} presents", house, house_presents);
+            max_presents_seen = house_presents;
+        }
+        for houses_visited in 2..=ELF_STOP_AT {
+            *(pending_presents.entry(elf_num * (houses_visited as u64)).or_insert(0)) += elf_num * 11;
+        }
+        house += 1;
+    }
+}
+
+
+fn part_b(presents: u64) {
+    simulate_elves(presents);
 }
 
 fn main() -> Result<(), Error> {
