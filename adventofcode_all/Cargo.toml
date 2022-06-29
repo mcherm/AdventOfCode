@@ -89,6 +89,10 @@ path = "src/aoc2015_20.rs"
 name = "aoc2015_21"
 path = "src/aoc2015_21.rs"
 
+[[bin]]
+name = "aoc2015_22"
+path = "src/aoc2015_22.rs"
+
 
 [dependencies]
 nom = "7.1.0"
