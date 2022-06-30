@@ -1,6 +1,7 @@
 mod eznom;
 
 
+use std::cmp::max;
 use std::fmt::{Debug};
 use std::fs;
 use std::io;
@@ -86,20 +87,20 @@ impl Combatant for Boss {
 #[derive(Copy, Clone, Debug)]
 enum Spell {
     MagicMissile,
-    // Drain, // FIXME: Restore
-    // Shield, // FIXME: Restore
-    // Poison, // FIXME: Restore
-    // Recharge, // FIXME: Restore
+    Drain,
+    Shield,
+    Poison,
+    Recharge,
 }
 
 impl Spell {
     fn cost(&self) -> u32 {
         match self {
             Spell::MagicMissile => 53,
-            // Spell::Drain => 73, // FIXME: Restore
-            // Spell::Shield => 113, // FIXME: Restore
-            // Spell::Poison => 173, // FIXME: Restore
-            // Spell::Recharge => 229, // FIXME: Restore
+            Spell::Drain => 73,
+            Spell::Shield => 113,
+            Spell::Poison => 173,
+            Spell::Recharge => 229,
         }
     }
 }
@@ -150,6 +151,16 @@ impl GameState {
             spell_cost: 0}
     }
 
+    /// Returns true if the spell can be cast now; false if not.
+    fn spell_allowed(&self, spell: Spell) -> bool {
+        match spell {
+            Spell::Shield => self.shield_effect_turns == 0,
+            Spell::Poison => self.poison_effect_turns == 0,
+            Spell::Recharge => self.recharge_effect_turns == 0,
+            _ => true,
+        }
+    }
+
     /// Given this GameState, this method simulates one Wizard turn followed by one
     /// Boss turn, assuming the Wizard chooses to cast the given Spell. It returns
     /// None if the result is the death of the Wizard, or the resulting GameState
@@ -176,6 +187,7 @@ impl GameState {
             shield_effect_turns: &mut u32,
             poison_effect_turns: &mut u32,
             recharge_effect_turns: &mut u32,
+            wizard_mana: &mut u32,
             boss_hit_points: &mut u32,
         ) {
             if *poison_effect_turns > 0 {
@@ -183,22 +195,37 @@ impl GameState {
             }
             subtract_capped(poison_effect_turns, 1);
             subtract_capped(shield_effect_turns, 1);
+            if *recharge_effect_turns > 0 {
+                *wizard_mana += 101;
+            }
             subtract_capped(recharge_effect_turns, 1);
         }
 
         // --- Process wizard attack ---
-        apply_effects(&mut shield_effect_turns, &mut poison_effect_turns, &mut recharge_effect_turns, &mut boss.hit_points);
+        apply_effects(&mut shield_effect_turns, &mut poison_effect_turns, &mut recharge_effect_turns, &mut wizard.mana, &mut boss.hit_points);
         match spell {
             Spell::MagicMissile => {
                 subtract_capped(&mut boss.hit_points, 4);
             },
-            //_ => todo!(),
+            Spell::Drain => {
+                subtract_capped(&mut boss.hit_points, 2);
+                wizard.hit_points += 2;
+            },
+            Spell::Shield => {
+                shield_effect_turns += 6;
+            },
+            Spell::Poison => {
+                poison_effect_turns += 6;
+            },
+            Spell::Recharge => {
+                recharge_effect_turns += 5;
+            },
         };
 
         // --- Process Boss attack ---
         if wizard.hit_points > 0 && boss.hit_points > 0 {
-            apply_effects(&mut shield_effect_turns, &mut poison_effect_turns, &mut recharge_effect_turns, &mut boss.hit_points);
-            subtract_capped(&mut wizard.hit_points, boss.damage);
+            apply_effects(&mut shield_effect_turns, &mut poison_effect_turns, &mut recharge_effect_turns, &mut wizard.mana, &mut boss.hit_points);
+            subtract_capped(&mut wizard.hit_points, damage_done_to_wizard(shield_effect_turns, boss.damage));
         }
 
         // --- Return the new game state ---
@@ -219,28 +246,42 @@ impl GameState {
 }
 
 
-fn part_a(boss: &Boss) {
-    let wizard = Wizard::new();
-    let initial_state = GameState::new(wizard, *boss);
-    println!("initial_state: {:?}", initial_state);
+fn damage_done_to_wizard(shield_effect_turns: u32, boss_damage: u32) -> u32 {
+    let shield = if shield_effect_turns == 0 {0} else {7};
+    let mut damage = boss_damage;
+    subtract_capped(&mut damage, shield);
+    max(damage, 1)
+}
 
+
+fn part_a(boss: &Boss) {
     let mut reachable_states: Vec<GameState> = Vec::new();
+    let initial_state = GameState::new(Wizard::new(), *boss);
     reachable_states.push(initial_state);
 
     while !reachable_states.is_empty() {
-        println!("ALL states: {:?}", reachable_states);
+        println!("");
+        println!("ALL states: [");
+        for state in reachable_states.iter() {
+            println!("    {:?}", state);
+        }
+        println!("]");
+
         let first_state = reachable_states.swap_remove(0);
-        println!("first_state: {:?}", first_state);
-        match first_state.perform(Spell::MagicMissile) {
-            None => {},
-            Some(next_state) => {
-                println!("next_state: {:?}", next_state);
-                if next_state.winning() {
-                    println!("Wizard wins!");
-                    return ();
+        for spell in [Spell::MagicMissile, Spell::Drain, Spell::Shield, Spell::Poison, Spell::Recharge] {
+            if first_state.spell_allowed(spell) {
+                match first_state.perform(spell) {
+                    None => {},
+                    Some(next_state) => {
+                        println!("next_state: {:?}", next_state);
+                        if next_state.winning() { // tried the spells in order by cost, so the first winner is the best overall
+                            println!("Wizard wins!");
+                            return ();
+                        }
+                        reachable_states.push(next_state);
+                    },
                 }
-                reachable_states.push(next_state);
-            },
+            }
         }
         reachable_states.sort_by(|a,b| a.spell_cost.cmp(&b.spell_cost));
     }
