@@ -14,8 +14,9 @@ use nom::sequence::tuple as nom_tuple;
 use eznom::type_builder;
 
 
-const WIZARD_STARTING_HIT_POINTS: u32 = 10;
-const WIZARD_STARTING_MANA: u32 = 250;
+const WIZARD_STARTING_HIT_POINTS: u32 = 50;
+const WIZARD_STARTING_MANA: u32 = 500;
+const PRINT_WORK: bool = false;
 
 
 #[derive(Debug)]
@@ -225,7 +226,9 @@ impl GameState {
         // --- Process Boss attack ---
         if wizard.hit_points > 0 && boss.hit_points > 0 {
             apply_effects(&mut shield_effect_turns, &mut poison_effect_turns, &mut recharge_effect_turns, &mut wizard.mana, &mut boss.hit_points);
-            subtract_capped(&mut wizard.hit_points, damage_done_to_wizard(shield_effect_turns, boss.damage));
+            if boss.hit_points > 0 {
+                subtract_capped(&mut wizard.hit_points, damage_done_to_wizard(shield_effect_turns, boss.damage));
+            }
         }
 
         // --- Return the new game state ---
@@ -260,12 +263,14 @@ fn part_a(boss: &Boss) {
     reachable_states.push(initial_state);
 
     while !reachable_states.is_empty() {
-        println!("");
-        println!("ALL states: [");
-        for state in reachable_states.iter() {
-            println!("    {:?}", state);
+        if PRINT_WORK {
+            println!("");
+            println!("ALL states: [");
+            for state in reachable_states.iter() {
+                println!("    {:?}", state);
+            }
+            println!("]");
         }
-        println!("]");
 
         let first_state = reachable_states.swap_remove(0);
         for spell in [Spell::MagicMissile, Spell::Drain, Spell::Shield, Spell::Poison, Spell::Recharge] {
@@ -273,9 +278,12 @@ fn part_a(boss: &Boss) {
                 match first_state.perform(spell) {
                     None => {},
                     Some(next_state) => {
-                        println!("next_state: {:?}", next_state);
+                        if PRINT_WORK {
+                            println!("next_state: {:?}", next_state);
+                        }
                         if next_state.winning() { // tried the spells in order by cost, so the first winner is the best overall
                             println!("Wizard wins!");
+                            println!("Winning spells are {:?} with cost {}", next_state.spells_cast, next_state.spell_cost);
                             return ();
                         }
                         reachable_states.push(next_state);
