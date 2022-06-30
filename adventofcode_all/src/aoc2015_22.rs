@@ -163,11 +163,12 @@ impl GameState {
     }
 
     /// Given this GameState, this method simulates one Wizard turn followed by one
-    /// Boss turn, assuming the Wizard chooses to cast the given Spell. It returns
+    /// Boss turn, assuming the Wizard chooses to cast the given Spell and that the
+    /// is/isn't in hard mode depending on the hard_mode argument. It returns
     /// None if the result is the death of the Wizard, or the resulting GameState
     /// if the Wizard survives. (If the Boss dies on the Wizard's turn, then only
     /// that turn will have been simulated.)
-    fn perform(&self, spell: Spell) -> Option<Self> {
+    fn perform(&self, spell: Spell, hard_mode: bool) -> Option<Self> {
         // --- Set up variables ---
         if spell.cost() > self.wizard.mana {
             return None
@@ -184,6 +185,12 @@ impl GameState {
 
 
         // --- Create reusable helper fn ---
+        // True if we are still fighting
+        fn still_fighting(wizard: &Wizard, boss: &Boss) -> bool {
+            wizard.hit_points > 0 && boss.hit_points > 0
+        }
+
+        // apply any ongoing effects (at start of both player and boss turns)
         fn apply_effects(
             shield_effect_turns: &mut u32,
             poison_effect_turns: &mut u32,
@@ -202,29 +209,36 @@ impl GameState {
             subtract_capped(recharge_effect_turns, 1);
         }
 
+        // --- Apply hard_mode rule ---
+        if still_fighting(&wizard, &boss) {
+            subtract_capped(&mut wizard.hit_points, if hard_mode {1} else {0});
+        }
+
         // --- Process wizard attack ---
-        apply_effects(&mut shield_effect_turns, &mut poison_effect_turns, &mut recharge_effect_turns, &mut wizard.mana, &mut boss.hit_points);
-        match spell {
-            Spell::MagicMissile => {
-                subtract_capped(&mut boss.hit_points, 4);
-            },
-            Spell::Drain => {
-                subtract_capped(&mut boss.hit_points, 2);
-                wizard.hit_points += 2;
-            },
-            Spell::Shield => {
-                shield_effect_turns += 6;
-            },
-            Spell::Poison => {
-                poison_effect_turns += 6;
-            },
-            Spell::Recharge => {
-                recharge_effect_turns += 5;
-            },
-        };
+        if still_fighting(&wizard, &boss) {
+            apply_effects(&mut shield_effect_turns, &mut poison_effect_turns, &mut recharge_effect_turns, &mut wizard.mana, &mut boss.hit_points);
+            match spell {
+                Spell::MagicMissile => {
+                    subtract_capped(&mut boss.hit_points, 4);
+                },
+                Spell::Drain => {
+                    subtract_capped(&mut boss.hit_points, 2);
+                    wizard.hit_points += 2;
+                },
+                Spell::Shield => {
+                    shield_effect_turns += 6;
+                },
+                Spell::Poison => {
+                    poison_effect_turns += 6;
+                },
+                Spell::Recharge => {
+                    recharge_effect_turns += 5;
+                },
+            };
+        }
 
         // --- Process Boss attack ---
-        if wizard.hit_points > 0 && boss.hit_points > 0 {
+        if still_fighting(&wizard, &boss) {
             apply_effects(&mut shield_effect_turns, &mut poison_effect_turns, &mut recharge_effect_turns, &mut wizard.mana, &mut boss.hit_points);
             if boss.hit_points > 0 {
                 subtract_capped(&mut wizard.hit_points, damage_done_to_wizard(shield_effect_turns, boss.damage));
@@ -257,10 +271,39 @@ fn damage_done_to_wizard(shield_effect_turns: u32, boss_damage: u32) -> u32 {
 }
 
 
-fn part_a(boss: &Boss) {
+/// This runs a series of spells against an initial_state printing the results to the console.
+#[allow(dead_code)]
+fn run_series_of_spells(initial_state: GameState, hard_mode: bool, spells: &Vec<Spell>) {
+    let mut state: GameState = initial_state;
+    for spell in spells.iter() {
+        match state.perform(*spell, hard_mode) {
+            None => {
+                println!("Wizard loses.");
+                return;
+            },
+            Some(new_state) => {
+                println!("{:?}", new_state);
+                state = new_state;
+            }
+        }
+    }
+}
+
+
+/// Given an initial state (and whether we are in hard_mode), this will find the cheapest set
+/// of spells that will win for the wizard, or find that the wizard cannot win. It returns None
+/// if the wizard cannot win, or Some(GameState) with one of the lowest-cost GameStates that
+/// wins.
+///
+/// The approach is simply a greedy search. It makes a list of game states and repeatedly
+/// sorts the list by cost, pops off the cheapest and considers each possible spell (in order
+/// of cheapness). If a result wins for the wizard, we are done; if a result survives we add
+/// it to the list. Continue to iterate until a win is found or the list is empty (in which
+/// case there is no win).
+fn simulate_states(initial_state: GameState, hard_mode: bool) -> Option<GameState> {
     let mut reachable_states: Vec<GameState> = Vec::new();
-    let initial_state = GameState::new(Wizard::new(), *boss);
     reachable_states.push(initial_state);
+    let mut best_winning_state: Option<GameState> = None;
 
     while !reachable_states.is_empty() {
         if PRINT_WORK {
@@ -275,34 +318,75 @@ fn part_a(boss: &Boss) {
         let first_state = reachable_states.swap_remove(0);
         for spell in [Spell::MagicMissile, Spell::Drain, Spell::Shield, Spell::Poison, Spell::Recharge] {
             if first_state.spell_allowed(spell) {
-                match first_state.perform(spell) {
+                match first_state.perform(spell, hard_mode) {
                     None => {},
                     Some(next_state) => {
                         if PRINT_WORK {
                             println!("next_state: {:?}", next_state);
                         }
-                        if next_state.winning() { // tried the spells in order by cost, so the first winner is the best overall
-                            println!("Wizard wins!");
+                        if next_state.winning() {
                             println!("Winning spells are {:?} with cost {}", next_state.spells_cast, next_state.spell_cost);
-                            return ();
+                            match &best_winning_state {
+                                None => {
+                                    best_winning_state = Some(next_state);
+                                },
+                                Some(winning_state) => if next_state.spell_cost < winning_state.spell_cost  {
+                                    best_winning_state = Some(next_state);
+                                },
+                            }
+                        } else {
+                            match &best_winning_state {
+                                None => reachable_states.push(next_state),
+                                Some(winning_state) => if next_state.spell_cost < winning_state.spell_cost {
+                                    reachable_states.push(next_state)
+                                },
+                            }
                         }
-                        reachable_states.push(next_state);
                     },
                 }
             }
         }
         reachable_states.sort_by(|a,b| a.spell_cost.cmp(&b.spell_cost));
     }
-    println!("Wizard cannot win.");
+
+    best_winning_state
 }
 
 
-fn part_b(_boss: &Boss) {
+/// Given the results of simulate_states(), this prints useful messages to stdout.
+fn print_win(winning_state: Option<GameState>) {
+    match winning_state {
+        None => {
+            println!("Wizard cannot win.");
+        },
+        Some(state) => {
+            println!("Wizard wins!");
+            println!("Winning spells are {:?} with cost {}", state.spells_cast, state.spell_cost);
+        },
+    }
+}
+
+
+fn part_a(boss: &Boss) {
+    println!("---- Part A ----");
+    let winning_state = simulate_states(GameState::new(Wizard::new(), *boss), false);
+    print_win(winning_state);
+}
+
+
+fn part_b(boss: &Boss) {
+    println!("---- Part B ----");
+    let winning_state = simulate_states(GameState::new(Wizard::new(), *boss), true);
+    print_win(winning_state);
 }
 
 fn main() -> Result<(), Error> {
     println!("Starting...");
     let data = input()?;
+    // run_series_of_spells(
+    //     GameState::new(Wizard::new(), data), true,
+    //     &vec![Spell::Poison, Spell::Recharge, Spell::Shield, Spell::MagicMissile, Spell::Poison, Spell::Recharge, Spell::Shield, Spell::MagicMissile, Spell::Poison]
+    // );
     part_a(&data);
     part_b(&data);
     Ok(())
