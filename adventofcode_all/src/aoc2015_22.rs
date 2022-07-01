@@ -1,7 +1,6 @@
 mod eznom;
 
 
-use std::cmp::max;
 use std::fmt::{Debug};
 use std::fs;
 use std::io;
@@ -49,12 +48,6 @@ fn subtract_capped(a: &mut u32, b: u32) {
 }
 
 
-trait Combatant {
-    fn get_hit_points(&self) -> u32;
-    fn get_damage(&self) -> u32;
-    fn get_armor(&self) -> u32;
-}
-
 
 #[derive(Copy, Clone, Debug)]
 struct Boss {
@@ -78,14 +71,8 @@ impl Boss {
     }
 }
 
-impl Combatant for Boss {
-    fn get_hit_points(&self) -> u32 { self.hit_points }
-    fn get_damage(&self) -> u32 { self.damage }
-    fn get_armor(&self) -> u32 { 0 }
-}
 
-
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
 enum Spell {
     MagicMissile,
     Drain,
@@ -94,14 +81,16 @@ enum Spell {
     Recharge,
 }
 
+use Spell::*;
+
 impl Spell {
     fn cost(&self) -> u32 {
         match self {
-            Spell::MagicMissile => 53,
-            Spell::Drain => 73,
-            Spell::Shield => 113,
-            Spell::Poison => 173,
-            Spell::Recharge => 229,
+            MagicMissile => 53,
+            Drain => 73,
+            Shield => 113,
+            Poison => 173,
+            Recharge => 229,
         }
     }
 }
@@ -152,12 +141,12 @@ impl GameState {
             spell_cost: 0}
     }
 
-    /// Returns true if the spell can be cast now; false if not.
+    /// Returns true if the spell can be cast next (AFTER the turn timers drop by 1; false if not.
     fn spell_allowed(&self, spell: Spell) -> bool {
         match spell {
-            Spell::Shield => self.shield_effect_turns == 0,
-            Spell::Poison => self.poison_effect_turns == 0,
-            Spell::Recharge => self.recharge_effect_turns == 0,
+            Shield => self.shield_effect_turns <= 1,
+            Poison => self.poison_effect_turns <= 1,
+            Recharge => self.recharge_effect_turns <= 1,
             _ => true,
         }
     }
@@ -176,8 +165,7 @@ impl GameState {
         let mut wizard = self.wizard.clone();
         wizard.mana -= spell.cost();
         let mut spells_cast: Vec<Spell> = self.spells_cast.clone();
-        spells_cast.push(spell);
-        let spell_cost = self.spell_cost + spell.cost();
+        let mut spell_cost = self.spell_cost;
         let mut boss = self.boss.clone();
         let mut shield_effect_turns = self.shield_effect_turns;
         let mut poison_effect_turns = self.poison_effect_turns;
@@ -200,13 +188,15 @@ impl GameState {
         ) {
             if *poison_effect_turns > 0 {
                 subtract_capped(boss_hit_points, 3);
+                subtract_capped(poison_effect_turns, 1);
             }
-            subtract_capped(poison_effect_turns, 1);
-            subtract_capped(shield_effect_turns, 1);
+            if *shield_effect_turns > 0 {
+                subtract_capped(shield_effect_turns, 1);
+            }
             if *recharge_effect_turns > 0 {
                 *wizard_mana += 101;
+                subtract_capped(recharge_effect_turns, 1);
             }
-            subtract_capped(recharge_effect_turns, 1);
         }
 
         // --- Apply hard_mode rule ---
@@ -217,22 +207,27 @@ impl GameState {
         // --- Process wizard attack ---
         if still_fighting(&wizard, &boss) {
             apply_effects(&mut shield_effect_turns, &mut poison_effect_turns, &mut recharge_effect_turns, &mut wizard.mana, &mut boss.hit_points);
+        }
+
+        if still_fighting(&wizard, &boss) {
+            spells_cast.push(spell);
+            spell_cost += spell.cost();
             match spell {
-                Spell::MagicMissile => {
+                MagicMissile => {
                     subtract_capped(&mut boss.hit_points, 4);
                 },
-                Spell::Drain => {
+                Drain => {
                     subtract_capped(&mut boss.hit_points, 2);
                     wizard.hit_points += 2;
                 },
-                Spell::Shield => {
-                    shield_effect_turns += 6;
+                Shield => {
+                    shield_effect_turns = 6;
                 },
-                Spell::Poison => {
-                    poison_effect_turns += 6;
+                Poison => {
+                    poison_effect_turns = 6;
                 },
-                Spell::Recharge => {
-                    recharge_effect_turns += 5;
+                Recharge => {
+                    recharge_effect_turns = 5;
                 },
             };
         }
@@ -240,9 +235,10 @@ impl GameState {
         // --- Process Boss attack ---
         if still_fighting(&wizard, &boss) {
             apply_effects(&mut shield_effect_turns, &mut poison_effect_turns, &mut recharge_effect_turns, &mut wizard.mana, &mut boss.hit_points);
-            if boss.hit_points > 0 {
-                subtract_capped(&mut wizard.hit_points, damage_done_to_wizard(shield_effect_turns, boss.damage));
-            }
+        }
+
+        if still_fighting(&wizard, &boss) {
+            subtract_capped(&mut wizard.hit_points, damage_done_to_wizard(shield_effect_turns, boss.damage));
         }
 
         // --- Return the new game state ---
@@ -264,10 +260,8 @@ impl GameState {
 
 
 fn damage_done_to_wizard(shield_effect_turns: u32, boss_damage: u32) -> u32 {
-    let shield = if shield_effect_turns == 0 {0} else {7};
-    let mut damage = boss_damage;
-    subtract_capped(&mut damage, shield);
-    max(damage, 1)
+    let armor = if shield_effect_turns == 0 {0} else {7};
+    if armor < boss_damage {boss_damage - armor} else {1}
 }
 
 
@@ -287,6 +281,7 @@ fn run_series_of_spells(initial_state: GameState, hard_mode: bool, spells: &Vec<
             }
         }
     }
+    println!("{:?}", state);
 }
 
 
@@ -295,10 +290,10 @@ fn run_series_of_spells(initial_state: GameState, hard_mode: bool, spells: &Vec<
 /// if the wizard cannot win, or Some(GameState) with one of the lowest-cost GameStates that
 /// wins.
 ///
-/// The approach is simply a greedy search. It makes a list of game states and repeatedly
-/// sorts the list by cost, pops off the cheapest and considers each possible spell (in order
-/// of cheapness). If a result wins for the wizard, we are done; if a result survives we add
-/// it to the list. Continue to iterate until a win is found or the list is empty (in which
+/// The approach is to do a breadth-first search through possible spell castings, dropping
+/// anything that causes the wizard to lose. Once we encounter a possible winning set of casts,
+/// we ALSO drop anything which would be longer than the cheapest winning set of costs we have
+/// seen so far. Continue to iterate until a win is found or the list is empty (in which
 /// case there is no win).
 fn simulate_states(initial_state: GameState, hard_mode: bool) -> Option<GameState> {
     let mut reachable_states: Vec<GameState> = Vec::new();
@@ -316,7 +311,7 @@ fn simulate_states(initial_state: GameState, hard_mode: bool) -> Option<GameStat
         }
 
         let first_state = reachable_states.swap_remove(0);
-        for spell in [Spell::MagicMissile, Spell::Drain, Spell::Shield, Spell::Poison, Spell::Recharge] {
+        for spell in [MagicMissile, Drain, Shield, Poison, Recharge] {
             if first_state.spell_allowed(spell) {
                 match first_state.perform(spell, hard_mode) {
                     None => {},
@@ -325,7 +320,7 @@ fn simulate_states(initial_state: GameState, hard_mode: bool) -> Option<GameStat
                             println!("next_state: {:?}", next_state);
                         }
                         if next_state.winning() {
-                            println!("Winning spells are {:?} with cost {}", next_state.spells_cast, next_state.spell_cost);
+                            // println!("Winning spells are {:?} with cost {}", next_state.spells_cast, next_state.spell_cost);
                             match &best_winning_state {
                                 None => {
                                     best_winning_state = Some(next_state);
@@ -346,7 +341,6 @@ fn simulate_states(initial_state: GameState, hard_mode: bool) -> Option<GameStat
                 }
             }
         }
-        reachable_states.sort_by(|a,b| a.spell_cost.cmp(&b.spell_cost));
     }
 
     best_winning_state
@@ -383,10 +377,6 @@ fn part_b(boss: &Boss) {
 fn main() -> Result<(), Error> {
     println!("Starting...");
     let data = input()?;
-    // run_series_of_spells(
-    //     GameState::new(Wizard::new(), data), true,
-    //     &vec![Spell::Poison, Spell::Recharge, Spell::Shield, Spell::MagicMissile, Spell::Poison, Spell::Recharge, Spell::Shield, Spell::MagicMissile, Spell::Poison]
-    // );
     part_a(&data);
     part_b(&data);
     Ok(())
