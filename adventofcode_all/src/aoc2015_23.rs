@@ -1,6 +1,6 @@
 mod eznom;
 
-use std::fmt::{Debug};
+use std::fmt::{Debug, Display, Formatter};
 use std::fs;
 use std::io;
 
@@ -32,9 +32,29 @@ fn input() -> Result<Program, Error> {
 }
 
 
+type RegisterValue = u32;
 type Offset = i32;
+type InstructionPointer = usize;
 
-#[derive(Debug)]
+
+/// Adjusts the instruction pointer by the given offset. Panics if it
+/// is reduced below 0.
+fn add_offset(ip: InstructionPointer, off: Offset) -> InstructionPointer {
+    if off.is_negative() {
+        let off_abs: InstructionPointer = InstructionPointer::try_from(off.abs()).unwrap();
+        if off_abs > ip {
+            panic!("Instruction Pointer moved to below zero.");
+        }
+        ip - off_abs
+    } else {
+        ip + InstructionPointer::try_from(off).unwrap()
+    }
+}
+
+
+
+
+#[derive(Debug, Copy, Clone)]
 enum Register {
     A,
     B,
@@ -55,8 +75,14 @@ impl Register {
     }
 }
 
+impl Display for Register {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", match self {Register::A => "a", Register::B => "b"})
+    }
+}
 
-#[derive(Debug)]
+
+#[derive(Debug, Copy, Clone)]
 enum Instruction {
     Hlf(Register),
     Tpl(Register),
@@ -173,6 +199,19 @@ impl Instruction {
     }
 }
 
+impl Display for Instruction {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Instruction::Hlf(r) => write!(f, "hlf {}", r),
+            Instruction::Tpl(r) => write!(f, "tpl {}", r),
+            Instruction::Inc(r) => write!(f, "inc {}", r),
+            Instruction::Jmp(off) => write!(f, "jmp {}", off),
+            Instruction::Jie(r, off) => write!(f, "jie {}, {}", r, off),
+            Instruction::Jio(r, off) => write!(f, "jio {}, {}", r, off),
+        }
+    }
+}
+
 
 #[derive(Debug)]
 struct Program {
@@ -188,9 +227,89 @@ impl Program {
 }
 
 
+struct Machine {
+    a: RegisterValue,
+    b: RegisterValue,
+    next: InstructionPointer,
+}
+
+impl Default for Machine {
+    fn default() -> Self {
+        Machine{a: 0, b: 0, next: 0}
+    }
+}
+
+impl Machine {
+    fn reg(&mut self, r: Register) -> &mut RegisterValue {
+        match r {
+            Register::A => &mut self.a,
+            Register::B => &mut self.b,
+        }
+    }
+
+    fn execute(&mut self, instruction: &Instruction) {
+        match instruction {
+            Instruction::Hlf(r) => {
+                let rr = self.reg(*r);
+                if *rr % 2 != 0 {
+                    panic!("Calling hlf on an odd-valued register.");
+                }
+                *rr /= 2;
+                self.next += 1;
+            }
+            Instruction::Tpl(r) => {
+                *self.reg(*r) *= 3;
+                self.next += 1;
+            }
+            Instruction::Inc(r) => {
+                *self.reg(*r) += 1;
+                self.next += 1;
+            }
+            Instruction::Jmp(off) => {
+                self.next = add_offset(self.next, *off);
+            }
+            Instruction::Jie(r, off) => {
+                if *self.reg(*r) % 2 == 0 {
+                    self.next = add_offset(self.next, *off);
+                } else {
+                    self.next += 1;
+                }
+            }
+            Instruction::Jio(r, off) => {
+                if *self.reg(*r) % 2 == 1 {
+                    self.next = add_offset(self.next, *off);
+                } else {
+                    self.next += 1;
+                }
+            }
+        }
+    }
+}
+
+impl Display for Machine {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "A: {}, B: {}, IP: {}", self.a, self.b, self.next)
+    }
+}
+
+
+
+/// Given a program, this runs it.
+fn run_program(program: &Program) {
+    let mut machine: Machine = Default::default();
+
+    println!("Initial State: {}", machine);
+    while let Some(instruction) = program.instructions.get(machine.next) {
+        machine.execute(instruction);
+        println!("Machine State: {} after doing {}", machine, instruction);
+    }
+    println!("Machine halted with {} in register b.", machine.b);
+}
+
+
 fn part_a(program: &Program) {
     println!("---- Part A ----");
-    println!("{:?}", program);
+    run_program(program);
 }
 
 
