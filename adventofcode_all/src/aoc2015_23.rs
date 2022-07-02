@@ -13,6 +13,8 @@ use nom::sequence::tuple as nom_tuple;
 use eznom::type_builder;
 
 
+const DISPLAY_WORK: bool = false;
+
 
 #[derive(Debug)]
 enum Error {
@@ -276,7 +278,7 @@ impl Machine {
                 }
             }
             Instruction::Jio(r, off) => {
-                if *self.reg(*r) % 2 == 1 {
+                if *self.reg(*r) == 1 {
                     self.next = add_offset(self.next, *off);
                 } else {
                     self.next += 1;
@@ -295,13 +297,15 @@ impl Display for Machine {
 
 
 /// Given a program, this runs it.
-fn run_program(program: &Program) {
-    let mut machine: Machine = Default::default();
-
-    println!("Initial State: {}", machine);
+fn run_program(machine: &mut Machine, program: &Program) {
+    if DISPLAY_WORK {
+        println!("Initial State: {}", machine);
+    }
     while let Some(instruction) = program.instructions.get(machine.next) {
         machine.execute(instruction);
-        println!("Machine State: {} after doing {}", machine, instruction);
+        if DISPLAY_WORK {
+            println!("Machine State: {} after doing {}", machine, instruction);
+        }
     }
     println!("Machine halted with {} in register b.", machine.b);
 }
@@ -309,12 +313,16 @@ fn run_program(program: &Program) {
 
 fn part_a(program: &Program) {
     println!("---- Part A ----");
-    run_program(program);
+    let mut machine: Machine = Default::default();
+    run_program(&mut machine, program);
 }
 
 
-fn part_b(_program: &Program) {
+fn part_b(program: &Program) {
     println!("---- Part B ----");
+    let mut machine: Machine = Default::default();
+    machine.a = 1;
+    run_program(&mut machine, program);
 }
 
 fn main() -> Result<(), Error> {
