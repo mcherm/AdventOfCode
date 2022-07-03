@@ -69,39 +69,61 @@ fn quantum_entanglement(group1: &Vec<&PkgSize>) -> QeSize {
 }
 
 
-/// Returns the minimum QE
-fn solve(all_sizes: &Vec<PkgSize>) -> QeSize {
-    assert!(all_sizes.len() >= 3);
+/// Returns the minimum QE.
+fn solve(all_sizes: &Vec<PkgSize>, has_trunk: bool) -> QeSize {
+    let num_groups: usize = if has_trunk {4} else {3};
+    assert!(all_sizes.len() >= num_groups);
     let sum: PkgSize = all_sizes.iter().sum::<PkgSize>();
-    assert!(sum % 3 == 0);
-    let group_sum = sum / 3;
+    assert!(sum % (num_groups as PkgSize) == 0);
+    let group_sum = sum / (num_groups as PkgSize);
 
     let mut min_qe: Option<QeSize> = None;
 
-    'group1size: for group1_size in 1..(all_sizes.len() - 2) {
+    'group1size: for group1_size in 1..(all_sizes.len() - (num_groups - 1)) {
         for group1 in all_sizes.iter().combinations(group1_size) {
             if sum_refs(&group1) == group_sum {
 
                 let qe = quantum_entanglement(&group1);
                 if min_qe.is_none() || qe < min_qe.unwrap() {
 
-                    let group23: Vec<&PkgSize> = all_sizes.iter().filter(|x| !group1.contains(x)).collect();
-                    assert!(group23.len() >= 2);
+                    let group_not_1: Vec<&PkgSize> = all_sizes.iter().filter(|x| !group1.contains(x)).collect();
+                    assert!(group_not_1.len() >= (num_groups - 1));
 
-                    'group23: for group2_size in 1..(group23.len() - 1) {
-                        for group2 in group23.iter().map(|x| *x).combinations(group2_size) {
+                    'groups_not_1: for group2_size in 1..(group_not_1.len() - (num_groups - 2)) {
+                        for group2 in group_not_1.iter().map(|x| *x).combinations(group2_size) {
                             if sum_refs(&group2) == group_sum {
-                                let group3: Vec<&PkgSize> = group23.iter().map(|x| *x).filter(|x| !group2.contains(x)).collect();
-                                assert!(group3.len() >= 1);
-                                assert!(sum_refs(&group3) == group_sum);
-                                if DISPLAY_WORK {
-                                    println!("group1: {:?}  (QE={})  group2: {:?}  group3: {:?}", group1, qe, group2, group3);
+                                if has_trunk {
+                                    // --- Further split into groups 3 & 4 ---
+                                    let group_3_and_4: Vec<&PkgSize> = group_not_1.iter().map(|x| *x).filter(|x| !group2.contains(x)).collect();
+                                    for group3_size in 1..(group_3_and_4.len() - 1) {
+                                        for group3 in group_3_and_4.iter().map(|x| *x).combinations(group3_size) {
+                                            if sum_refs(&group3) == group_sum {
+                                                let group4: Vec<&PkgSize> = group_3_and_4.iter().map(|x| *x).filter(|x| !group3.contains(x)).collect();
+                                                assert_eq!(sum_refs(&group3), group_sum);
+                                                if DISPLAY_WORK {
+                                                    println!("group1: {:?}  (QE={})  group2: {:?}  group3: {:?}  group4: {:?}", group1, qe, group2, group3, group4);
+                                                }
+                                                min_qe = Some(match min_qe {
+                                                    None => qe,
+                                                    Some(old_qe) => std::cmp::min(old_qe, qe),
+                                                });
+                                                break 'groups_not_1; // We only need to find ONE way to split groups 2, 3, 4.
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    // --- The rest is group 3 ---
+                                    let group3: Vec<&PkgSize> = group_not_1.iter().map(|x| *x).filter(|x| !group2.contains(x)).collect();
+                                    assert_eq!(sum_refs(&group3), group_sum);
+                                    if DISPLAY_WORK {
+                                        println!("group1: {:?}  (QE={})  group2: {:?}  group3: {:?}", group1, qe, group2, group3);
+                                    }
+                                    min_qe = Some(match min_qe {
+                                        None => qe,
+                                        Some(old_qe) => std::cmp::min(old_qe, qe),
+                                    });
+                                    break 'groups_not_1; // We only need to find ONE way to split groups 2 & 3.
                                 }
-                                min_qe = Some(match min_qe {
-                                    None => qe,
-                                    Some(old_qe) => std::cmp::min(old_qe, qe),
-                                });
-                                break 'group23; // We only need to find ONE way to split groups 2 & 3.
                             }
                         }
                     }
@@ -120,13 +142,15 @@ fn solve(all_sizes: &Vec<PkgSize>) -> QeSize {
 
 fn part_a(all_sizes: &Vec<PkgSize>) {
     println!("---- Part A ----");
-    let min_qe = solve(all_sizes);
+    let min_qe = solve(all_sizes, false);
     println!("The lowest QE is {}", min_qe);
 }
 
 
-fn part_b(_sizes: &Vec<PkgSize>) {
+fn part_b(all_sizes: &Vec<PkgSize>) {
     println!("---- Part B ----");
+    let min_qe = solve(all_sizes, true);
+    println!("The lowest QE is {}", min_qe);
 }
 
 fn main() -> Result<(), Error> {
