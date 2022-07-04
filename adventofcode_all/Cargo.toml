@@ -101,6 +101,10 @@ path = "src/aoc2015_23.rs"
 name = "aoc2015_24"
 path = "src/aoc2015_24.rs"
 
+[[bin]]
+name = "aoc2015_25"
+path = "src/aoc2015_25.rs"
+
 
 [dependencies]
 nom = "7.1.0"
@@ -111,3 +115,4 @@ lazy_static = "1.4.0"
 rand = "0.8.4"
 cached = "0.30.0"
 primal = "0.3.0"
+mod_exp = "1.0.1"
