@@ -65,12 +65,6 @@ fn get_code(seq_num: Num) -> Num {
 
 fn part_a((x,y): &(Num, Num)) {
     println!("---- Part A ----");
-    // println!("({}, {})", x, y);
-    // let seq = get_sequence_num(*x,*y);
-    // println!("seq: {}", seq);
-    // for k in 0..16 {
-    //     println!("{}", get_code(k));
-    // }
     let code = get_code(get_sequence_num(*x - 1, *y - 1));
     println!("The code is {}", code);
 }
