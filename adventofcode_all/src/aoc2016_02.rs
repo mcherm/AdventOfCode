@@ -9,6 +9,8 @@ use crate::eznom::Parseable;
 use std::cmp::{min, max};
 
 
+const PRINT_WORK: bool = false;
+
 fn input() -> Result<Lines, Error> {
     let s = fs::read_to_string("input/2016/input_02.txt")?;
     match Lines::parse(&s) {
@@ -107,34 +109,59 @@ impl Parseable<Vec<Line>> for Lines {
 }
 
 
-fn part_a(data: &Lines) {
-    println!("\nPart a:");
+fn char_at(grid: &Vec<Vec<char>>, pos: &(i8, i8)) -> char {
+    grid[usize::try_from(pos.1).unwrap()][usize::try_from(pos.0).unwrap()]
+}
+
+
+fn navigate_grid(lines: &Lines, grid: &Vec<Vec<char>>, start: (i8, i8)) -> String {
+    assert!(grid.iter().all(|row| row.len() == grid.len())); // square grid
+    let grid_max: i8 = i8::try_from(grid.len() - 1).unwrap();
     let mut code = String::new();
-    let mut x_pos: i8 = 1;
-    let mut y_pos: i8 = 1;
-    let grid = [
-        ['1', '2', '3'],
-        ['4', '5', '6'],
-        ['7', '8', '9'],
-    ];
-    for line in &data.0 {
+    let mut pos: (i8, i8) = start;
+    for line in &lines.0 {
         for direction in &line.directions {
-            match direction {
-                Direction::L => x_pos = max(0, x_pos - 1),
-                Direction::R => x_pos = min(2, x_pos + 1),
-                Direction::U => y_pos = max(0, y_pos - 1),
-                Direction::D => y_pos = min(2, y_pos + 1),
+            let next_pos: (i8, i8) = match direction {
+                Direction::L => (max(0, pos.0 - 1), pos.1),
+                Direction::R => (min(grid_max, pos.0 + 1), pos.1),
+                Direction::U => (pos.0, max(0, pos.1 - 1)),
+                Direction::D => (pos.0, min(grid_max, pos.1 + 1)),
+            };
+            if char_at(grid, &next_pos) != '\0' {
+                pos = next_pos;
             }
-            println!(".....on {}", grid[y_pos as usize][x_pos as usize]);
+            if PRINT_WORK { println!(".....on {}", char_at(grid, &pos)); }
         }
-        code.push(grid[y_pos as usize][x_pos as usize]);
-        println!("...code: {}", code);
+        code.push(char_at(grid, &pos));
+        if PRINT_WORK { println!("...code: {}", code); }
     }
+    code
+}
+
+
+fn part_a(lines: &Lines) {
+    println!("\nPart a:");
+    let grid = vec![
+        vec!['1', '2', '3'],
+        vec!['4', '5', '6'],
+        vec!['7', '8', '9'],
+    ];
+    let code = navigate_grid(lines, &grid, (1,1));
     println!("Code: {}", code);
 }
 
-fn part_b(_data: &Lines) {
+
+fn part_b(lines: &Lines) {
     println!("\nPart b:");
+    let grid = vec![
+        vec!['\0', '\0', '1',  '\0', '\0'],
+        vec!['\0', '2',  '3',  '4',  '\0'],
+        vec!['5',  '6',  '7',  '8',  '9' ],
+        vec!['\0', 'A',  'B',  'C',  '\0'],
+        vec!['\0', '\0', 'D',  '\0', '\0'],
+    ];
+    let code = navigate_grid(lines, &grid, (0,3));
+    println!("Code: {}", code);
 }
 
 
