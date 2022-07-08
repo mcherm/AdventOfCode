@@ -10,7 +10,10 @@ pub use nom::character::complete::i64 as parse_i64;
 pub use nom::character::complete::u64 as parse_u64;
 pub use nom::character::complete::i128 as parse_i128;
 pub use nom::character::complete::u128 as parse_u128;
+pub use nom::character::complete::newline as newline;
 pub use nom::sequence::tuple as tuple;
+pub use nom::multi::many0 as many0;
+pub use nom::multi::many1 as many1;
 pub use nom::multi::separated_list0 as separated_list0;
 
 use nom::bytes::complete::tag as nom_tag;

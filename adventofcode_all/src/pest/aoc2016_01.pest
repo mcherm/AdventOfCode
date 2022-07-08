@@ -1,4 +1,0 @@
-num = { ASCII_DIGIT + }
-instruction = { ("L" | "R") ~ num }
-instructions = { instruction ~ ( ", " ~ instruction )* }
-file = { SOI ~ instructions ~ EOI }
