@@ -1,5 +1,5 @@
 
-pub use nom::branch::alt as alt;
+pub use nom::branch::alt;
 pub use nom::character::complete::i8 as parse_i8;
 pub use nom::character::complete::u8 as parse_u8;
 pub use nom::character::complete::i16 as parse_i16;
@@ -10,17 +10,29 @@ pub use nom::character::complete::i64 as parse_i64;
 pub use nom::character::complete::u64 as parse_u64;
 pub use nom::character::complete::i128 as parse_i128;
 pub use nom::character::complete::u128 as parse_u128;
-pub use nom::character::complete::newline as newline;
-pub use nom::sequence::tuple as tuple;
-pub use nom::multi::many0 as many0;
-pub use nom::multi::many1 as many1;
-pub use nom::multi::separated_list0 as separated_list0;
+pub use nom::character::complete::newline;
+pub use nom::combinator::opt;
+pub use nom::sequence::{delimited, tuple};
+pub use nom::multi::{many0, many1, separated_list0, separated_list1};
 
+
+use nom::character::complete::space0 as nom_space0;
+use nom::character::complete::space1 as nom_space1;
 use nom::bytes::complete::tag as nom_tag;
 
 
 pub type Result<'a, T> = nom::IResult<&'a str, T>;
 
+
+/// If I have a Result that returns an &str, this changes it to a Result that returns a
+/// String. The reason is that when I return an &str I get some kind of lifetime error
+/// that I don't comprehend, but I can make it work by returning a String instead.
+fn convert_result_to_string<'a,'b>(str_result: nom::IResult<&'a str, &'b str>) -> nom::IResult<&'a str, String> {
+    match str_result {
+        Ok((rest, body)) => Ok((rest, body.to_string())),
+        Err(err) => Err(err),
+    }
+}
 
 
 /// We won't be able to use "tag" from nom because when we try to use it we get complaints
@@ -29,13 +41,19 @@ pub type Result<'a, T> = nom::IResult<&'a str, T>;
 /// understand why THIS works.
 pub fn fixed(tag: &str) -> impl Fn(&str) -> Result<String> + '_ {
     move |i: &str| {
-        let res: Result<_> = match nom_tag(tag)(i) {
-            Ok((rest, tag_str)) => Ok((rest, tag_str.to_string())),
-            Err(err) => Err(err),
-        };
-        res
+        convert_result_to_string(nom_tag(tag)(i))
     }
 }
+
+
+pub fn space0(input: &str) -> Result<String> {
+    convert_result_to_string(nom_space0(input))
+}
+
+pub fn space1(input: &str) -> Result<String> {
+    convert_result_to_string(nom_space1(input))
+}
+
 
 
 /// This trait represents an object which can be parsed from a unicode string. (Typically objects

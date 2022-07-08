@@ -113,6 +113,10 @@ path = "src/aoc2016_01.rs"
 name = "aoc2016_02"
 path = "src/aoc2016_02.rs"
 
+[[bin]]
+name = "aoc2016_03"
+path = "src/aoc2016_03.rs"
+
 
 
 [dependencies]
