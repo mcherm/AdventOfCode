@@ -1,4 +1,4 @@
-mod eznom;
+use advent_lib::eznom;
 
 extern crate anyhow;
 

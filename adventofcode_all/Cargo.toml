@@ -1,123 +1,12 @@
 [package]
 name = "advent_of_code"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
-[[bin]]
-name = "aoc2015_01"
-path = "src/aoc2015_01.rs"
-
-[[bin]]
-name = "aoc2015_02"
-path = "src/aoc2015_02.rs"
-
-[[bin]]
-name = "aoc2015_03"
-path = "src/aoc2015_03.rs"
-
-[[bin]]
-name = "aoc2015_04"
-path = "src/aoc2015_04.rs"
-
-[[bin]]
-name = "aoc2015_05"
-path = "src/aoc2015_05.rs"
-
-[[bin]]
-name = "aoc2015_06"
-path = "src/aoc2015_06.rs"
-
-[[bin]]
-name = "aoc2015_07"
-path = "src/aoc2015_07.rs"
-
-[[bin]]
-name = "aoc2015_08"
-path = "src/aoc2015_08.rs"
-
-[[bin]]
-name = "aoc2015_09"
-path = "src/aoc2015_09.rs"
-
-[[bin]]
-name = "aoc2015_10"
-path = "src/aoc2015_10.rs"
-
-[[bin]]
-name = "aoc2015_11"
-path = "src/aoc2015_11.rs"
-
-[[bin]]
-name = "aoc2015_12"
-path = "src/aoc2015_12.rs"
-
-[[bin]]
-name = "aoc2015_13"
-path = "src/aoc2015_13.rs"
-
-[[bin]]
-name = "aoc2015_14"
-path = "src/aoc2015_14.rs"
-
-[[bin]]
-name = "aoc2015_15"
-path = "src/aoc2015_15.rs"
-
-[[bin]]
-name = "aoc2015_16"
-path = "src/aoc2015_16.rs"
-
-[[bin]]
-name = "aoc2015_17"
-path = "src/aoc2015_17.rs"
-
-[[bin]]
-name = "aoc2015_18"
-path = "src/aoc2015_18.rs"
-
-[[bin]]
-name = "aoc2015_19"
-path = "src/aoc2015_19.rs"
-
-[[bin]]
-name = "aoc2015_20"
-path = "src/aoc2015_20.rs"
-
-[[bin]]
-name = "aoc2015_21"
-path = "src/aoc2015_21.rs"
-
-[[bin]]
-name = "aoc2015_22"
-path = "src/aoc2015_22.rs"
-
-[[bin]]
-name = "aoc2015_23"
-path = "src/aoc2015_23.rs"
-
-[[bin]]
-name = "aoc2015_24"
-path = "src/aoc2015_24.rs"
-
-[[bin]]
-name = "aoc2015_25"
-path = "src/aoc2015_25.rs"
-
-[[bin]]
-name = "aoc2016_01"
-path = "src/aoc2016_01.rs"
-
-[[bin]]
-name = "aoc2016_02"
-path = "src/aoc2016_02.rs"
-
-[[bin]]
-name = "aoc2016_03"
-path = "src/aoc2016_03.rs"
-
-
+[lib]
+name = "advent_lib"
 
 [dependencies]
 nom = "7.1.0"

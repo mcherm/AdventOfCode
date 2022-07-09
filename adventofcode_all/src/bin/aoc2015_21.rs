@@ -1,4 +1,4 @@
-mod eznom;
+use advent_lib::eznom;
 #[macro_use]
 extern crate lazy_static;
 

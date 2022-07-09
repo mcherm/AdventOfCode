@@ -1,4 +1,4 @@
-mod hash_life;
+use advent_lib::hash_life;
 
 use std::fs;
 use std::io;

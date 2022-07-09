@@ -1,4 +1,4 @@
-mod eznom;
+use advent_lib::eznom;
 
 use std::fmt::{Debug, Display, Formatter};
 use std::fs;

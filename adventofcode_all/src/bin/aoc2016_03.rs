@@ -1,11 +1,11 @@
-mod eznom;
 
 extern crate anyhow;
+use advent_lib::eznom;
 
 use std::fmt::{Display, Formatter};
 use std::fs;
 use anyhow::Error;
-use crate::eznom::Parseable;
+use advent_lib::eznom::Parseable;
 use itertools::Itertools;
 
 
