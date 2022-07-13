@@ -10,12 +10,14 @@ pub use nom::character::complete::i64 as parse_i64;
 pub use nom::character::complete::u64 as parse_u64;
 pub use nom::character::complete::i128 as parse_i128;
 pub use nom::character::complete::u128 as parse_u128;
-pub use nom::character::complete::newline;
+pub use nom::character::complete::{char, newline};
 pub use nom::combinator::opt;
 pub use nom::sequence::{delimited, tuple};
 pub use nom::multi::{many0, many1, separated_list0, separated_list1};
 
 
+use nom::character::complete::alpha0 as nom_alpha0;
+use nom::character::complete::alpha1 as nom_alpha1;
 use nom::character::complete::space0 as nom_space0;
 use nom::character::complete::space1 as nom_space1;
 use nom::bytes::complete::tag as nom_tag;
@@ -54,6 +56,13 @@ pub fn space1(input: &str) -> Result<String> {
     convert_result_to_string(nom_space1(input))
 }
 
+pub fn alpha0(input: &str) -> Result<String> {
+    convert_result_to_string(nom_alpha0(input))
+}
+
+pub fn alpha1(input: &str) -> Result<String> {
+    convert_result_to_string(nom_alpha1(input))
+}
 
 
 /// This trait represents an object which can be parsed from a unicode string. (Typically objects
@@ -63,7 +72,7 @@ pub trait Parseable<TParsed> where Self: Sized {
     /// This takes in a string reference and returns a Result.
     fn recognize(input: &str) -> nom::IResult<&str, TParsed>;
 
-    fn build(turn: TParsed) -> Self;
+    fn build(parsed_bits: TParsed) -> Self;
 
     fn parse(input: &str) -> nom::IResult<&str, Self> {
         type_builder(Self::recognize, Self::build)(input)
