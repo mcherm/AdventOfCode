@@ -1,6 +1,7 @@
 
 extern crate anyhow;
 
+use std::fmt::{Display, Formatter};
 use std::fs;
 use anyhow::Error;
 
@@ -16,6 +17,9 @@ use nom::{
 use nom::character::complete::u32 as nom_u32;
 
 
+const SCREEN_WIDTH: usize = 50;
+const SCREEN_HEIGHT: usize = 6;
+
 
 fn input() -> Result<Vec<Command>, Error> {
     let s = fs::read_to_string("input/2016/input_08.txt")?;
@@ -28,6 +32,7 @@ fn input() -> Result<Vec<Command>, Error> {
 
 
 type Value = u32;
+
 
 #[derive(Debug, Copy, Clone)]
 pub enum Direction {
@@ -91,17 +96,109 @@ impl Command {
     }
 }
 
+#[derive(Debug)]
+struct Screen {
+    data: [[bool; SCREEN_WIDTH]; SCREEN_HEIGHT]
+}
 
-fn part_a(commands: &Vec<Command>) {
-    println!("\nPart a:");
-    for command in commands {
-        println!("Command: {:?}", command);
+impl Screen {
+    fn new() -> Self {
+        Self{data: [[false; SCREEN_WIDTH]; SCREEN_HEIGHT]}
+    }
+
+    fn get(&self, x: Value, y: Value) -> bool {
+        let xx = usize::try_from(x % Value::try_from(SCREEN_WIDTH).unwrap()).unwrap();
+        let yy = usize::try_from(y % Value::try_from(SCREEN_HEIGHT).unwrap()).unwrap();
+        self.data[yy][xx]
+    }
+
+    fn set(&mut self, x: Value, y: Value, v: bool) {
+        let xx = usize::try_from(x % Value::try_from(SCREEN_WIDTH).unwrap()).unwrap();
+        let yy = usize::try_from(y % Value::try_from(SCREEN_HEIGHT).unwrap()).unwrap();
+        self.data[yy][xx] = v;
+    }
+
+    fn rect_on(&mut self, x: Value, y: Value) {
+        for yv in 0..y {
+            for xv in 0..x {
+                self.set(xv, yv, true);
+            }
+        }
+    }
+
+    fn rotate(&mut self, dir: Direction, which: Value, dist: Value) {
+        match dir {
+            Direction::Row => {
+                let mut old_row: [bool; SCREEN_WIDTH] = [false; SCREEN_WIDTH];
+                for x in 0..SCREEN_WIDTH {
+                    old_row[x] = self.get(Value::try_from(x).unwrap(), which);
+                }
+                for x in 0..SCREEN_WIDTH {
+                    self.set(Value::try_from(x).unwrap() + dist, which, old_row[x]);
+                }
+            },
+            Direction::Column => {
+                let mut old_col: [bool; SCREEN_HEIGHT] = [false; SCREEN_HEIGHT];
+                for y in 0..SCREEN_HEIGHT {
+                    old_col[y] = self.get(which, Value::try_from(y).unwrap());
+                }
+                for y in 0..SCREEN_HEIGHT {
+                    self.set(which, Value::try_from(y).unwrap() + dist, old_col[y]);
+                }
+            },
+        }
+    }
+
+    fn perform(&mut self, command: &Command) {
+        match command {
+            Command::Rect{x,y} => self.rect_on(*x,*y),
+            Command::Rotate{dir, which, dist} => self.rotate(*dir, *which, *dist),
+        }
+    }
+
+    fn pixel_count(&self) -> usize {
+        let mut sum = 0;
+        for y in 0..Value::try_from(SCREEN_HEIGHT).unwrap() {
+            for x in 0..Value::try_from(SCREEN_WIDTH).unwrap() {
+                if self.get(x,y) {
+                    sum += 1;
+                }
+            }
+        }
+        sum
+    }
+}
+
+impl Display for Screen {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        for y in 0..Value::try_from(SCREEN_HEIGHT).unwrap() {
+            for x in 0..Value::try_from(SCREEN_WIDTH).unwrap() {
+                write!(f, "{}", if self.get(x,y) {"###"} else {" . "})?
+            }
+            writeln!(f, "")?
+        }
+        Ok(())
     }
 }
 
 
-fn part_b(_commands: &Vec<Command>) {
+fn part_a(commands: &Vec<Command>) {
+    println!("\nPart a:");
+    let mut screen = Screen::new();
+    for command in commands {
+        screen.perform(command);
+    }
+    println!("There are a total of {} pixels lit.", screen.pixel_count())
+}
+
+
+fn part_b(commands: &Vec<Command>) {
     println!("\nPart b:");
+    let mut screen = Screen::new();
+    for command in commands {
+        screen.perform(command);
+    }
+    println!("{}", screen);
 }
 
 
