@@ -1,12 +1,18 @@
-use advent_lib::eznom;
-
 extern crate anyhow;
 
 use std::fmt::{Display, Formatter};
 use std::fs;
 use anyhow::Error;
-use crate::eznom::Parseable;
 use std::cmp::{min, max};
+use nom::{
+    IResult,
+    branch::alt,
+    bytes::complete::tag,
+    character::complete::newline,
+    combinator::{value, map},
+    multi::many0,
+    sequence::tuple
+};
 
 
 const PRINT_WORK: bool = false;
@@ -21,7 +27,7 @@ fn input() -> Result<Lines, Error> {
 }
 
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 enum Direction { L, R, U, D }
 
 impl Display for Direction {
@@ -35,24 +41,14 @@ impl Display for Direction {
     }
 }
 
-impl Parseable<String> for Direction {
-    fn recognize(input: &str) -> eznom::Result<String> {
-        eznom::alt((
-            eznom::fixed("L"),
-            eznom::fixed("R"),
-            eznom::fixed("U"),
-            eznom::fixed("D"),
+impl Direction {
+    fn parse<'a>(input: &'a str) -> IResult<&'a str, Self> {
+        alt((
+            value(Direction::L, tag("L")),
+            value(Direction::R, tag("R")),
+            value(Direction::U, tag("U")),
+            value(Direction::D, tag("D")),
         ))(input)
-    }
-
-    fn build(turn: String) -> Self {
-        match turn.as_str() {
-            "L" => Direction::L,
-            "R" => Direction::R,
-            "U" => Direction::U,
-            "D" => Direction::D,
-            _ => unreachable!(),
-        }
     }
 }
 
@@ -72,16 +68,15 @@ impl Display for Line {
     }
 }
 
-impl Parseable<(Vec<Direction>, char)> for Line {
-    fn recognize(input: &str) -> nom::IResult<&str, (Vec<Direction>, char)> {
-        eznom::tuple((
-            eznom::many0(Direction::parse),
-            eznom::newline,
-        ))(input)
-    }
-
-    fn build((directions, _): (Vec<Direction>, char)) -> Self {
-        Line{directions}
+impl Line {
+    fn parse<'a>(input: &'a str) -> IResult<&'a str, Self> {
+        map(
+            tuple((
+                many0(Direction::parse),
+                newline,
+            )),
+            |(directions, _)| Self{directions}
+        )(input)
     }
 }
 
@@ -98,15 +93,12 @@ impl Display for Lines {
     }
 }
 
-impl Parseable<Vec<Line>> for Lines {
-    fn recognize(input: &str) -> nom::IResult<&str, Vec<Line>> {
-        eznom::many0(Line::parse)(input)
-    }
-
-    fn build(lines: Vec<Line>) -> Self {
-        Self(lines)
+impl Lines {
+    fn parse<'a>(input: &'a str) -> IResult<&'a str, Self> {
+        map(many0(Line::parse), Self)(input)
     }
 }
+
 
 
 fn char_at(grid: &Vec<Vec<char>>, pos: &(i8, i8)) -> char {

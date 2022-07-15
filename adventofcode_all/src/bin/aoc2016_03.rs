@@ -1,12 +1,18 @@
 
 extern crate anyhow;
-use advent_lib::eznom;
 
 use std::fmt::{Display, Formatter};
 use std::fs;
 use anyhow::Error;
-use advent_lib::eznom::Parseable;
 use itertools::Itertools;
+use nom::{
+    IResult,
+    character::complete::{space0, space1, newline},
+    combinator::map,
+    multi::many0,
+    sequence::tuple
+};
+use nom::character::complete::u16 as parse_u16;
 
 
 
@@ -39,6 +45,22 @@ impl Triangle {
         };
         largest < smaller_sum
     }
+
+    fn parse<'a>(input: &'a str) -> IResult<&'a str, Self> {
+        map(
+            tuple((
+                space0,
+                parse_u16,
+                space1,
+                parse_u16,
+                space1,
+                parse_u16,
+                space0,
+                newline
+            )),
+            |(_, a, _, b, _, c, _, _)| Self{lengths: [a,b,c]}
+        )(input)
+    }
 }
 
 impl Display for Triangle {
@@ -47,28 +69,18 @@ impl Display for Triangle {
     }
 }
 
-impl Parseable<(String, u16, String, u16, String, u16, String, char)> for Triangle {
-    fn recognize(input: &str) -> eznom::Result<(String, u16, String, u16, String, u16, String, char)> {
-        eznom::tuple((
-            eznom::space0,
-            eznom::parse_u16,
-            eznom::space1,
-            eznom::parse_u16,
-            eznom::space1,
-            eznom::parse_u16,
-            eznom::space0,
-            eznom::newline,
-        ))(input)
-    }
 
-    fn build((_, a, _, b, _, c, _, _): (String, u16, String, u16, String, u16, String, char)) -> Self {
-        Triangle{lengths: [a,b,c]}
-    }
-}
 
 
 #[derive(Debug)]
 struct Triangles(Vec<Triangle>);
+
+impl Triangles {
+    fn parse<'a>(input: &'a str) -> IResult<&'a str, Self> {
+        map(many0(Triangle::parse), |x| Self(x))(input)
+    }
+}
+
 
 impl Display for Triangles {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
@@ -79,15 +91,7 @@ impl Display for Triangles {
     }
 }
 
-impl Parseable<Vec<Triangle>> for Triangles {
-    fn recognize(input: &str) -> nom::IResult<&str, Vec<Triangle>> {
-        eznom::many0(Triangle::parse)(input)
-    }
 
-    fn build(triangles: Vec<Triangle>) -> Self {
-        Self(triangles)
-    }
-}
 
 
 fn part_a(triangles: &Triangles) {
