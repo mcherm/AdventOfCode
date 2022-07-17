@@ -64,7 +64,6 @@ use std::fs;
 use anyhow::Error;
 
 
-
 use nom::{
     IResult,
     branch::alt,
@@ -74,6 +73,9 @@ use nom::{
     multi::{many0, separated_list1},
     sequence::{terminated, tuple},
 };
+
+
+const PRINT_WORK: bool = false;
 
 
 fn input() -> Result<Vec<FloorDescription>, Error> {
@@ -376,9 +378,23 @@ fn explore_states(initial_state: State) {
     visited_states.insert(initial_state.clone());
     let mut available_states: VecDeque<(usize, State)> = VecDeque::new(); // (num_steps, state)
     available_states.push_back((0,initial_state));
+    let mut number_of_steps = 0;
 
     loop {
+        // -- grab the state that's on the front of the queue --
         let (steps, from_state) = available_states.pop_front().expect("There is no way to find a solution.");
+
+        // -- print out info about how our breadth-first search is going --
+        match steps - number_of_steps {
+            0 => {}, // same number of steps as last time
+            1 => {
+                println!("Now searching solutions that require {} steps.", steps);
+                number_of_steps = steps;
+            },
+            _ => panic!("Apparently we are not searching a breadth-first search."),
+        }
+
+        // -- loop through possible next steps --
         for s in from_state.possible_next_states() {
             if !visited_states.contains(&s) && s.is_legal() {
                 if s.winning() {
@@ -387,11 +403,12 @@ fn explore_states(initial_state: State) {
                     println!("{}", s);
                     return;
                 }
-                println!("In {} steps:", steps + 1);
-                println!("{}", s);
+                if PRINT_WORK {
+                    println!("Going {} steps (we've tried {} legal states):", steps + 1, visited_states.len() + 1);
+                    println!("{}", s);
+                }
                 visited_states.insert(s.clone());
                 available_states.push_back((steps + 1, s));
-                println!("Tried {} legal states.", visited_states.len());
             }
         }
     }
@@ -401,13 +418,26 @@ fn explore_states(initial_state: State) {
 fn part_a(floor_descriptions: &Vec<FloorDescription>) {
     println!("\nPart a:");
     let initial_state = State::from_descriptions(floor_descriptions);
-    println!("{}", initial_state);
+    if PRINT_WORK {
+        println!("Initial State:");
+        println!("{}", initial_state);
+    }
     explore_states(initial_state);
 }
 
 
-fn part_b(_floor_descriptions: &Vec<FloorDescription>) {
+fn part_b(floor_descriptions: &Vec<FloorDescription>) {
     println!("\nPart b:");
+    let mut initial_state = State::from_descriptions(floor_descriptions);
+    initial_state.data[0].push(Item::Generator("elerium".to_string()));
+    initial_state.data[0].push(Item::Microchip("elerium".to_string()));
+    initial_state.data[0].push(Item::Generator("dilithium".to_string()));
+    initial_state.data[0].push(Item::Microchip("dilithium".to_string()));
+    if PRINT_WORK {
+        println!("Initial State:");
+        println!("{}", initial_state);
+    }
+    explore_states(initial_state);
 }
 
 
