@@ -3,9 +3,9 @@ extern crate anyhow;
 
 use std::fs;
 use anyhow::Error;
-use std::collections::HashSet;
 use std::collections::VecDeque;
 use std::collections::HashMap;
+use std::collections::HashSet;
 
 
 fn input() -> Result<usize, Error> {
@@ -13,7 +13,6 @@ fn input() -> Result<usize, Error> {
     Ok(s.parse()?)
 }
 
-const PRINT_WORK: bool = true;
 const START: (usize, usize) = (1,1);
 const DESTINATION: (usize,usize) = (31,39);
 
@@ -64,10 +63,6 @@ impl Path {
         self.points.push(p);
     }
 
-    fn pop(&mut self) {
-        self.points.pop();
-    }
-
     fn contains(&self, p: &(usize,usize)) -> bool {
         self.points.contains(p)
     }
@@ -87,22 +82,16 @@ impl Path {
 }
 
 
-/// This prints out the grid (to "just large enough" with a little padding).
-fn print_grid(fav: usize, path: &Path) {
+fn print_grid_with_overlay<F>(fav: usize, max_x: usize, max_y: usize, overlay: F)
+    where F: Fn(Point) -> char
+{
     const PADDING: usize = 3;
-    let (max_x, max_y) = max_point([START, DESTINATION, path.max_point()]);
     for y in 0..(max_y + PADDING) {
         for x in 0..(max_x + PADDING) {
-            let c = if (x,y) == DESTINATION  {
-                "X"
-            } else if (x,y) == START {
-                "O"
-            } else if path.contains(&(x,y)) {
-                "*"
-            } else if is_open(fav, x, y) {
-                "."
+            let c = if is_open(fav, x, y) {
+                overlay((x,y))
             } else {
-                "#"
+                '#'
             };
             print!("{}", c);
         }
@@ -110,44 +99,37 @@ fn print_grid(fav: usize, path: &Path) {
     }
 }
 
-
-/// This will find a solution if there is one. But it is NOT guaranteed to find the SHORTEST
-/// solution. If no solution is found it probably runs forever, but MIGHT panic instead.
-fn explore_grid(fav: usize) -> Path {
-
-    /// The recursive portion. It either returns true and modifies path to a successful path that
-    /// goes goes to tip, then continues on to START OR it returns false and leaves path unchanged
-    /// to indicate that doing so isn't possible. It's doing a depth-first search which isn't
-    /// guaranteed to find the best answer.
-    fn explore_from_point(fav: usize, visited: &mut HashSet<(usize,usize)>, path: &mut Path, p: (usize,usize)) -> bool {
-        if PRINT_WORK {
-            print_grid(fav, &path);
-            println!();
+/// This prints out the grid (to "just large enough" with a little padding).
+fn print_grid_with_path(fav: usize, path: &Path) {
+    let (max_x, max_y) = max_point([START, DESTINATION, path.max_point()]);
+    print_grid_with_overlay(fav, max_x, max_y, |p: Point| {
+        if p == DESTINATION {
+            'X'
+        } else if p == START {
+            'O'
+        } else if path.contains(&p) {
+            '*'
+        } else {
+            '.'
         }
-        path.push(p);
-        visited.insert(p);
-        if p == START {
-            return true; // return success
-        }
-        for neighbor in get_neighbors(fav, p) {
-            if ! visited.contains(&neighbor) {
-                if explore_from_point(fav, visited, path, neighbor) {
-                    return true;
-                }
-            }
-        }
-        path.pop();
-        return false;
-    }
-
-    let mut visited: HashSet<(usize,usize)> = HashSet::new();
-    let mut path = Path::new();
-    let found_path = explore_from_point(fav, &mut visited, &mut path, DESTINATION);
-    if ! found_path {
-        panic!("Could not find a path!");
-    }
-    path
+    });
 }
+
+fn print_grid_with_region(fav: usize, region: &HashSet<Point>) {
+    let (max_x, max_y) = max_point(region.iter().map(|x| x.clone()));
+    print_grid_with_overlay(fav, max_x, max_y, |p: Point| {
+        if p == DESTINATION {
+            'X'
+        } else if p == START {
+            'O'
+        } else if region.contains(&p) {
+            '*'
+        } else {
+            '.'
+        }
+    });
+}
+
 
 type Point = (usize,usize);
 
@@ -214,7 +196,7 @@ fn explore_grid_optimal(fav: usize) -> Path {
 
     match best_solution {
         None => panic!("No solution can be found."),
-        Some(SolutionStep{steps, prev}) => {
+        Some(SolutionStep{prev, ..}) => {
             // -- collect the points --
             let mut path = Path::new();
             let mut opt_p = prev;
@@ -228,20 +210,50 @@ fn explore_grid_optimal(fav: usize) -> Path {
 }
 
 
+/// Returns a HashSet of the coordinates reachable from START in max_steps or fewer steps.
+fn count_reachable(fav: usize, max_steps: usize) -> HashSet<Point> {
+    let mut visited: HashSet<Point> = HashSet::new();
+    let mut tips_this_step: HashSet<Point> = HashSet::new();
+    let mut tips_next_step: HashSet<Point> = HashSet::new();
+    let mut current_steps = 0;
+    tips_this_step.insert(START);
+
+    while current_steps <= max_steps {
+        for p in tips_this_step {
+            visited.insert(p);
+            for n in get_neighbors(fav, p) {
+                if !visited.contains(&n) {
+                    tips_next_step.insert(n);
+                }
+            }
+        }
+        current_steps += 1;
+        tips_this_step = tips_next_step;
+        tips_next_step = HashSet::new();
+    }
+
+    visited
+}
+
 
 
 fn part_a(fav: &usize) {
     println!("\nPart a:");
 
     let path = explore_grid_optimal(*fav);
-    print_grid(*fav, &path);
+    print_grid_with_path(*fav, &path);
     println!();
     println!("It takes at least {} steps to complete it.", path.steps())
 }
 
 
-fn part_b(_fav: &usize) {
+fn part_b(fav: &usize) {
     println!("\nPart b:");
+    let steps = 50;
+    let reachable = count_reachable(*fav, steps);
+    print_grid_with_region(*fav, &reachable);
+    println!();
+    println!("We can reach a total of {} locations in {} steps.", reachable.len(), steps);
 }
 
 
