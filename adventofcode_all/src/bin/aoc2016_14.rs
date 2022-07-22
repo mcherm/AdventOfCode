@@ -63,28 +63,23 @@ fn hex_val(c: char) -> usize {
     }
 }
 
-fn part_a(salt: &String) {
-    println!("\nPart a:");
 
-    const NUM_KEYS_TO_FIND: usize = 64;
-    const NUM_INITIAL_MATCHES: usize = 3;
-    const NUM_LATER_MATCHES: usize = 5;
-    const NUM_STEPS_LATER: u64 = 1000;
+fn find_keys(salt: &str, key_stretching: usize) -> Vec<u64> {
     let mut counter: u64 = 0;
     let mut stop_after: Option<u64> = None; // We can stop examining numbers after we find this
     let mut pending: [Vec<u64>; 16] = Default::default();
     let mut keys: Vec<u64> = Vec::new();
     while counter < stop_after.unwrap_or(u64::MAX) {
         let s = format!("{}{}", salt, counter);
-        let hex = format!("{:x}", md5::compute(s));
-        println!("{}{}: {}", salt, counter, hex); // FIXME: Remove
+        let mut hex = format!("{:x}", md5::compute(s));
+        for _ in 0..key_stretching {
+            hex = format!("{:x}", md5::compute(hex));
+        }
         for c in n_in_a_row(&hex, NUM_LATER_MATCHES) {
-            println!("    Match for {}", c); // FIXME: Remove
             for n in pending[hex_val(c)].iter() {
-                println!("        Considering '{}'.", n); // FIXME: Remove
                 if counter - n <= NUM_STEPS_LATER {
-                    println!("            New enough."); // FIXME: Remove
                     keys.push(*n);
+                    println!("Now have {} keys after adding {}", keys.len(), keys.last().unwrap()); // FIXME: Remove
                     if keys.len() == NUM_KEYS_TO_FIND && stop_after.is_none() {
                         // We found enough keys. BUT -- we don't find the keys IN ORDER... perhaps
                         // there's an even earlier key that will have a NUM_LATER_MATCHES match with
@@ -103,18 +98,38 @@ fn part_a(salt: &String) {
         counter += 1;
     }
     keys.sort();
+    keys
+}
+
+
+const NUM_KEYS_TO_FIND: usize = 64;
+const NUM_INITIAL_MATCHES: usize = 3;
+const NUM_LATER_MATCHES: usize = 5;
+const NUM_STEPS_LATER: u64 = 1000;
+
+fn part_a(salt: &String) {
+    println!("\nPart a:");
+
+    let keys = find_keys(salt, 0);
     println!("{:?}", keys);
     println!(
         "Got keys. Key # {} comes from index {}.",
         NUM_KEYS_TO_FIND,
         keys.get(NUM_KEYS_TO_FIND - 1).unwrap(),
     );
-    return;
 }
 
 
-fn part_b(_salt: &String) {
+fn part_b(salt: &String) {
     println!("\nPart b:");
+
+    let keys = find_keys(salt, 2016);
+    println!("{:?}", keys);
+    println!(
+        "Got keys. Key # {} comes from index {}.",
+        NUM_KEYS_TO_FIND,
+        keys.get(NUM_KEYS_TO_FIND - 1).unwrap(),
+    );
 }
 
 
