@@ -97,19 +97,17 @@ fn part_a(salt: &String) {
             }
             pending[hex_val(c)].clear(); // each was too old or already triggered
         }
-        for c in n_in_a_row(&hex, NUM_INITIAL_MATCHES) {
-            pending[hex_val(c)].push(counter);
+        if let Some(c) = n_in_a_row(&hex, NUM_INITIAL_MATCHES).first() {
+            pending[hex_val(*c)].push(counter);
         }
         counter += 1;
     }
-    println!("{:?}", keys);
     keys.sort();
     println!("{:?}", keys);
     println!(
-        "Got keys. Key # {} comes from index {}. The larges key I tested was {}.",
+        "Got keys. Key # {} comes from index {}.",
         NUM_KEYS_TO_FIND,
         keys.get(NUM_KEYS_TO_FIND - 1).unwrap(),
-        keys.last().unwrap()
     );
     return;
 }
