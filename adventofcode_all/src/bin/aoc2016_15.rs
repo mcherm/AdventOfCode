@@ -66,10 +66,8 @@ impl DiskPos {
 }
 
 
-fn part_a(disk_placements: &Vec<DiskPlacement>) {
-    println!("\nPart a:");
-
-    let mut dps: Vec<DiskPos> = disk_placements.iter().map(|x: &DiskPlacement| DiskPos{
+fn solve(disk_placements: &Vec<DiskPlacement>) {
+    let mut dps: Vec<DiskPos> = disk_placements.iter().map(|x: &DiskPlacement| DiskPos {
         positions: x.positions,
         pos_to_hit: (x.pos_at_0 + x.disk_num) % x.positions,
     }).collect();
@@ -89,8 +87,21 @@ fn part_a(disk_placements: &Vec<DiskPlacement>) {
 }
 
 
-fn part_b(_disk_placements: &Vec<DiskPlacement>) {
+fn part_a(disk_placements: &Vec<DiskPlacement>) {
+    println!("\nPart a:");
+
+    solve(disk_placements);
+}
+
+fn part_b(disk_placements: &Vec<DiskPlacement>) {
     println!("\nPart b:");
+    let mut new_disk_placements = disk_placements.clone();
+    new_disk_placements.push(DiskPlacement{
+        disk_num: 7,
+        positions: 11,
+        pos_at_0: 0,
+    });
+    solve(&new_disk_placements);
 }
 
 
@@ -101,6 +112,3 @@ fn main() -> Result<(), Error> {
     part_b(&data);
     Ok(())
 }
-
-
-// For my problem it's LESS than 431705
