@@ -55,11 +55,11 @@ mod sorted_vec {
 }
 
 
-
 use sorted_vec::SortedVec;
 use std::collections::HashSet;
+use std::collections::HashMap;
 use std::collections::VecDeque;
-use std::fmt::{Display, Formatter};
+use std::fmt::{Debug, Display, Formatter};
 use std::fs;
 use anyhow::Error;
 
@@ -88,23 +88,18 @@ fn input() -> Result<Vec<FloorDescription>, Error> {
 }
 
 
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub enum ItemType {
+    Generator, Microchip
+}
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash, Ord, PartialOrd)]
-pub enum Item {
-    Generator(String),
-    Microchip(String),
+pub struct Item {
+    name: String,
+    item_type: ItemType,
 }
 
 
-impl Display for Item {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        let (name_abbrev, type_code) = match self {
-            Item::Generator(s) => (s.chars().nth(0).unwrap_or(' '), 'G'),
-            Item::Microchip(s) => (s.chars().nth(0).unwrap_or(' '), 'M'),
-        };
-        write!(f, "{}{}", name_abbrev, type_code)
-    }
-}
 
 impl Item {
     fn parse_generator<'a>(input: &'a str) -> IResult<&'a str, Self> {
@@ -114,7 +109,7 @@ impl Item {
                 alpha1,
                 tag(" generator")
             )),
-            |(_, name, _): (&str, &str, &str)| Item::Generator(name.to_string())
+            |(_, name, _): (&str, &str, &str)| Item{name: name.to_string(), item_type: ItemType::Generator}
         )(input)
     }
 
@@ -125,7 +120,7 @@ impl Item {
                 alpha1,
                 tag("-compatible microchip")
             )),
-            |(_, name, _): (&str, &str, &str)| Item::Microchip(name.to_string())
+            |(_, name, _): (&str, &str, &str)| Item{name: name.to_string(), item_type: ItemType::Microchip}
         )(input)
     }
 
@@ -193,7 +188,7 @@ fn ordinal_to_num(s: &str) -> u8 {
 
 #[derive(Debug)]
 pub struct FloorDescription {
-    floor_num: u8,
+    floor_num: FloorNum,
     items: Vec<Item>
 }
 
@@ -220,20 +215,36 @@ impl FloorDescription {
     }
 }
 
+
+type FloorNum = u8;
+
+/// States that are equivalent if you replace one name with another one are identical for
+/// purposes of the problem and we don't need to explore all of them. So our list of
+/// visited states, instead of storing a State, will store this object which represents
+/// a state without respect for which name is which. This depends on (and verifies) an
+/// assumption that each chip has a corresponding generator, and vice versa.
+#[derive(Hash, Eq, PartialEq, Clone)]
+struct StateIgnoringType {
+    elevator: FloorNum,
+    pairs: SortedVec<(FloorNum, FloorNum)>,
+}
+
+
+/// This represents a single state that the system can be in.
 #[derive(Hash, Eq, PartialEq, Clone)]
 struct State {
-    elevator: usize,
-    data: Vec<SortedVec<Item>>
+    elevator: FloorNum,
+    data: Vec<SortedVec<Item>>,
 }
 
 impl State {
     /// Initialize a State from the descriptions
     fn from_descriptions(floor_descriptions: &Vec<FloorDescription>) -> Self {
         let mut data = Vec::new();
-        let num_floors = floor_descriptions.len();
+        let num_floors = FloorNum::try_from(floor_descriptions.len()).unwrap();
         for floor in 0..num_floors {
             for floor_description in floor_descriptions {
-                if usize::from(floor_description.floor_num) == floor + 1 {
+                if FloorNum::from(floor_description.floor_num) == floor + 1 {
                     let mut floor_items = SortedVec::new();
                     for item in &floor_description.items {
                         floor_items.push(item.clone())
@@ -251,12 +262,12 @@ impl State {
     fn is_legal(&self) -> bool {
         for floor_items in &self.data {
             for item in floor_items.iter() {
-                if let Item::Microchip(name) = item {
+                if matches!(item.item_type, ItemType::Microchip)  {
                     let mut microchip_plugged_in = false;
                     let mut other_generator_present = false;
                     for other_item in floor_items.iter() {
-                        if let Item::Generator(other_name) = other_item {
-                            if *name == *other_name {
+                        if matches!(other_item.item_type, ItemType::Generator) {
+                            if item.name == other_item.name {
                                 microchip_plugged_in = true;
                             } else {
                                 other_generator_present = true;
@@ -288,9 +299,10 @@ impl State {
     /// Returns a new State identical to this, but the given item is removed
     /// from the floor with the current elevator and put on the floor
     /// new_elevator, and the elevator is moved there also.
-    fn move_item(&self, new_elevator: usize, moved_items: Vec<&Item>) -> State {
+    fn move_item(&self, new_elevator: FloorNum, moved_items: Vec<&Item>) -> State {
         let mut new_data = Vec::new();
-        for (floor_num, floor_items) in self.data.iter().enumerate() {
+        for (i, floor_items) in self.data.iter().enumerate() {
+            let floor_num = FloorNum::try_from(i).unwrap();
             new_data.push(match floor_num {
                 _ if floor_num == self.elevator => {
                     // leave off items
@@ -318,8 +330,8 @@ impl State {
     /// Returns a list of all possible next states (legal or not).
     fn possible_next_states(&self) -> Vec<State> {
         let mut answer = Vec::new();
-        let floors = self.data.len();
-        let elevator_floor_items: &SortedVec<Item> = self.data.get(self.elevator).unwrap();
+        let floors = FloorNum::try_from(self.data.len()).unwrap();
+        let elevator_floor_items: &SortedVec<Item> = self.data.get(usize::from(self.elevator)).unwrap();
 
         let mut possible_new_floors = Vec::new();
         if self.elevator < floors - 1 {
@@ -352,14 +364,41 @@ impl State {
         }
         answer
     }
+
+    fn to_state_ignoring_type(&self) -> StateIgnoringType {
+        let mut pairs = SortedVec::new();
+        let mut found_item_floors: HashMap<String, FloorNum> = HashMap::new();
+        for (i, floor_data) in self.data.iter().enumerate() {
+            let floor_num = FloorNum::try_from(i).unwrap();
+            for item in floor_data.iter() {
+                match found_item_floors.remove(&item.name) {
+                    None => {found_item_floors.insert(item.name.clone(), floor_num);},
+                    Some(other_floor_num) => {pairs.push(
+                        match item.item_type {
+                            ItemType::Generator => (other_floor_num, floor_num),
+                            ItemType::Microchip => (floor_num, other_floor_num),
+                        }
+                    );},
+                }
+            }
+        }
+        assert!(found_item_floors.len() == 0);
+        StateIgnoringType{elevator: self.elevator, pairs}
+    }
 }
 
 impl Display for State {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        for (floor_num, floor_items) in self.data.iter().enumerate().rev() {
+        for (i, floor_items) in self.data.iter().enumerate().rev() {
+            let floor_num = FloorNum::try_from(i).unwrap();
             write!(f, "F{} {}", floor_num + 1, if self.elevator == floor_num {'E'} else {' '})?;
             for item in floor_items.iter() {
-                write!(f, " {}", item)?;
+                write!(
+                    f,
+                    " {}{}",
+                    item.name.chars().nth(0).unwrap_or(' '),
+                    match item.item_type { ItemType::Generator => 'G', ItemType::Microchip => 'M'}
+                )?;
             }
             writeln!(f)?;
         }
@@ -374,8 +413,8 @@ fn explore_states(initial_state: State) {
         return;
     }
 
-    let mut visited_states: HashSet<State> = HashSet::new();
-    visited_states.insert(initial_state.clone());
+    let mut visited_states: HashSet<StateIgnoringType> = HashSet::new();
+    visited_states.insert(initial_state.to_state_ignoring_type());
     let mut available_states: VecDeque<(usize, State)> = VecDeque::new(); // (num_steps, state)
     available_states.push_back((0,initial_state));
     let mut number_of_steps = 0;
@@ -396,7 +435,7 @@ fn explore_states(initial_state: State) {
 
         // -- loop through possible next steps --
         for s in from_state.possible_next_states() {
-            if !visited_states.contains(&s) && s.is_legal() {
+            if !visited_states.contains(&s.to_state_ignoring_type()) && s.is_legal() {
                 if s.winning() {
                     println!("**** FOUND A WINNER ****");
                     println!("In {} steps:", steps + 1);
@@ -407,7 +446,7 @@ fn explore_states(initial_state: State) {
                     println!("Going {} steps (we've tried {} legal states):", steps + 1, visited_states.len() + 1);
                     println!("{}", s);
                 }
-                visited_states.insert(s.clone());
+                visited_states.insert(s.to_state_ignoring_type());
                 available_states.push_back((steps + 1, s));
             }
         }
@@ -429,10 +468,10 @@ fn part_a(floor_descriptions: &Vec<FloorDescription>) {
 fn part_b(floor_descriptions: &Vec<FloorDescription>) {
     println!("\nPart b:");
     let mut initial_state = State::from_descriptions(floor_descriptions);
-    initial_state.data[0].push(Item::Generator("elerium".to_string()));
-    initial_state.data[0].push(Item::Microchip("elerium".to_string()));
-    initial_state.data[0].push(Item::Generator("dilithium".to_string()));
-    initial_state.data[0].push(Item::Microchip("dilithium".to_string()));
+    initial_state.data[0].push(Item{name: "elerium".to_string(), item_type: ItemType::Generator});
+    initial_state.data[0].push(Item{name: "elerium".to_string(), item_type: ItemType::Microchip});
+    initial_state.data[0].push(Item{name: "dilithium".to_string(), item_type: ItemType::Generator});
+    initial_state.data[0].push(Item{name: "dilithium".to_string(), item_type: ItemType::Microchip});
     if PRINT_WORK {
         println!("Initial State:");
         println!("{}", initial_state);
