@@ -33,6 +33,7 @@ fn input() -> Result<Grid, Error> {
 struct Node {
     x: usize,
     y: usize,
+    #[allow(dead_code)]
     size: usize,
     used: usize,
     avail: usize,
@@ -115,16 +116,35 @@ impl GridLoader {
 }
 
 impl Grid {
+    fn count_viable_pairs(&self) -> usize {
+        let mut count = 0;
+        for y1 in 0..self.size.1 {
+            for x1 in 0..self.size.0 {
+                let n1: &Node = self.nodes.get(&(x1,y1)).unwrap();
+                if n1.used != 0 {
+                    for y2 in 0..self.size.1 {
+                        for x2 in 0..self.size.0 {
+                            if (x1,y1) != (x2,y2) {
+                                let n2: &Node = self.nodes.get(&(x2,y2)).unwrap();
+                                if n1.used <= n2.avail {
+                                    count += 1;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        count
+    }
 }
+
 
 
 fn part_a(grid: &Grid) {
     println!("\nPart a:");
-    for y in 0..grid.size.1 {
-        for x in 0..grid.size.0 {
-            println!("({}, {}) -> {:?}", x, y, grid.nodes.get(&(x,y)));
-        }
-    }
+    let pair_count = grid.count_viable_pairs();
+    println!("There are {} viable pairs.", pair_count);
 }
 
 
