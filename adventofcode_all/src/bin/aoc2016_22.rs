@@ -4,7 +4,8 @@ extern crate anyhow;
 use std::fs;
 use anyhow::Error;
 use std::cmp::max;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, VecDeque};
+use std::collections::hash_map::DefaultHasher;
 use std::fmt::{Display, Formatter};
 use std::hash::{Hash, Hasher};
 use itertools::Itertools;
@@ -203,6 +204,13 @@ impl Grid {
 }
 
 
+fn get_hash<T: Hash>(t: &T) -> u64 {
+    let mut s = DefaultHasher::new();
+    t.hash(&mut s);
+    s.finish()
+}
+
+
 impl Direction {
     /// Returns the opposite of this direction
     fn inverse(&self) -> Self {
@@ -251,7 +259,7 @@ impl Display for Step {
 
 impl Display for NodeSpace {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:2}T/{:2}T", self.used, self.used + self.avail)
+        write!(f, "{:3}T/{:3}T", self.used, self.used + self.avail)
     }
 }
 
@@ -335,13 +343,14 @@ impl Display for State {
         writeln!(f)?;
         for y in 0..max_y {
             for x in 0..max_x {
-                write!(f, "{}{:1}  ",
+                write!(f, "{}{:1} ",
                     self.nodes.get(&(x,y)).unwrap(),
                     if (x,y) == self.goal_data {'G'} else {' '}
                 )?;
             }
             writeln!(f)?;
         }
+        writeln!(f, "Code {}", get_hash(self) % 10000)?;
         write!(f, "[")?;
         for step in &self.avail_steps {
             write!(f, "{} ", step)?;
@@ -363,35 +372,56 @@ fn part_b(grid: &Grid) {
     println!("\nPart b:");
     let initial_state = grid.get_initial_state();
     println!("State: {:}", initial_state);
-    let mut visited: HashSet<State> = HashSet::new();
-    visited.insert(initial_state.clone());
+    // visited maps from a state (which we have visited) to how we got there: a prev_state and step
+    let mut visited: HashMap<State,Option<(State,Step)>> = HashMap::new();
+    visited.insert(initial_state.clone(), None);
     let mut queue: VecDeque<State> = VecDeque::new();
     queue.push_back(initial_state);
+    let mut winning_steps: Option<Vec<Step>> = None;
 
     loop {
         match queue.pop_front() {
             None => {
-                println!("Could not find a solution.");
                 break;
             }
             Some(state) => {
-                println!("Moving from state {}", state);
                 for step in &state.avail_steps {
-                    println!("    Consider step {:}", step);
                     let next_state = state.enact_step(step, grid.size);
-                    println!("       puts us in state {:}", next_state);
-                    if !visited.contains(&next_state) {
+                    if !visited.contains_key(&next_state) {
                         if next_state.is_winning() {
                             println!("SOLVED!! {}", next_state);
+                            winning_steps = Some({
+                                let mut steps: Vec<Step> = Vec::new();
+                                steps.push(*step);
+                                let mut state_x: &State = &state;
+                                while let Some((prev_state, prev_step)) = visited.get(&state_x).unwrap() {
+                                    steps.push((*prev_step).clone());
+                                    state_x = prev_state;
+                                }
+                                steps.reverse();
+                                steps
+                            });
                             queue.clear(); // so we will exit the bigger loop
                             break;
                         }
-                        visited.insert(next_state.clone());
+                        visited.insert(next_state.clone(), Some((state.clone(),*step)));
                         queue.push_back(next_state);
                     }
                 }
             }
         }
+    }
+    match winning_steps {
+        None => println!("Could not find a solution."),
+        Some(steps) => {
+            print!("Winning steps are: ");
+            for step in &steps {
+                print!("{}, ", step);
+            }
+            println!();
+            println!("Which took {} steps.", steps.len());
+        }
+
     }
     println!("Done.");
 }
