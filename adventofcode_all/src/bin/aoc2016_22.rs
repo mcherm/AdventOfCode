@@ -4,7 +4,10 @@ extern crate anyhow;
 use std::fs;
 use anyhow::Error;
 use std::cmp::max;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::fmt::{Display, Formatter};
+use std::hash::{Hash, Hasher};
+use itertools::Itertools;
 
 
 use nom::{
@@ -43,9 +46,35 @@ struct GridLoader {
     nodes: Vec<Node>,
 }
 
+type Coord = (usize, usize);
+
 struct Grid {
-    nodes: HashMap<(usize,usize),Node>,
+    nodes: HashMap<Coord,Node>,
     size: (usize,usize)
+}
+
+#[derive(Copy, Clone, Debug)]
+enum Direction {
+    Up, Down, Left, Right
+}
+
+#[derive(Copy, Clone, Debug)]
+struct Step {
+    from: Coord,
+    dir: Direction,
+}
+
+#[derive(Copy, Clone, Debug, Ord, PartialOrd, Eq, PartialEq, Hash)]
+struct NodeSpace {
+    used: usize,
+    avail: usize,
+}
+
+#[derive(Clone, Debug)]
+struct State {
+    nodes: HashMap<Coord,NodeSpace>,
+    goal_data: Coord,
+    avail_steps: Vec<Step>,
 }
 
 
@@ -89,6 +118,7 @@ impl Node {
     }
 }
 
+
 impl GridLoader {
     fn parse(input: &str) -> IResult<&str, Self> {
         map(
@@ -115,6 +145,26 @@ impl GridLoader {
     }
 }
 
+
+/// This returns a list of the directions reachable from this coordinate.
+fn neighbor_dirs(coord: Coord, size: Coord) -> Vec<Direction> {
+    let mut answer = Vec::with_capacity(4);
+    if coord.0 > 0 {
+        answer.push(Direction::Left);
+    }
+    if coord.1 > 0 {
+        answer.push(Direction::Up);
+    }
+    if coord.1 + 1 < size.1 {
+        answer.push(Direction::Down);
+    }
+    if coord.0 + 1 < size.0 {
+        answer.push(Direction::Right);
+    }
+    answer
+}
+
+
 impl Grid {
     fn count_viable_pairs(&self) -> usize {
         let mut count = 0;
@@ -137,8 +187,168 @@ impl Grid {
         }
         count
     }
+
+    /// Given a Grid, this generates the starting State
+    fn get_initial_state(&self) -> State {
+        let nodes: HashMap<Coord,NodeSpace> = self.nodes.iter()
+            .map(|(coord, node)| (*coord, NodeSpace{used: node.used, avail: node.avail})).collect();
+        let goal_data = (self.size.0 - 1, 0); // top-right corner
+        let avail_moves = self.nodes.iter().flat_map(|(coord, _)| {
+            neighbor_dirs(*coord, self.size).into_iter()
+                .map(|dir| Step{from: *coord, dir})
+                .filter(|s| s.is_legal(&nodes))
+        }).collect();
+        State{nodes, goal_data, avail_steps: avail_moves }
+    }
 }
 
+
+impl Direction {
+    /// Returns the opposite of this direction
+    fn inverse(&self) -> Self {
+        match self {
+            Direction::Up => Direction::Down,
+            Direction::Down => Direction::Up,
+            Direction::Left => Direction::Right,
+            Direction::Right => Direction::Left,
+        }
+    }
+}
+
+
+impl Step {
+    /// Returns the place that the step ends up at.
+    fn to(&self) -> Coord {
+        match self.dir {
+            Direction::Up => (self.from.0, self.from.1 - 1),
+            Direction::Down => (self.from.0, self.from.1 + 1),
+            Direction::Left => (self.from.0 - 1, self.from.1),
+            Direction::Right => (self.from.0 + 1, self.from.1),
+        }
+    }
+
+    /// Returns true if the step is allowed given state constraints; false otherwise.
+    /// Bases that on the provided set of node sizes.
+    fn  is_legal(&self, nodes: &HashMap<Coord,NodeSpace>) -> bool {
+        let fr = nodes.get(&self.from).unwrap();
+        let to = nodes.get(&self.to()).unwrap();
+        fr.avail > 0 && to.avail >= fr.used && to.used == 0
+    }
+
+    /// Given a move, this returns a move that goes from the destination to the start.
+    fn inverse(&self) -> Self {
+        Self{from: self.to(), dir: self.dir.inverse()}
+    }
+}
+
+
+impl Display for Step {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "({},{})->({},{})", self.from.0, self.from.1, self.to().0, self.to().1)
+    }
+}
+
+
+impl Display for NodeSpace {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:2}T/{:2}T", self.used, self.used + self.avail)
+    }
+}
+
+
+impl State {
+    /// This indicates whether a state is a "winning" state.
+    fn is_winning(&self) -> bool {
+        self.goal_data == (0,0)
+    }
+
+    /// This is used within Eq and Hash. It returns a sorted list of the content of Node.
+    fn get_sorted_nodes(&self) -> Vec<(Coord,NodeSpace)> {
+        self.nodes.iter().map(|x| (x.0.clone(), x.1.clone())).sorted().collect()
+    }
+
+    /// Returns the new State achieved by performing this step (which ought to be one of the
+    /// valid Steps for this State).
+    fn enact_step(&self, step: &Step, size: Coord) -> State {
+        // --- set the nodes ---
+        let mut nodes = self.nodes.clone();
+        let from_node = nodes.get_mut(&step.from).unwrap();
+        let amt_moved: usize = from_node.used;
+        from_node.avail += amt_moved;
+        from_node.used -= amt_moved;
+        assert_eq!(from_node.used, 0);
+        let to_node = nodes.get_mut(&step.to()).unwrap();
+        assert!(to_node.avail >= amt_moved);
+        to_node.avail -= amt_moved;
+        to_node.used += amt_moved;
+
+        // --- set the goal_data ---
+        let goal_data = if step.from == self.goal_data {
+            step.to()
+        } else {
+            self.goal_data
+        };
+
+        // --- set the avail_moves ---
+        // copy existing avail_moves EXCEPT those that enter or leave step.from or step.to()
+        let mut avail_moves: Vec<Step> = self.avail_steps.iter()
+            .filter(|x| x.from != step.from && x.to() != step.from && x.to() != step.from && x.to() != step.to())
+            .copied()
+            .collect();
+        // re-consider everything that enters or leaves step.from or step.to()
+        let moves_out: Vec<Step> = neighbor_dirs(step.from, size).into_iter()
+            .map(|dir| Step{from: step.from, dir}) // steps from the "from" location
+            .chain(
+                neighbor_dirs(step.to(), size).into_iter()
+                    .map(|dir| Step{from: step.to(), dir}) // steps from the "to" location
+                    .filter(|s| s.to() != step.from) // except the one going to "from" location; we already got the reverse of that
+            ).collect();
+        avail_moves.extend(moves_out.iter().filter(|m| m.is_legal(&nodes))); // add the legal "out" steps
+        avail_moves.extend(moves_out.iter().map(|m| m.inverse()).filter(|m| m.is_legal(&nodes))); // add the legal "in" steps
+
+        // --- return the result ---
+        State{nodes, goal_data, avail_steps: avail_moves }
+    }
+}
+
+
+/// States are equal if their nodes and goal_data is equal.
+impl PartialEq for State {
+    fn eq(&self, other: &Self) -> bool {
+        self.goal_data == other.goal_data && self.get_sorted_nodes() == other.get_sorted_nodes()
+    }
+}
+
+impl Eq for State {}
+
+impl Hash for State {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.goal_data.hash(state);
+        self.get_sorted_nodes().hash(state);
+    }
+}
+
+impl Display for State {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let max_x = self.nodes.keys().map(|x| x.0).max().unwrap() + 1;
+        let max_y = self.nodes.keys().map(|x| x.1).max().unwrap() + 1;
+        writeln!(f)?;
+        for y in 0..max_y {
+            for x in 0..max_x {
+                write!(f, "{}{:1}  ",
+                    self.nodes.get(&(x,y)).unwrap(),
+                    if (x,y) == self.goal_data {'G'} else {' '}
+                )?;
+            }
+            writeln!(f)?;
+        }
+        write!(f, "[")?;
+        for step in &self.avail_steps {
+            write!(f, "{} ", step)?;
+        }
+        writeln!(f, "]")
+    }
+}
 
 
 fn part_a(grid: &Grid) {
@@ -149,8 +359,41 @@ fn part_a(grid: &Grid) {
 
 
 
-fn part_b(_grid: &Grid) {
+fn part_b(grid: &Grid) {
     println!("\nPart b:");
+    let initial_state = grid.get_initial_state();
+    println!("State: {:}", initial_state);
+    let mut visited: HashSet<State> = HashSet::new();
+    visited.insert(initial_state.clone());
+    let mut queue: VecDeque<State> = VecDeque::new();
+    queue.push_back(initial_state);
+
+    loop {
+        match queue.pop_front() {
+            None => {
+                println!("Could not find a solution.");
+                break;
+            }
+            Some(state) => {
+                println!("Moving from state {}", state);
+                for step in &state.avail_steps {
+                    println!("    Consider step {:}", step);
+                    let next_state = state.enact_step(step, grid.size);
+                    println!("       puts us in state {:}", next_state);
+                    if !visited.contains(&next_state) {
+                        if next_state.is_winning() {
+                            println!("SOLVED!! {}", next_state);
+                            queue.clear(); // so we will exit the bigger loop
+                            break;
+                        }
+                        visited.insert(next_state.clone());
+                        queue.push_back(next_state);
+                    }
+                }
+            }
+        }
+    }
+    println!("Done.");
 }
 
 
