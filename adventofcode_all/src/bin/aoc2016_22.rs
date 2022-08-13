@@ -3,7 +3,7 @@ extern crate anyhow;
 
 use std::fs;
 use anyhow::Error;
-use std::cmp::{max, Ordering};
+use std::cmp::{max, min, Ordering};
 use std::collections::{HashMap, VecDeque};
 use std::collections::hash_map::DefaultHasher;
 use std::fmt::{Display, Formatter};
@@ -51,15 +51,15 @@ type Coord = (usize, usize);
 
 struct Grid {
     nodes: HashMap<Coord,Node>,
-    size: (usize,usize)
+    size: Coord,
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Ord, PartialOrd, Eq, PartialEq)]
 enum Direction {
     Up, Down, Left, Right
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Ord, PartialOrd, Eq, PartialEq)]
 struct Step {
     from: Coord,
     dir: Direction,
@@ -204,16 +204,13 @@ impl Grid {
         let nodes: HashMap<Coord,NodeSpace> = self.nodes.iter()
             .map(|(coord, node)| (*coord, NodeSpace{used: node.used, avail: node.avail})).collect();
         let goal_data = (self.size.0 - 1, 0); // top-right corner
-        let avail_moves = self.nodes.iter().flat_map(|(coord, _)| {
-            neighbor_dirs(*coord, self.size).into_iter()
-                .map(|dir| Step{from: *coord, dir})
-                .filter(|s| s.is_legal(&nodes))
-        }).collect();
-        State{nodes, goal_data, avail_steps: avail_moves }
+        let avail_steps = derive_avail_steps(&nodes, self.size);
+        State{nodes, goal_data, avail_steps }
     }
 }
 
 
+#[allow(dead_code)]
 fn get_hash<T: Hash>(t: &T) -> u64 {
     let mut s = DefaultHasher::new();
     t.hash(&mut s);
@@ -250,7 +247,7 @@ impl Step {
     fn  is_legal(&self, nodes: &HashMap<Coord,NodeSpace>) -> bool {
         let fr = nodes.get(&self.from).unwrap();
         let to = nodes.get(&self.to()).unwrap();
-        fr.avail > 0 && to.avail >= fr.used && to.used == 0
+        fr.used > 0 && to.avail >= fr.used
     }
 
     /// Given a move, this returns a move that goes from the destination to the start.
@@ -274,6 +271,41 @@ impl Display for NodeSpace {
 }
 
 
+/// One might want to look at the diagonal lines of coords that are within a certain rectangle.
+/// That's what this function is for. It is passed a Coord which represents the outer bound
+/// of the rectangle, and it returns a Vec of the diagonals. It does NOT include the diagonal
+/// that contains the bound itself.
+/// FIXME: Could use a better explanation. Also, maybe should return an iterable not a Vec.
+fn diagonals(bound: Coord) -> Vec<Vec<Coord>> {
+    // each diagonal has a certain taxi_distance from the origin
+    let mut answer: Vec<Vec<Coord>> = Vec::new();
+    for taxi_dist in 0..(bound.0 + bound.1) {
+        let lowbound = if taxi_dist > bound.1 {taxi_dist - bound.1} else {0};
+        let highbound = min(taxi_dist, bound.0);
+        let mut diagonal: Vec<Coord> = Vec::new();
+        for x in lowbound..=highbound {
+            diagonal.push((x, taxi_dist - x))
+        }
+        answer.push(diagonal);
+    }
+    answer
+}
+
+
+
+/// This the slow but sure way to find the available moves for a given set of nodes.
+/// It finds them but we really only use it to find the initial
+/// set of moves because most of the time it's more efficient to only tweak the list
+/// of moves slightly since only 2 nodes have changed.
+fn derive_avail_steps(nodes: &HashMap<Coord,NodeSpace>, size: Coord) -> Vec<Step> {
+    nodes.iter().flat_map(|(coord, _)| {
+        neighbor_dirs(*coord, size).into_iter()
+            .map(|dir| Step{from: *coord, dir})
+            .filter(|s| s.is_legal(&nodes))
+    }).collect()
+}
+
+
 impl State {
     /// This indicates whether a state is a "winning" state.
     fn is_winning(&self) -> bool {
@@ -285,12 +317,40 @@ impl State {
         self.nodes.iter().map(|x| (x.0.clone(), x.1.clone())).sorted().collect()
     }
 
-    /// Returns the minimum possible steps needed to win, which I'll define as the taxicab
-    /// distance to the goal. [NOTE: Would it be better if we also considered empty spaces
-    /// between here and the goal?]
+
+    /// This is the heuristic used for the A* search algorithm -- it returns an estimate of
+    /// the minimum possible steps needed to win (this estimate can be too low, but must
+    /// never be too high). To make it pluggable, we have a set of different heuristics
+    /// and this is coded to call one of them.
     fn min_steps_to_win(&self) -> usize {
+        self.taxicab_plus_moving()
+    }
+
+
+    #[allow(unused)]
+    /// A simple heuristic: returns the taxicab distance from here to the goal.
+    fn taxicab_distance_from_goal_data_to_corner(&self) -> usize {
         self.goal_data.0 + self.goal_data.1
     }
+
+
+    #[allow(unused)]
+    /// In this heuristic we return the taxicab distance from here to the goal PLUS
+    /// one for each diagonal where every cell has less available space than the size
+    /// of the goal data.
+    fn taxicab_plus_moving(&self) -> usize {
+        let mut answer = 0;
+        let goal_data_size = self.nodes.get(&self.goal_data).unwrap().used;
+        for diagonal in diagonals(self.goal_data) {
+            answer += 1; // have to move the goal data into this diagonal
+            let largest_avail = diagonal.iter().map(|x| self.nodes.get(x).unwrap().avail).max().unwrap();
+            if largest_avail < goal_data_size {
+                answer += 1; // have to move something out to make space for it
+            }
+        }
+        answer
+    }
+
 
     /// Returns the new State achieved by performing this step (which ought to be one of the
     /// valid Steps for this State).
@@ -316,23 +376,38 @@ impl State {
 
         // --- set the avail_moves ---
         // copy existing avail_moves EXCEPT those that enter or leave step.from or step.to()
-        let mut avail_moves: Vec<Step> = self.avail_steps.iter()
-            .filter(|x| x.from != step.from && x.to() != step.from && x.to() != step.from && x.to() != step.to())
+        let mut avail_steps: Vec<Step> = self.avail_steps.iter()
+            .filter(|x| x.from != step.from && x.to() != step.from && x.from != step.to() && x.to() != step.to())
             .copied()
             .collect();
         // re-consider everything that enters or leaves step.from or step.to()
-        let moves_out: Vec<Step> = neighbor_dirs(step.from, size).into_iter()
+        let steps_out: Vec<Step> = neighbor_dirs(step.from, size).into_iter()
             .map(|dir| Step{from: step.from, dir}) // steps from the "from" location
             .chain(
                 neighbor_dirs(step.to(), size).into_iter()
                     .map(|dir| Step{from: step.to(), dir}) // steps from the "to" location
                     .filter(|s| s.to() != step.from) // except the one going to "from" location; we already got the reverse of that
             ).collect();
-        avail_moves.extend(moves_out.iter().filter(|m| m.is_legal(&nodes))); // add the legal "out" steps
-        avail_moves.extend(moves_out.iter().map(|m| m.inverse()).filter(|m| m.is_legal(&nodes))); // add the legal "in" steps
+        avail_steps.extend(steps_out.iter().filter(|m| m.is_legal(&nodes))); // add the legal "out" steps
+        avail_steps.extend(steps_out.iter().map(|m| m.inverse()).filter(|m| m.is_legal(&nodes))); // add the legal "in" steps
+
+        /*
+        // FIXME: Remove this section after debugging
+        // --- validate avail_steps ---
+        let mut real_avail_steps = derive_avail_steps(&nodes, size);
+        avail_steps.sort();
+        real_avail_steps.sort();
+        if avail_steps != real_avail_steps {
+            println!("step.from: {:?}   step.to: {:?}", step.from, step.to());
+            println!("last one: {:?} is {}", avail_steps.last().unwrap(), avail_steps.last().unwrap().is_legal(&nodes));
+            println!("BAD AVAIL STEPS:\n{}", State{nodes: nodes.clone(), goal_data: goal_data.clone(), avail_steps: avail_steps.clone() });
+        }
+        assert_eq!(avail_steps, real_avail_steps);
+        // FIXME: End of section to remove
+        */
 
         // --- return the result ---
-        State{nodes, goal_data, avail_steps: avail_moves }
+        State{nodes, goal_data, avail_steps }
     }
 }
 
@@ -360,19 +435,20 @@ impl Display for State {
         writeln!(f)?;
         for y in 0..max_y {
             for x in 0..max_x {
-                write!(f, "{}{:1} ",
+                write!(f, "{:1}{}{:1} ",
+                    if (x,y) == self.goal_data {'['} else {' '},
                     self.nodes.get(&(x,y)).unwrap(),
-                    if (x,y) == self.goal_data {'G'} else {' '}
+                    if (x,y) == self.goal_data {']'} else {' '},
                 )?;
             }
             writeln!(f)?;
         }
-        writeln!(f, "Code {}", get_hash(self) % 10000)?;
         write!(f, "[")?;
         for step in &self.avail_steps {
             write!(f, "{} ", step)?;
         }
-        writeln!(f, "]")
+        writeln!(f, "]")?;
+        Ok(())
     }
 }
 
@@ -389,7 +465,7 @@ impl StateToConsider {
 
 fn find_winning_steps(grid: &Grid) -> Option<Vec<Step>> {
     let initial_state = grid.get_initial_state();
-    println!("State: {:}", initial_state);
+    println!("Starting state: {:}", initial_state);
 
     // visited_from maps from a state (which we have considered and explored its neighbors) to how
     // we got there: (prev_state, prev_step, step_count).
@@ -400,14 +476,29 @@ fn find_winning_steps(grid: &Grid) -> Option<Vec<Step>> {
     let mut queue: VecDeque<StateToConsider> = VecDeque::new();
     queue.push_back(StateToConsider{state: initial_state, step_count: 0, prev: None });
 
-    // let mut winning_steps: Option<Vec<Step>> = None;
-
+    let mut loop_ctr: usize = 0;
     loop {
+        loop_ctr += 1;
+
         match queue.pop_front() {
             None => {
                 return None; // we ran out of places to go. Guess it's not solvable!
             }
             Some(StateToConsider{state, step_count, prev}) => {
+                // -- Every so often, print it out so we can monitor progress --
+                if loop_ctr % 1000 == 0 {
+                    println!(
+                        "\nAt {} went {} steps; at least {} to go for a total of {}:{:}. Have visited {} states and have {} queued.",
+                        loop_ctr,
+                        step_count,
+                        state.min_steps_to_win(),
+                        step_count + state.min_steps_to_win(),
+                        state,
+                        visited_from.len(),
+                        queue.len()
+                    );
+                }
+
                 // -- mark that we have (or now will!) visited this one --
                 let how_we_got_here = match prev {
                     None => None,
@@ -437,7 +528,7 @@ fn find_winning_steps(grid: &Grid) -> Option<Vec<Step>> {
 
                     if try_next_state {
                         if next_state.is_winning() {
-                            println!("SOLVED!! {}", next_state);
+                            println!("\nSOLVED!! {}", next_state);
                             let winning_steps = Some({
                                 let mut steps: Vec<Step> = Vec::new();
                                 steps.push(*step);
@@ -515,15 +606,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_vec_deque() {
-        let vd: VecDeque<(char,i32)> = VecDeque::from([('a',1), ('b',2), ('c',3), ('d',3), ('e',4), ('f',6)]);
-        match vd.binary_search_by_key(&5, |x| x.1) {
-            Ok(x) => {
-                println!("FOUND x = {}", x);
-            }
-            Err(x) => {
-                println!("NOPE x = {}", x);
-            }
-        }
+    fn test_diagonals() {
+        let result = diagonals((4,2));
+        assert_eq!(result, vec![
+            vec![(0,0)],
+            vec![(0,1), (1,0)],
+            vec![(0,2), (1,1), (2,0)],
+            vec![(1,2), (2,1), (3,0)],
+            vec![(2,2), (3,1), (4,0)],
+            vec![(3,2), (4,1)],
+            // vec![(4,2)],
+        ]);
     }
 }
