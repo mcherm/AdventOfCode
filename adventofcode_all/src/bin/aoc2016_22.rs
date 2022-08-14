@@ -60,7 +60,7 @@ enum Direction {
 }
 
 #[derive(Copy, Clone, Debug, Ord, PartialOrd, Eq, PartialEq)]
-struct Step {
+struct GridStep {
     from: Coord,
     dir: Direction,
 }
@@ -71,22 +71,38 @@ struct NodeSpace {
     avail: usize,
 }
 
-#[derive(Clone, Debug)]
-struct State {
+/// A generalized State implementation
+#[derive(Clone, Debug, Eq)]
+struct GenState {
     nodes: HashMap<Coord,NodeSpace>,
     goal_data: Coord,
-    avail_steps: Vec<Step>,
+    avail_steps: Vec<GridStep>,
 }
 
+#[derive(Clone, Debug, Eq)]
+struct SingleSpaceState {
+    nodes: HashMap<Coord,NodeSpace>,
+    goal_data_loc: Coord,
+    open_space_loc: Coord,
+    avail_steps: Vec<GridStep>,
+}
+
+trait State : Display + Clone + Eq + Hash {
+    fn is_winning(&self) -> bool;
+    fn min_steps_to_win(&self) -> usize;
+    fn avail_steps(&self) -> &Vec<GridStep>;
+    fn enact_step(&self, step: &GridStep, size: Coord) -> Self;
+}
 
 /// This is what we insert into the queue while doing an A* search. It has a State and the
 /// number of steps it took to get there. They are sortable (because the queue is kept
 /// sorted) and the sort order is by step_count + state.min_steps_to_win()
-struct StateToConsider {
-    state: State, // the state we will consider
+struct StateToConsider<S: State> {
+    state: S, // the state we will consider
     step_count: usize, // the number of steps it took to arrive at that state
-    prev: Option<(State, Step)>, // the previous state and the step from it, or None if this is the FIRST state.
+    prev: Option<(S, GridStep)>, // the previous state and the step from it, or None if this is the FIRST state.
 }
+
 
 
 
@@ -199,13 +215,46 @@ impl Grid {
         count
     }
 
+    fn goal_data_loc(&self) -> Coord {
+        (self.size.0 - 1, 0)
+    }
+
     /// Given a Grid, this generates the starting State
-    fn get_initial_state(&self) -> State {
+    fn get_initial_genstate(&self) -> GenState {
         let nodes: HashMap<Coord,NodeSpace> = self.nodes.iter()
             .map(|(coord, node)| (*coord, NodeSpace{used: node.used, avail: node.avail})).collect();
-        let goal_data = (self.size.0 - 1, 0); // top-right corner
         let avail_steps = derive_avail_steps(&nodes, self.size);
-        State{nodes, goal_data, avail_steps }
+        GenState {nodes, goal_data: self.goal_data_loc(), avail_steps }
+    }
+
+    /// If there is only a single space that contains enough available space for the goal data, this
+    /// returns Some the coord for that space. Otherwise, it returns None.
+    fn find_single_space(&self) -> Option<Coord> {
+        let goal_data_loc = self.goal_data_loc();
+        let goal_data_size = self.nodes.get(&goal_data_loc).unwrap().used;
+        // FIXME: Worry about the case where goal_data_loc has enough extra space
+        let locs_with_space = self.nodes.iter()
+            .filter(|(_coord, node)| node.avail >= goal_data_size)
+            .map(|(coord, _node)| *coord)
+            .collect::<Vec<Coord>>();
+        if locs_with_space.len() == 1 {
+            Some(*locs_with_space.first().unwrap())
+        } else {
+            None
+        }
+    }
+
+    fn get_initial_singlespacestate(&self) -> Option<SingleSpaceState> {
+        match self.find_single_space() {
+            None => None,
+            Some(open_space_loc) => {
+                let nodes: HashMap<Coord,NodeSpace> = self.nodes.iter()
+                    .map(|(coord, node)| (*coord, NodeSpace{used: node.used, avail: node.avail})).collect();
+                let goal_data_loc = self.goal_data_loc();
+                let avail_steps = derive_avail_steps(&nodes, self.size);
+                Some(SingleSpaceState{nodes, goal_data_loc, open_space_loc, avail_steps})
+            }
+        }
     }
 }
 
@@ -231,7 +280,7 @@ impl Direction {
 }
 
 
-impl Step {
+impl GridStep {
     /// Returns the place that the step ends up at.
     fn to(&self) -> Coord {
         match self.dir {
@@ -257,7 +306,7 @@ impl Step {
 }
 
 
-impl Display for Step {
+impl Display for GridStep {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "({},{})->({},{})", self.from.0, self.from.1, self.to().0, self.to().1)
     }
@@ -297,33 +346,19 @@ fn diagonals(bound: Coord) -> Vec<Vec<Coord>> {
 /// It finds them but we really only use it to find the initial
 /// set of moves because most of the time it's more efficient to only tweak the list
 /// of moves slightly since only 2 nodes have changed.
-fn derive_avail_steps(nodes: &HashMap<Coord,NodeSpace>, size: Coord) -> Vec<Step> {
+fn derive_avail_steps(nodes: &HashMap<Coord,NodeSpace>, size: Coord) -> Vec<GridStep> {
     nodes.iter().flat_map(|(coord, _)| {
         neighbor_dirs(*coord, size).into_iter()
-            .map(|dir| Step{from: *coord, dir})
+            .map(|dir| GridStep {from: *coord, dir})
             .filter(|s| s.is_legal(&nodes))
     }).collect()
 }
 
 
-impl State {
-    /// This indicates whether a state is a "winning" state.
-    fn is_winning(&self) -> bool {
-        self.goal_data == (0,0)
-    }
-
+impl GenState {
     /// This is used within Eq and Hash. It returns a sorted list of the content of Node.
     fn get_sorted_nodes(&self) -> Vec<(Coord,NodeSpace)> {
         self.nodes.iter().map(|x| (x.0.clone(), x.1.clone())).sorted().collect()
-    }
-
-
-    /// This is the heuristic used for the A* search algorithm -- it returns an estimate of
-    /// the minimum possible steps needed to win (this estimate can be too low, but must
-    /// never be too high). To make it pluggable, we have a set of different heuristics
-    /// and this is coded to call one of them.
-    fn min_steps_to_win(&self) -> usize {
-        self.taxicab_plus_moving()
     }
 
 
@@ -350,11 +385,39 @@ impl State {
         }
         answer
     }
+}
+
+impl SingleSpaceState {
+    // FIXME: This is too slow. Need to find how to make it faster. Maybe cache it? ALSO need to share this with GenState.
+    /// This is used within Eq and Hash. It returns a sorted list of the content of Node.
+    fn get_sorted_nodes(&self) -> Vec<(Coord, NodeSpace)> {
+        self.nodes.iter().map(|x| (x.0.clone(), x.1.clone())).sorted().collect()
+    }
+}
+
+
+impl State for GenState {
+    /// This indicates whether a state is a "winning" state.
+    fn is_winning(&self) -> bool {
+        self.goal_data == (0,0)
+    }
+
+    /// This is the heuristic used for the A* search algorithm -- it returns an estimate of
+    /// the minimum possible steps needed to win (this estimate can be too low, but must
+    /// never be too high). To make it pluggable, we have a set of different heuristics
+    /// and this is coded to call one of them.
+    fn min_steps_to_win(&self) -> usize {
+        self.taxicab_plus_moving()
+    }
+
+    fn avail_steps(&self) -> &Vec<GridStep> {
+        &self.avail_steps
+    }
 
 
     /// Returns the new State achieved by performing this step (which ought to be one of the
     /// valid Steps for this State).
-    fn enact_step(&self, step: &Step, size: Coord) -> State {
+    fn enact_step(&self, step: &GridStep, size: Coord) -> Self {
         // --- set the nodes ---
         let mut nodes = self.nodes.clone();
         let from_node = nodes.get_mut(&step.from).unwrap();
@@ -376,59 +439,129 @@ impl State {
 
         // --- set the avail_moves ---
         // copy existing avail_moves EXCEPT those that enter or leave step.from or step.to()
-        let mut avail_steps: Vec<Step> = self.avail_steps.iter()
+        let mut avail_steps: Vec<GridStep> = self.avail_steps.iter()
             .filter(|x| x.from != step.from && x.to() != step.from && x.from != step.to() && x.to() != step.to())
             .copied()
             .collect();
         // re-consider everything that enters or leaves step.from or step.to()
-        let steps_out: Vec<Step> = neighbor_dirs(step.from, size).into_iter()
-            .map(|dir| Step{from: step.from, dir}) // steps from the "from" location
+        let steps_out: Vec<GridStep> = neighbor_dirs(step.from, size).into_iter()
+            .map(|dir| GridStep {from: step.from, dir}) // steps from the "from" location
             .chain(
                 neighbor_dirs(step.to(), size).into_iter()
-                    .map(|dir| Step{from: step.to(), dir}) // steps from the "to" location
+                    .map(|dir| GridStep {from: step.to(), dir}) // steps from the "to" location
                     .filter(|s| s.to() != step.from) // except the one going to "from" location; we already got the reverse of that
             ).collect();
         avail_steps.extend(steps_out.iter().filter(|m| m.is_legal(&nodes))); // add the legal "out" steps
         avail_steps.extend(steps_out.iter().map(|m| m.inverse()).filter(|m| m.is_legal(&nodes))); // add the legal "in" steps
 
-        /*
-        // FIXME: Remove this section after debugging
-        // --- validate avail_steps ---
-        let mut real_avail_steps = derive_avail_steps(&nodes, size);
-        avail_steps.sort();
-        real_avail_steps.sort();
-        if avail_steps != real_avail_steps {
-            println!("step.from: {:?}   step.to: {:?}", step.from, step.to());
-            println!("last one: {:?} is {}", avail_steps.last().unwrap(), avail_steps.last().unwrap().is_legal(&nodes));
-            println!("BAD AVAIL STEPS:\n{}", State{nodes: nodes.clone(), goal_data: goal_data.clone(), avail_steps: avail_steps.clone() });
-        }
-        assert_eq!(avail_steps, real_avail_steps);
-        // FIXME: End of section to remove
-        */
+        // --- return the result ---
+        GenState {nodes, goal_data, avail_steps }
+    }
+}
+
+
+impl State for SingleSpaceState {
+    /// This indicates whether a state is a "winning" state.
+    fn is_winning(&self) -> bool {
+        self.goal_data_loc == (0,0)
+    }
+
+    /// This is the heuristic used for the A* search algorithm -- it returns an estimate of
+    /// the minimum possible steps needed to win (this estimate can be too low, but must
+    /// never be too high). To make it pluggable, we have a set of different heuristics
+    /// and this is coded to call one of them.
+    fn min_steps_to_win(&self) -> usize {
+        0 // FIXME: need an actual algorithm.
+    }
+
+    fn avail_steps(&self) -> &Vec<GridStep> {
+        &self.avail_steps
+    }
+
+
+    /// Returns the new State achieved by performing this step (which ought to be one of the
+    /// valid Steps for this State).
+    fn enact_step(&self, step: &GridStep, size: Coord) -> Self {
+        // --- set the nodes ---
+        let mut nodes = self.nodes.clone();
+        let from_node = nodes.get_mut(&step.from).unwrap();
+        let amt_moved: usize = from_node.used;
+        from_node.avail += amt_moved;
+        from_node.used -= amt_moved;
+        assert_eq!(from_node.used, 0);
+        let to_node = nodes.get_mut(&step.to()).unwrap();
+        assert!(to_node.avail >= amt_moved);
+        to_node.avail -= amt_moved;
+        to_node.used += amt_moved;
+
+        // --- set the goal_data ---
+        let goal_data_loc = if step.from == self.goal_data_loc {
+            step.to()
+        } else {
+            self.goal_data_loc
+        };
+
+        // --- set open_space_loc ---
+        let open_space_loc = if step.to() == self.open_space_loc {
+            step.from
+        } else {
+            self.open_space_loc
+        };
+
+        // --- set the avail_moves ---
+        // copy existing avail_moves EXCEPT those that enter or leave step.from or step.to()
+        let mut avail_steps: Vec<GridStep> = self.avail_steps.iter()
+            .filter(|x| x.from != step.from && x.to() != step.from && x.from != step.to() && x.to() != step.to())
+            .copied()
+            .collect();
+        // re-consider everything that enters or leaves step.from or step.to()
+        let steps_out: Vec<GridStep> = neighbor_dirs(step.from, size).into_iter()
+            .map(|dir| GridStep {from: step.from, dir}) // steps from the "from" location
+            .chain(
+                neighbor_dirs(step.to(), size).into_iter()
+                    .map(|dir| GridStep {from: step.to(), dir}) // steps from the "to" location
+                    .filter(|s| s.to() != step.from) // except the one going to "from" location; we already got the reverse of that
+            ).collect();
+        avail_steps.extend(steps_out.iter().filter(|m| m.is_legal(&nodes))); // add the legal "out" steps
+        avail_steps.extend(steps_out.iter().map(|m| m.inverse()).filter(|m| m.is_legal(&nodes))); // add the legal "in" steps
 
         // --- return the result ---
-        State{nodes, goal_data, avail_steps }
+        SingleSpaceState {nodes, goal_data_loc, open_space_loc, avail_steps }
     }
 }
 
 
 /// States are equal if their nodes and goal_data is equal.
-impl PartialEq for State {
+impl PartialEq for GenState {
     fn eq(&self, other: &Self) -> bool {
-        self.goal_data == other.goal_data && self.get_sorted_nodes() == other.get_sorted_nodes()
+        self.goal_data == other.goal_data && self.get_sorted_nodes() == other.get_sorted_nodes() // FIXME: Is this too slow?
     }
 }
 
-impl Eq for State {}
+// FIXME: Try to share this code with SingleSpaceState
+impl PartialEq for SingleSpaceState {
+    fn eq(&self, other: &Self) -> bool {
+        self.goal_data_loc == other.goal_data_loc && self.get_sorted_nodes() == other.get_sorted_nodes() // FIXME: Is this too slow?
+    }
+}
 
-impl Hash for State {
+
+impl Hash for GenState {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.goal_data.hash(state);
         self.get_sorted_nodes().hash(state);
     }
 }
 
-impl Display for State {
+// FIXME: Find a way to share these hash implementations
+impl Hash for SingleSpaceState {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.goal_data_loc.hash(state);
+        self.get_sorted_nodes().hash(state);
+    }
+}
+
+impl Display for GenState {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let max_x = self.nodes.keys().map(|x| x.0).max().unwrap() + 1;
         let max_y = self.nodes.keys().map(|x| x.1).max().unwrap() + 1;
@@ -453,7 +586,31 @@ impl Display for State {
 }
 
 
-impl StateToConsider {
+impl Display for SingleSpaceState {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let max_x = self.nodes.keys().map(|x| x.0).max().unwrap() + 1;
+        let max_y = self.nodes.keys().map(|x| x.1).max().unwrap() + 1;
+        writeln!(f)?;
+        for y in 0..max_y {
+            for x in 0..max_x {
+                let is_space = (x,y) == self.open_space_loc;
+                let is_goal = (x,y) == self.goal_data_loc;
+                let c = if is_goal {'X'} else if is_space {'.'} else {'#'};
+                write!(f, "{}", c)?;
+            }
+            writeln!(f)?;
+        }
+        write!(f, "[")?;
+        for step in &self.avail_steps {
+            write!(f, "{} ", step)?;
+        }
+        writeln!(f, "]")?;
+        Ok(())
+    }
+}
+
+
+impl<T: State> StateToConsider<T> {
     fn sort_score(&self) -> usize {
         self.step_count + self.state.min_steps_to_win()
     }
@@ -461,20 +618,18 @@ impl StateToConsider {
 
 
 
-
-
-fn find_winning_steps(grid: &Grid) -> Option<Vec<Step>> {
-    let initial_state = grid.get_initial_state();
+// FIXME: Don't make it so I have to pass in size.
+fn solve_with_astar<S: State>(initial_state: &mut S, size: Coord) -> Option<Vec<GridStep>> {
     println!("Starting state: {:}", initial_state);
 
     // visited_from maps from a state (which we have considered and explored its neighbors) to how
     // we got there: (prev_state, prev_step, step_count).
-    let mut visited_from: HashMap<State, Option<(State, Step, usize)>> = HashMap::new();
+    let mut visited_from: HashMap<S, Option<(S, GridStep, usize)>> = HashMap::new();
 
     // queue is a collection of states we will consider. What we store is
     //   StateToConsider. The queue is kept sorted by sort_score()
-    let mut queue: VecDeque<StateToConsider> = VecDeque::new();
-    queue.push_back(StateToConsider{state: initial_state, step_count: 0, prev: None });
+    let mut queue: VecDeque<StateToConsider<S>> = VecDeque::new();
+    queue.push_back(StateToConsider{state: initial_state.clone(), step_count: 0, prev: None});
 
     let mut loop_ctr: usize = 0;
     loop {
@@ -500,15 +655,15 @@ fn find_winning_steps(grid: &Grid) -> Option<Vec<Step>> {
                 }
 
                 // -- mark that we have (or now will!) visited this one --
-                let how_we_got_here = match prev {
+                let how_we_got_here: Option<(S, GridStep, usize)> = match prev {
                     None => None,
                     Some((prev_state, prev_step)) => Some((prev_state, prev_step, step_count))
                 }; // FIXME: after it works, see whether I can store the whole optional tuple and simplify this line
                 visited_from.insert(state.clone(), how_we_got_here);
 
                 // -- try each step from here --
-                for step in &state.avail_steps {
-                    let next_state = state.enact_step(step, grid.size);
+                for step in state.avail_steps() {
+                    let next_state: S = state.enact_step(step, size);
                     let next_steps = step_count + 1;
 
                     // -- maybe we've already been to this one --
@@ -530,9 +685,9 @@ fn find_winning_steps(grid: &Grid) -> Option<Vec<Step>> {
                         if next_state.is_winning() {
                             println!("\nSOLVED!! {}", next_state);
                             let winning_steps = Some({
-                                let mut steps: Vec<Step> = Vec::new();
+                                let mut steps: Vec<GridStep> = Vec::new();
                                 steps.push(*step);
-                                let mut state_var: &State = &state;
+                                let mut state_var: &S = &state;
                                 while let Some((prev_state, prev_step, _)) = visited_from.get(&state_var).unwrap() {
                                     steps.push((*prev_step).clone());
                                     state_var = prev_state;
@@ -554,6 +709,18 @@ fn find_winning_steps(grid: &Grid) -> Option<Vec<Step>> {
                     }
                 }
             }
+        }
+    }
+}
+
+fn find_winning_steps(grid: &Grid) -> Option<Vec<GridStep>> {
+    match grid.get_initial_singlespacestate() {
+        Some(mut initial_state) => {
+            solve_with_astar(&mut initial_state, grid.size)
+        },
+        None => {
+            let mut initial_state = grid.get_initial_genstate();
+            solve_with_astar(&mut initial_state, grid.size)
         }
     }
 }
