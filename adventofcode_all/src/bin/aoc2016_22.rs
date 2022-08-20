@@ -285,6 +285,36 @@ impl Direction {
 }
 
 
+
+/// This is used just to return an iterator of Coords.
+struct GridVecCoordIter {
+    size: Coord,
+    next_val: Option<Coord>,
+}
+
+impl Iterator for GridVecCoordIter {
+    type Item = Coord;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let answer = self.next_val;
+        match self.next_val {
+            None => {
+                self.next_val = Some((0,0));
+            },
+            Some((x, y)) => {
+                self.next_val = if x + 1 < self.size.0 {
+                    Some((x + 1, y))
+                } else if y + 1 < self.size.1 {
+                    Some((0, y + 1))
+                } else {
+                    None
+                };
+            },
+        }
+        answer
+    }
+}
+
 impl<T: Eq + Hash + Clone> GridVec<T> {
     fn coord_to_index(&self, coord: &Coord) -> usize {
         if coord.0 >= self.size.0 || coord.1 >= self.size.1 {
@@ -295,6 +325,12 @@ impl<T: Eq + Hash + Clone> GridVec<T> {
 
     fn index_to_coord(&self, idx: usize) -> Coord {
         (idx % self.size.0, idx / self.size.0)
+    }
+
+    /// This is used to iterate through the indexes of the coord. It happens to
+    /// loop through x faster than y.
+    fn iter_indexes(&self) -> impl Iterator<Item = Coord> {
+        GridVecCoordIter{size: self.size, next_val: Some((0,0))}
     }
 
     /// This returns (in O(1) time) the item in the GridVec at the given coord. If
@@ -625,18 +661,17 @@ impl Hash for SingleSpaceState {
 
 impl Display for GenState {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        writeln!(f)?;
-        for y in 0..self.nodes.size.1 {
-            for x in 0..self.nodes.size.0 {
-                let c = (x,y);
-                write!(f, "{:1}{}{:1} ",
-                       if c == self.goal_data_loc {'['} else {' '},
-                       self.nodes.get(&c),
-                       if c == self.goal_data_loc {']'} else {' '},
-                )?;
+        for c in self.nodes.iter_indexes() {
+            if c.0 == 0 {
+                writeln!(f)?; // newline before each row
             }
-            writeln!(f)?;
+            write!(f, "{:1}{}{:1} ",
+                   if c == self.goal_data_loc {'['} else {' '},
+                   self.nodes.get(&c),
+                   if c == self.goal_data_loc {']'} else {' '},
+            )?;
         }
+        writeln!(f)?; // newline after last row
         write!(f, "[")?;
         for step in &self.avail_steps {
             write!(f, "{} ", step)?;
@@ -649,17 +684,16 @@ impl Display for GenState {
 
 impl Display for SingleSpaceState {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        writeln!(f)?;
-        for y in 0..self.base.nodes.size.1 { // FIXME: Provide a way in NodeVec to iterate the coords.
-            for x in 0..self.base.nodes.size.0 {
-                let c = (x,y);
-                let is_space = c == self.open_space_loc;
-                let is_goal = c == self.base.goal_data_loc;
-                let ch = if is_goal {'X'} else if is_space {'.'} else {'#'};
-                write!(f, "{}", ch)?;
+        for c in self.base.nodes.iter_indexes() {
+            if c.0 == 0 {
+                writeln!(f)?; // newline before each row
             }
-            writeln!(f)?;
+            let is_space = c == self.open_space_loc;
+            let is_goal = c == self.base.goal_data_loc;
+            let ch = if is_goal {'X'} else if is_space {'.'} else {'#'};
+            write!(f, "{}", ch)?;
         }
+        writeln!(f)?; // newline after last row
         write!(f, "[")?;
         for step in &self.base.avail_steps {
             write!(f, "{} ", step)?;
