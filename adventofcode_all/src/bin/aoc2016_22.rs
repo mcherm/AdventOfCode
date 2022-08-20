@@ -1,12 +1,13 @@
 
 extern crate anyhow;
 
-use std::fs;
+use std::{fs, io};
 use anyhow::Error;
 use std::cmp::{max, min, Ordering};
 use std::collections::{HashMap, VecDeque};
 use std::fmt::{Debug, Display, Formatter};
 use std::hash::{Hash, Hasher};
+use std::io::BufRead;
 use itertools::Itertools;
 
 
@@ -22,7 +23,7 @@ use nom::character::complete::u16 as nom_u16;
 
 
 const VERIFY_AVAIL_STEP_LOGIC: bool = false;
-const PRINT_EVERY_N_STEPS: usize = 1000;
+const PRINT_EVERY_N_STEPS: usize = 1;
 
 
 fn input() -> Result<Grid, Error> {
@@ -104,6 +105,26 @@ trait State : Display + Clone + Eq + Hash {
     fn min_steps_to_win(&self) -> usize;
     fn avail_steps(&self) -> &Vec<GridStep>;
     fn enact_step(&self, step: &GridStep) -> Self;
+
+    // FIXME: This is probably temporary
+    fn show_state(
+        &self,
+        loop_ctr: usize,
+        step_count: usize,
+        visited_from: &HashMap<Self, Option<(Self, GridStep, usize)>>,
+        queue: &VecDeque<StateToConsider<Self>>
+    ) {
+        println!(
+            "\nAt {} went {} steps; at least {} to go for a total of {}:{:}. Have visited {} states and have {} queued.",
+            loop_ctr,
+            step_count,
+            self.min_steps_to_win(),
+            step_count + self.min_steps_to_win(),
+            self,
+            visited_from.len(),
+            queue.len()
+        );
+    } // the default is to print nothing
 }
 
 /// This is what we insert into the queue while doing an A* search. It has a State and the
@@ -589,6 +610,12 @@ impl SingleSpaceState {
             min_dist_to_target_loc
         }
     }
+
+    // FIXME: This might be temporary
+    /// Returns a dummy SingleSpaceState with the specified goal_data_loc and open_space_loc.
+    fn dummy_with_space_at(&self, open_space_loc: Coord) -> Self {
+        SingleSpaceState{open_space_loc,  ..self.clone()}
+    }
 }
 
 
@@ -603,8 +630,11 @@ impl State for SingleSpaceState {
     /// never be too high). To make it pluggable, we have a set of different heuristics
     /// and this is coded to call one of them.
     fn min_steps_to_win(&self) -> usize {
-        self.base.taxicab_distance_from_goal_data_to_corner() +
-        self.min_steps_open_space_must_take()
+        // FIXME: The below is correct. But not working.
+        1 + (self.base.taxicab_distance_from_goal_data_to_corner() - 1) * 5 +
+            self.min_steps_open_space_must_take()
+        // FIXME: The below is what I'm trying right now.
+        // self.min_steps_open_space_must_take()
     }
 
     fn avail_steps(&self) -> &Vec<GridStep> {
@@ -627,6 +657,47 @@ impl State for SingleSpaceState {
         // --- return the result ---
         SingleSpaceState {base, open_space_loc}
     }
+
+
+    // FIXME: This might be temporary
+    fn show_state(
+        &self,
+        loop_ctr: usize,
+        step_count: usize,
+        visited_from: &HashMap<Self, Option<(Self, GridStep, usize)>>,
+        queue: &VecDeque<StateToConsider<Self>>)
+    {
+        println!(
+            "\nAt {} went {} steps; at least {} to go for a total of {}.",
+            loop_ctr,
+            step_count,
+            self.min_steps_to_win(),
+            step_count + self.min_steps_to_win()
+        );
+        for c in self.base.nodes.iter_indexes() {
+            if c.0 == 0 {
+                println!(); // newline before each line
+            }
+            let ch = match c {
+                c if c == self.open_space_loc => '.',
+                c if c == self.base.goal_data_loc => 'X',
+                c if visited_from.contains_key(&self.dummy_with_space_at(c)) => '*',
+                c if queue.iter().any(|x| {
+                    x.state.base.goal_data_loc == self.base.goal_data_loc &&
+                        x.state.open_space_loc == c
+                }) => '&',
+                _ => '#',
+            };
+            print!("{}", ch);
+        }
+        println!(); // newline after last line
+        println!(
+            "Have visited {} states and have {} queued.",
+            visited_from.len(),
+            queue.len()
+        );
+    }
+
 }
 
 
@@ -640,7 +711,10 @@ impl PartialEq for GenState {
 
 impl PartialEq for SingleSpaceState {
     fn eq(&self, other: &Self) -> bool {
-        self.base.eq(&other.base)
+        // FIXME: REAL answer:
+        // self.base.eq(&other.base)
+        // FIXME: Bad answer:
+        self.open_space_loc.eq(&other.open_space_loc) && self.base.goal_data_loc.eq(&other.base.goal_data_loc)
     }
 }
 
@@ -655,7 +729,11 @@ impl Hash for GenState {
 
 impl Hash for SingleSpaceState {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        self.base.hash(state)
+        // FIXME: REAL answer:
+        // self.base.hash(state)
+        // FIXME: Bad answer:
+        self.open_space_loc.hash(state);
+        // self.base.goal_data_loc.hash(state);
     }
 }
 
@@ -744,16 +822,9 @@ fn solve_with_astar<S: State>(initial_state: &mut S) -> Option<Vec<GridStep>> {
 
                 // -- Every so often, print it out so we can monitor progress --
                 if loop_ctr % PRINT_EVERY_N_STEPS == 0 {
-                    println!(
-                        "\nAt {} went {} steps; at least {} to go for a total of {}:{:}. Have visited {} states and have {} queued.",
-                        loop_ctr,
-                        step_count,
-                        state.min_steps_to_win(),
-                        step_count + state.min_steps_to_win(),
-                        state,
-                        visited_from.len(),
-                        queue.len()
-                    );
+                    if PRINT_EVERY_N_STEPS > 1 || !visited_from.contains_key(&state.clone()) {
+                        state.show_state(loop_ctr, step_count, &visited_from, &queue);
+                    }
                 }
 
                 // -- mark that we have (or now will!) visited this one --
@@ -823,7 +894,40 @@ fn find_winning_steps(grid: &Grid) -> Option<Vec<GridStep>> {
 }
 
 
+// FIXME: Remove this later
+fn analyze_grid(grid: &Grid) {
+    let nodes: GridVec<NodeSpace> = grid.nodes.iter()
+        .map(|(coord, node)| (*coord, NodeSpace{used: node.used, avail: node.avail})).collect();
 
+    let min_data = nodes.clone().into_iter().map(|x| x.used).min().unwrap();
+    println!("min_data = {}", min_data);
+
+    let key_data_loc = (grid.size.0 - 1 ,0);
+    let key_data_size = nodes.get(&key_data_loc).used;
+    println!("key_data_size = {}", key_data_size);
+
+    let most_avail = nodes.clone().into_iter().map(|x| x.avail).max().unwrap();
+    println!("most_avail = {}", most_avail);
+
+    let most_possible_avail = nodes.clone().into_iter().map(|x| x.used + x.avail - min_data).max().unwrap();
+    println!("most_possible_avail = {}", most_possible_avail);
+
+    for c in nodes.iter_indexes() {
+        if c.0 == 0 {
+            println!();
+        }
+        let ch = match c {
+            cc if cc == key_data_loc => 'X',
+            _ => '#',
+        };
+        print!("{}", ch);
+    }
+    println!();
+}
+
+
+
+#[allow(dead_code)]
 fn part_a(grid: &Grid) {
     println!("\nPart a:");
     let pair_count = grid.count_viable_pairs();
@@ -832,6 +936,7 @@ fn part_a(grid: &Grid) {
 
 
 
+#[allow(dead_code)]
 fn part_b(grid: &Grid) {
     println!("\nPart b:");
 
@@ -851,13 +956,95 @@ fn part_b(grid: &Grid) {
     println!("Done.");
 }
 
+fn read_line() -> String {
+    io::stdin().lock()
+        .lines()
+        .next()
+        .expect("there was no next line")
+        .expect("the line could not be read")
+}
+
+fn print_for_play(state: &SingleSpaceState) {
+    let open_space_loc = state.open_space_loc;
+    let goal_data_loc = state.base.goal_data_loc;
+    for c in state.base.nodes.iter_indexes() {
+        if c.0 == 0 {
+            println!(); // newline at the start of each row
+        }
+        print!(
+            "{:1}{:3}+{:3}{:1}",
+            match c {
+                _ if c == goal_data_loc => '[',
+                _ if c == open_space_loc => '(',
+                _ => ' ',
+            },
+            state.base.nodes.get(&c).used,
+            state.base.nodes.get(&c).avail,
+            match c {
+                _ if c == goal_data_loc => ']',
+                _ if c == open_space_loc => ')',
+                _ => ' ',
+            },
+        );
+    }
+    println!(); // newline at the end of the grid
+}
+
+enum ManualAction<'a> {
+    Quit,
+    Echo(&'a str),
+    Move(Direction),
+}
+
+/// Plays the game interactively
+fn play_manually(grid: &Grid) {
+    match grid.get_initial_singlespacestate() {
+        Some(mut initial_state) => {
+            let mut step_count: usize = 0;
+            let mut state = initial_state.clone();
+            loop {
+                println!("After {} steps:", step_count);
+                println!();
+                print_for_play(&state);
+                let input = read_line();
+                let manual_action: ManualAction = match input.as_str() {
+                    "q" => ManualAction::Quit,
+                    "w" => ManualAction::Move(Direction::Up),
+                    "s" => ManualAction::Move(Direction::Down),
+                    "a" => ManualAction::Move(Direction::Left),
+                    "d" => ManualAction::Move(Direction::Right),
+                    other => ManualAction::Echo(other),
+                };
+                match manual_action {
+                    ManualAction::Quit => {
+                        println!("Exiting.");
+                        break;
+                    },
+                    ManualAction::Echo(input) => {
+                        println!("Command '{}' is unknown.", input);
+                    },
+                    ManualAction::Move(dir) => {
+                        let step = GridStep{from: state.open_space_loc, dir}.inverse();
+                        println!("Step {}", step);
+                        state = state.enact_step(&step);
+                        step_count += 1;
+                    },
+                }
+            }
+        },
+        None => {
+            println!("NOT A SINGLE SPACE GAME");
+        }
+    }
+}
 
 
 fn main() -> Result<(), Error> {
     println!("Starting...");
     let data = input()?;
-    part_a(&data);
-    part_b(&data);
+    play_manually(&data);
+    // part_a(&data); // FIXME: Restore
+    // part_b(&data); // FIXME: Restore
     Ok(())
 }
 
@@ -904,4 +1091,8 @@ mod tests {
         assert_eq!(genstate.nodes.get(&(1,1)).used, 4);
         assert_eq!(genstate.nodes.get(&(2,1)).used, 5);
     }
+
 }
+
+
+// 297 too big
