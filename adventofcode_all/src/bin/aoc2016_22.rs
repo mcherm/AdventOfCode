@@ -25,6 +25,7 @@ use nom::character::complete::u16 as nom_u16;
 const VERIFY_AVAIL_STEP_LOGIC: bool = false;
 const PRINT_EVERY_N_STEPS: usize = 1;
 const PRINT_WHEN_CLASSIFYING: bool = false;
+const VERBOSE_STATE: bool = false;
 
 
 fn input() -> Result<Grid, Error> {
@@ -128,7 +129,12 @@ trait State : Display + Clone + Eq + Hash {
             visited_from.len(),
             queue.len()
         );
-    } // the default is to print nothing
+    }
+
+    // FIXME: Another attempt at the above
+    fn state_name(&self) -> String {
+        "".to_string()
+    }
 }
 
 /// This is what we insert into the queue while doing an A* search. It has a State and the
@@ -501,7 +507,6 @@ impl<T: Eq + Hash + Clone> IntoIterator for GridVec<T> {
 
 /// This converts from an iterator of (Coord,T) into a GridVec<T>. The current version
 /// will panic if there isn't exactly one value for each Coord.
-/// FIXME: A better version might use default values for missing items and would avoid O(n^2) performance
 impl<T: Eq + Hash + Clone + Debug> FromIterator<(Coord, T)> for GridVec<T> {
     fn from_iter<U: IntoIterator<Item=(Coord, T)>>(iter: U) -> Self {
         let staging: Vec<(Coord, T)> = iter.into_iter().collect_vec();
@@ -571,7 +576,6 @@ impl Display for NodeSpace {
 /// That's what this function is for. It is passed a Coord which represents the outer bound
 /// of the rectangle, and it returns a Vec of the diagonals. It does NOT include the diagonal
 /// that contains the bound itself.
-/// FIXME: Could use a better explanation. Also, maybe should return an iterable not a Vec.
 fn diagonals(bound: Coord) -> Vec<Vec<Coord>> {
     // each diagonal has a certain taxi_distance from the origin
     let mut answer: Vec<Vec<Coord>> = Vec::new();
@@ -720,11 +724,16 @@ impl SingleSpaceState {
         if target_locs.len() == 0 {
             return 0; // we're already sitting at (0,0)
         } else {
+            let open_space_loc = self.open_space_loc;
             let min_dist_to_target_loc = target_locs.iter().map(|target_loc| {
-                target_loc.0.abs_diff(self.open_space_loc.0) + // x distance to get there
-                    target_loc.1.abs_diff(self.open_space_loc.1) + // y distance to get there
-                    if target_loc.0 == 0 && self.open_space_loc.0 == 0 {2} else {0} + // go-around-penalty
-                    if target_loc.1 == 0 && self.open_space_loc.1 == 0 {2} else {0} // go-around-penalty
+                if *target_loc == open_space_loc {
+                    0 // already there!
+                } else {
+                    target_loc.0.abs_diff(open_space_loc.0) + // x distance to get there
+                        target_loc.1.abs_diff(open_space_loc.1) + // y distance to get there
+                        if goal_data_loc.0 == 0 && open_space_loc.0 == 0 && open_space_loc.1 > goal_data_loc.1 {2} else {0} + // go-around-penalty
+                        if goal_data_loc.1 == 0 && open_space_loc.1 == 0 && open_space_loc.0 > goal_data_loc.0 {2} else {0} // go-around-penalty
+                }
             }).min().unwrap();
             min_dist_to_target_loc
         }
@@ -749,11 +758,8 @@ impl State for SingleSpaceState {
     /// never be too high). To make it pluggable, we have a set of different heuristics
     /// and this is coded to call one of them.
     fn min_steps_to_win(&self) -> usize {
-        // FIXME: The below is correct. But not working.
         1 + (self.base.taxicab_distance_from_goal_data_to_corner() - 1) * 5 +
             self.min_steps_open_space_must_take()
-        // FIXME: The below is what I'm trying right now.
-        // self.min_steps_open_space_must_take()
     }
 
     fn avail_steps(&self) -> &Vec<GridStep> {
@@ -801,12 +807,13 @@ impl State for SingleSpaceState {
             let ch = match c {
                 c if c == self.open_space_loc => '.',
                 c if c == self.base.goal_data_loc => 'X',
+                c if self.base.nodes.get(&c).used >= self.min_blocker_content => '#',
                 c if visited_from.contains_key(&self.dummy_with_space_at(c)) => '*',
                 c if queue.iter().any(|x| {
                     x.state.base.goal_data_loc == self.base.goal_data_loc &&
                         x.state.open_space_loc == c
                 }) => '&',
-                _ => '#',
+                _ => 'o',
             };
             print!("{}", ch);
         }
@@ -816,6 +823,14 @@ impl State for SingleSpaceState {
             visited_from.len(),
             queue.len()
         );
+    }
+
+    // FIXME: Another attempt at the above
+    fn state_name(&self) -> String {
+        use std::fmt::Write as FmtWrite;
+        let mut s = String::default();
+        write!(s, "SingleSpaceState at {:?}", self.open_space_loc).unwrap();
+        s
     }
 
 }
@@ -881,22 +896,26 @@ impl Display for GenState {
 
 impl Display for SingleSpaceState {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        for c in self.base.nodes.iter_indexes() {
-            if c.0 == 0 {
-                writeln!(f)?; // newline before each row
+        if VERBOSE_STATE {
+            for c in self.base.nodes.iter_indexes() {
+                if c.0 == 0 {
+                    writeln!(f)?; // newline before each row
+                }
+                let is_space = c == self.open_space_loc;
+                let is_goal = c == self.base.goal_data_loc;
+                let is_wall = self.base.nodes.get(&c).used >= self.min_blocker_content;
+                let ch = if is_goal {'X'} else if is_space {'.'} else if is_wall {'#'} else {'o'};
+                write!(f, "{}", ch)?;
             }
-            let is_space = c == self.open_space_loc;
-            let is_goal = c == self.base.goal_data_loc;
-            let is_wall = self.base.nodes.get(&c).used >= self.min_blocker_content;
-            let ch = if is_goal {'X'} else if is_space {'.'} else if is_wall {'#'} else {'o'};
-            write!(f, "{}", ch)?;
+            writeln!(f)?; // newline after last row
+            write!(f, "[")?;
+            for step in &self.base.avail_steps {
+                write!(f, "{} ", step)?;
+            }
+            writeln!(f, "]")?;
+        } else {
+            writeln!(f, "SingleSpaceState{{goal:{:?}, space: {:?}}}", self.base.goal_data_loc, self.open_space_loc)?;
         }
-        writeln!(f)?; // newline after last row
-        write!(f, "[")?;
-        for step in &self.base.avail_steps {
-            write!(f, "{} ", step)?;
-        }
-        writeln!(f, "]")?;
         Ok(())
     }
 }
@@ -908,7 +927,15 @@ impl<T: State> StateToConsider<T> {
             None => 0,
             Some((_,_,count)) => count
         };
-        step_count + self.state.min_steps_to_win()
+        let answer = step_count + self.state.min_steps_to_win();
+        answer
+    }
+}
+
+
+impl<S: State> Debug for StateToConsider<S> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "StateToConsider[{}] worth {}", self.state, self.sort_score())
     }
 }
 
@@ -1060,21 +1087,13 @@ fn print_for_play(state: &SingleSpaceState) {
         if c.0 == 0 {
             println!(); // newline at the start of each row
         }
-        print!(
-            "{:1}{:3}+{:3}{:1}",
-            match c {
-                _ if c == goal_data_loc => '[',
-                _ if c == open_space_loc => '(',
-                _ => ' ',
-            },
-            state.base.nodes.get(&c).used,
-            state.base.nodes.get(&c).avail,
-            match c {
-                _ if c == goal_data_loc => ']',
-                _ if c == open_space_loc => ')',
-                _ => ' ',
-            },
-        );
+        let ch = match (c, state.base.nodes.get(&c)) {
+            (c,_) if c == goal_data_loc => 'X',
+            (c,_) if c == open_space_loc => '.',
+            (_, NodeSpace{used, ..}) if *used >= state.min_blocker_content => 'H',
+            _ => 'o',
+        };
+        print!("{}", ch);
     }
     println!(); // newline at the end of the grid
 }
@@ -1083,18 +1102,27 @@ enum ManualAction<'a> {
     Quit,
     Echo(&'a str),
     Move(Direction),
+    Undo,
 }
 
 /// Plays the game interactively
 #[allow(dead_code)]
 fn play_manually(grid: &Grid) {
+    println!("Use the following commands (hit return after each character):");
+    println!("  q - Quit");
+    println!("  w - Move empty space up");
+    println!("  s - Move empty space down");
+    println!("  a - Move empty space left");
+    println!("  d - Move empty space right");
+    println!("  z - Undo previous move");
     match grid.get_initial_singlespacestate() {
         Some(initial_state) => {
-            let mut step_count: usize = 0;
+            let mut steps_taken: Vec<GridStep> = Vec::new();
             let mut state = initial_state.clone();
             loop {
-                println!("After {} steps:", step_count);
-                println!();
+                println!("After {} steps:", steps_taken.len());
+                // FIXME: Next println is only for debugging
+                println!("Estimating {} steps for space so {} steps to win", state.min_steps_open_space_must_take(),  state.min_steps_to_win());
                 print_for_play(&state);
                 let input = read_line();
                 let manual_action: ManualAction = match input.as_str() {
@@ -1103,6 +1131,7 @@ fn play_manually(grid: &Grid) {
                     "s" => ManualAction::Move(Direction::Down),
                     "a" => ManualAction::Move(Direction::Left),
                     "d" => ManualAction::Move(Direction::Right),
+                    "z" => ManualAction::Undo,
                     other => ManualAction::Echo(other),
                 };
                 match manual_action {
@@ -1117,8 +1146,19 @@ fn play_manually(grid: &Grid) {
                         let step = GridStep{from: state.open_space_loc, dir}.inverse();
                         println!("Step {}", step);
                         state = state.enact_step(&step);
-                        step_count += 1;
+                        steps_taken.push(step);
                     },
+                    ManualAction::Undo => {
+                        match steps_taken.pop() {
+                            None => {
+                                println!("Nothing more to undo.");
+                            },
+                            Some(prev_step) => {
+                                println!("Undo");
+                                state = state.enact_step(&prev_step.inverse());
+                            },
+                        }
+                    }
                 }
             }
         },
@@ -1132,9 +1172,9 @@ fn play_manually(grid: &Grid) {
 fn main() -> Result<(), Error> {
     println!("Starting...");
     let data = input()?;
-    play_manually(&data); // FIXME: Restore?
+    // play_manually(&data); // FIXME: Restore?
     // part_a(&data); // FIXME: Restore
-    // part_b(&data); // FIXME: Restore
+    part_b(&data); // FIXME: Restore
     Ok(())
 }
 
@@ -1182,6 +1222,50 @@ mod tests {
         assert_eq!(genstate.nodes.get(&(2,1)).used, 5);
     }
 
+    #[test]
+    fn test_min_steps_open_space_must_take() {
+        /// Builds a SingleSpaceState that's 6x6 with the goal at goal_coord and the
+        /// space at space_coord.
+        fn build_state(goal_coord: Coord, space_coord: Coord) -> SingleSpaceState {
+            let size = (6,6);
+            assert_ne!(space_coord, (0, size.1 - 1)); // won't work right if the top-right is the space_coord
+            let mut nodes: HashMap<Coord,Node> = HashMap::new();
+            for y in 0..6 {
+                for x in 0..6 {
+                    if (x,y) == space_coord {
+                        nodes.insert((x,y), Node{x, y, size: 60, used: 0, avail: 60});
+                    } else {
+                        nodes.insert((x,y), Node{x, y, size: 60, used: 50, avail: 10});
+                    }
+                }
+            }
+            let grid = Grid{nodes, size};
+            let mut sss = grid.get_initial_singlespacestate().unwrap();
+            sss.base.goal_data_loc = goal_coord;
+            sss
+        }
+
+        let expected_data = vec![
+            // ( goal_loc, space_loc, expect_steps )
+            ((3,0), (4,0), 4),
+            ((4,0), (3,0), 0),
+            ((1,0), (0,1), 1),
+            ((2,2), (1,2), 0),
+            ((2,2), (2,1), 0),
+            ((2,2), (1,1), 1),
+            ((2,2), (0,0), 3),
+            ((2,2), (3,2), 2),
+            ((2,2), (2,3), 2),
+            ((2,2), (0,1), 2),
+            ((3,0), (3,1), 2),
+        ];
+
+        for (goal_coord, space_coord, expect_steps) in expected_data {
+            let steps = build_state(goal_coord, space_coord).min_steps_open_space_must_take();
+            println!("Testing {:?}, {:?}, {}", goal_coord, space_coord, expect_steps); // so I can tell which one failed
+            assert_eq!(expect_steps, steps);
+        }
+    }
 }
 
 
