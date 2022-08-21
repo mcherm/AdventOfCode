@@ -22,8 +22,9 @@ use nom::{
 use nom::character::complete::u16 as nom_u16;
 
 
+const PLAY_MANUAL_GAME: bool = false;
 const VERIFY_AVAIL_STEP_LOGIC: bool = false;
-const PRINT_EVERY_N_STEPS: usize = 1;
+const PRINT_EVERY_N_STEPS: usize = 1000;
 const PRINT_WHEN_CLASSIFYING: bool = false;
 const VERBOSE_STATE: bool = false;
 
@@ -808,7 +809,13 @@ impl State for SingleSpaceState {
                 c if c == self.open_space_loc => '.',
                 c if c == self.base.goal_data_loc => 'X',
                 c if self.base.nodes.get(&c).used >= self.min_blocker_content => '#',
-                c if visited_from.contains_key(&self.dummy_with_space_at(c)) => '*',
+                c if visited_from.contains_key(&self.dummy_with_space_at(c)) => match visited_from.get(&self.dummy_with_space_at(c)).unwrap() {
+                    None                                              => '@',
+                    Some((_, GridStep{dir: Direction::Down,  ..}, _)) => '^',
+                    Some((_, GridStep{dir: Direction::Up,    ..}, _)) => 'v',
+                    Some((_, GridStep{dir: Direction::Left,  ..}, _)) => '>',
+                    Some((_, GridStep{dir: Direction::Right, ..}, _)) => '<',
+                },
                 c if queue.iter().any(|x| {
                     x.state.base.goal_data_loc == self.base.goal_data_loc &&
                         x.state.open_space_loc == c
@@ -914,7 +921,7 @@ impl Display for SingleSpaceState {
             }
             writeln!(f, "]")?;
         } else {
-            writeln!(f, "SingleSpaceState{{goal:{:?}, space: {:?}}}", self.base.goal_data_loc, self.open_space_loc)?;
+            write!(f, "SingleSpaceState{{goal:{:?}, space: {:?}}}", self.base.goal_data_loc, self.open_space_loc)?;
         }
         Ok(())
     }
@@ -967,6 +974,19 @@ fn solve_with_astar<S: State>(initial_state: &mut S) -> Option<Vec<GridStep>> {
                     Some((_,_,step_count)) => step_count,
                 };
 
+                // What to do if we visited this before?
+                if let Some(prev) = visited_from.get(&state) {
+                    let been_here_same_or_better = match prev {
+                        None => true,
+                        Some((_visited_state, _grid_step, prev_steps)) => *prev_steps <= step_count, // FIXME: think carefully about off-by-one error
+                    };
+                    if been_here_same_or_better {
+                        // been here before, and it took same-or-fewer steps, so don't bother to re-examine
+                        continue;
+                    }
+                }
+
+
                 // -- Every so often, print it out so we can monitor progress --
                 if loop_ctr % PRINT_EVERY_N_STEPS == 0 {
                     if PRINT_EVERY_N_STEPS > 1 || !visited_from.contains_key(&state.clone()) {
@@ -975,6 +995,7 @@ fn solve_with_astar<S: State>(initial_state: &mut S) -> Option<Vec<GridStep>> {
                 }
 
                 // -- mark that we have (or now will!) visited this one --
+                assert!(!visited_from.contains_key(&state)); // FIXME: Assert that we haven't been here before
                 visited_from.insert(state.clone(), prev);
 
                 // -- try each step from here --
@@ -1172,9 +1193,12 @@ fn play_manually(grid: &Grid) {
 fn main() -> Result<(), Error> {
     println!("Starting...");
     let data = input()?;
-    // play_manually(&data); // FIXME: Restore?
-    // part_a(&data); // FIXME: Restore
-    part_b(&data); // FIXME: Restore
+    if PLAY_MANUAL_GAME {
+        play_manually(&data);
+    } else {
+        part_a(&data);
+        part_b(&data);
+    }
     Ok(())
 }
 
@@ -1196,7 +1220,6 @@ mod tests {
             vec![(1,2), (2,1), (3,0)],
             vec![(2,2), (3,1), (4,0)],
             vec![(3,2), (4,1)],
-            // vec![(4,2)],
         ]);
     }
 
