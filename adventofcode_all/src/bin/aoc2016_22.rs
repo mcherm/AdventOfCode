@@ -24,6 +24,7 @@ use nom::character::complete::u16 as nom_u16;
 
 const VERIFY_AVAIL_STEP_LOGIC: bool = false;
 const PRINT_EVERY_N_STEPS: usize = 1;
+const PRINT_WHEN_CLASSIFYING: bool = false;
 
 
 fn input() -> Result<Grid, Error> {
@@ -92,10 +93,13 @@ struct GenState {
 }
 
 /// A specialized version of GenState that is optimized for the case where there is a single
-/// location with enough space to move the goal_data into it.
+/// location that can be moved around (except to some places) and that's the only way to
+/// move the goal data around. It's a weird special case, but one which arose in my own
+/// data and frankly the solve time is unreasonable if this DOESN'T apply.
 #[derive(Clone, Debug, Eq)]
 struct SingleSpaceState {
     base: GenState,
+    min_blocker_content: usize,
     open_space_loc: Coord,
 }
 
@@ -224,6 +228,27 @@ fn neighbor_dirs(coord: Coord, size: Coord) -> Vec<Direction> {
 }
 
 
+#[derive(Debug, Clone)]
+struct NotASpecialGridError;
+
+impl Display for NotASpecialGridError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Not a special grid error")
+    }
+}
+
+impl std::error::Error for NotASpecialGridError {
+}
+
+
+enum NodeClassification {
+    Goal, // The node containing the goal data; must qualify as a FillerNode.
+    Empty, // The node with no data; must qualify as a FillerNode.
+    Filler, // Big enough to move data into, but too big to combine
+    Blocker, // So big it can't move into any Filler spot
+}
+
+
 impl Grid {
     fn count_viable_pairs(&self) -> usize {
         let mut count = 0;
@@ -259,35 +284,129 @@ impl Grid {
         GenState{nodes, goal_data_loc: self.goal_data_loc(), avail_steps }
     }
 
-    /// If there is only a single space that contains enough available space for the goal data, this
-    /// returns Some the coord for that space. Otherwise, it returns None.
-    fn find_single_space(&self) -> Option<Coord> {
-        let goal_data_loc = self.goal_data_loc();
-        let goal_data_size = self.nodes.get(&goal_data_loc).unwrap().used;
-        let locs_with_space = self.nodes.iter()
-            .filter(|(_coord, node)| node.avail >= goal_data_size)
-            .map(|(coord, _node)| *coord)
-            .collect::<Vec<Coord>>();
-        if locs_with_space.len() == 1 {
-            let empty_space_loc = *locs_with_space.first().unwrap();
-            if empty_space_loc == goal_data_loc {
-                None
-            } else {
-                Some(empty_space_loc)
+    /// Attempts to find the SingleSpaceState -- but returns None if the grid doesn't conform
+    /// to the expectations of that.
+    fn get_initial_singlespacestate(&self) -> Option<SingleSpaceState> {
+        match self.attempt_classification() {
+            Err(NotASpecialGridError) => None,
+            Ok((open_space_loc, min_blocker_content)) => {
+                let base = self.get_initial_genstate();
+                Some(SingleSpaceState{base, min_blocker_content, open_space_loc})
             }
-        } else {
-            None
         }
     }
 
-    fn get_initial_singlespacestate(&self) -> Option<SingleSpaceState> {
-        match self.find_single_space() {
-            None => None,
-            Some(open_space_loc) => {
-                let base = self.get_initial_genstate();
-                Some(SingleSpaceState {base, open_space_loc})
+    /// This attempts to classify every cell of the grid in the special set of restricted
+    /// rules that I observed for my own data and which allows for a SingleFreeSpaceWithWallsState
+    /// to be used. If successful it return Ok((open_space_loc, min_blocker_content)), otherwise it returns NotASpecialGridError
+    fn attempt_classification(&self) -> Result<(Coord, usize), NotASpecialGridError> {
+        let state = self.get_initial_genstate();
+
+        // --- values we observed in the data named foo_seen ---
+        // --- constraints we will apply named foo_rule ---
+        let goal_data_size_seen = state.nodes.get(&state.goal_data_loc).used;
+        let zero_used_count_seen = state.nodes.data.iter()
+            .filter(|x| x.used == 0)
+            .count();
+        if zero_used_count_seen != 1 {
+            return Err(NotASpecialGridError);
+        }
+        let open_space_loc = state.nodes.iter_indexes()
+            .filter(|c| state.nodes.get(c).used == 0)
+            .nth(0).unwrap();
+        let max_nonzero_avail_seen = state.nodes.data.iter()
+            .filter(|x| x.used != 0)
+            .map(|x| x.avail)
+            .max().ok_or(NotASpecialGridError)?;
+        let max_avail_rule: usize = max_nonzero_avail_seen;
+        let min_nonzero_size_seen = state.nodes.data.iter()
+            .filter(|x| x.used != 0)
+            .map(|x| x.used)
+            .min().ok_or(NotASpecialGridError)?;
+        if max_nonzero_avail_seen >= min_nonzero_size_seen {
+            return Err(NotASpecialGridError);
+        }
+        let min_filler_content_rule: usize = min_nonzero_size_seen;
+        let max_filler_capacity_rule: usize = min_filler_content_rule * 2 - 1;
+        let min_blocker_content_rule: usize = max_filler_capacity_rule + 1;
+        let max_filler_content_seen = state.nodes.data.iter()
+            .filter(|x| x.used < min_blocker_content_rule)
+            .map(|x| x.used)
+            .max().ok_or(NotASpecialGridError)?;
+        let max_filler_content_rule: usize = max_filler_content_seen;
+        let min_filler_capacity_rule: usize = max_filler_content_rule;
+
+        // --- these asserts are checking my logic in this method NOT the input data ---
+        assert!(max_avail_rule < min_filler_content_rule); // no filler can be moved into anywhere but the empty space
+        assert!(max_filler_capacity_rule < 2 * min_filler_content_rule); // two fillers can never fit into any filler location
+        assert!(max_filler_content_rule <= min_filler_capacity_rule); // any filler can be moved into any other filler location
+        assert!(min_blocker_content_rule > max_filler_capacity_rule); // no blocker can be moved into a filler
+
+        let valid_filler = |used, avail|
+            used >= min_filler_content_rule &&
+            used <= max_filler_content_rule &&
+            used + avail >= min_filler_capacity_rule &&
+            used + avail <= max_filler_capacity_rule &&
+            avail <= max_avail_rule;
+
+        let valid_empty = |avail|
+            avail >= min_filler_capacity_rule &&
+            avail <= max_filler_capacity_rule;
+
+        let valid_blocker = |used, avail|
+            used >= min_blocker_content_rule &&
+            avail <= max_avail_rule;
+
+        let classify = |c: &Coord| -> Result<NodeClassification, NotASpecialGridError> {
+            let node_space: &NodeSpace = state.nodes.get(c);
+            if *c == state.goal_data_loc {
+                match node_space {
+                    NodeSpace{used, avail} if valid_filler(*used, *avail) => Ok(NodeClassification::Goal),
+                    _ => Err(NotASpecialGridError),
+                }
+            } else {
+                match node_space {
+                    NodeSpace{used: 0, avail} if valid_empty(*avail) => Ok(NodeClassification::Empty),
+                    NodeSpace{used, avail} if valid_filler(*used, *avail) => Ok(NodeClassification::Filler),
+                    NodeSpace{used, avail} if valid_blocker(*used, *avail) => Ok(NodeClassification::Blocker),
+                    _ => Err(NotASpecialGridError),
+                }
+            }
+        };
+
+        if PRINT_WHEN_CLASSIFYING {
+            println!("goal_data_size_seen = {}", goal_data_size_seen);
+            println!("zero_used_count_seen = {}", zero_used_count_seen);
+            println!("open_space_loc = {:?}", open_space_loc);
+            println!("max_nonzero_avail_seen = {}", max_nonzero_avail_seen);
+            println!("max_avail_rule = {}", max_avail_rule);
+            println!("min_nonzero_size_seen = {}", min_nonzero_size_seen);
+            println!("min_filler_content_rule = {}", min_filler_content_rule);
+            println!("max_filler_capacity_rule = {}", max_filler_capacity_rule);
+            println!("min_blocker_content_rule = {}", min_blocker_content_rule);
+            println!("max_filler_content_seen = {}", max_filler_content_seen);
+            println!("max_filler_content_rule = {}", max_filler_content_rule);
+            println!("min_filler_capacity_rule = {}", min_filler_capacity_rule);
+            for c in state.nodes.iter_indexes() {
+                if c.0 == 0 {
+                    println!(); // newline at the start of each row
+                }
+                let ch = match classify(&c)? {
+                    NodeClassification::Goal => 'X',
+                    NodeClassification::Empty => '.',
+                    NodeClassification::Filler => 'o',
+                    NodeClassification::Blocker => 'H',
+                };
+                print!("{}", ch);
+            }
+            println!(); // newline at the end of the grid
+        } else {
+            for c in state.nodes.iter_indexes() {
+                classify(&c)?;
             }
         }
+
+        Ok((open_space_loc, min_blocker_content_rule))
     }
 }
 
@@ -646,6 +765,7 @@ impl State for SingleSpaceState {
     /// valid Steps for this State).
     fn enact_step(&self, step: &GridStep) -> Self {
         let base = self.base.enact_step(step);
+        let min_blocker_content = self.min_blocker_content;
 
         // --- set open_space_loc ---
         let open_space_loc = if step.to() == self.open_space_loc {
@@ -655,7 +775,7 @@ impl State for SingleSpaceState {
         };
 
         // --- return the result ---
-        SingleSpaceState {base, open_space_loc}
+        SingleSpaceState{base, min_blocker_content, open_space_loc}
     }
 
 
@@ -711,10 +831,10 @@ impl PartialEq for GenState {
 
 impl PartialEq for SingleSpaceState {
     fn eq(&self, other: &Self) -> bool {
-        // FIXME: REAL answer:
-        // self.base.eq(&other.base)
-        // FIXME: Bad answer:
-        self.open_space_loc.eq(&other.open_space_loc) && self.base.goal_data_loc.eq(&other.base.goal_data_loc)
+        // ONLY the locations of these two spots matter in equality testing
+        self.base.nodes.size.eq(&other.base.nodes.size) &&
+            self.open_space_loc.eq(&other.open_space_loc) &&
+            self.base.goal_data_loc.eq(&other.base.goal_data_loc)
     }
 }
 
@@ -729,11 +849,10 @@ impl Hash for GenState {
 
 impl Hash for SingleSpaceState {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        // FIXME: REAL answer:
-        // self.base.hash(state)
-        // FIXME: Bad answer:
+        // ONLY the locations of these two spots matter in equality testing
+        self.base.nodes.size.hash(state);
         self.open_space_loc.hash(state);
-        // self.base.goal_data_loc.hash(state);
+        self.base.goal_data_loc.hash(state);
     }
 }
 
@@ -768,7 +887,8 @@ impl Display for SingleSpaceState {
             }
             let is_space = c == self.open_space_loc;
             let is_goal = c == self.base.goal_data_loc;
-            let ch = if is_goal {'X'} else if is_space {'.'} else {'#'};
+            let is_wall = self.base.nodes.get(&c).used >= self.min_blocker_content;
+            let ch = if is_goal {'X'} else if is_space {'.'} else if is_wall {'#'} else {'o'};
             write!(f, "{}", ch)?;
         }
         writeln!(f)?; // newline after last row
@@ -894,38 +1014,6 @@ fn find_winning_steps(grid: &Grid) -> Option<Vec<GridStep>> {
 }
 
 
-// FIXME: Remove this later
-fn analyze_grid(grid: &Grid) {
-    let nodes: GridVec<NodeSpace> = grid.nodes.iter()
-        .map(|(coord, node)| (*coord, NodeSpace{used: node.used, avail: node.avail})).collect();
-
-    let min_data = nodes.clone().into_iter().map(|x| x.used).min().unwrap();
-    println!("min_data = {}", min_data);
-
-    let key_data_loc = (grid.size.0 - 1 ,0);
-    let key_data_size = nodes.get(&key_data_loc).used;
-    println!("key_data_size = {}", key_data_size);
-
-    let most_avail = nodes.clone().into_iter().map(|x| x.avail).max().unwrap();
-    println!("most_avail = {}", most_avail);
-
-    let most_possible_avail = nodes.clone().into_iter().map(|x| x.used + x.avail - min_data).max().unwrap();
-    println!("most_possible_avail = {}", most_possible_avail);
-
-    for c in nodes.iter_indexes() {
-        if c.0 == 0 {
-            println!();
-        }
-        let ch = match c {
-            cc if cc == key_data_loc => 'X',
-            _ => '#',
-        };
-        print!("{}", ch);
-    }
-    println!();
-}
-
-
 
 #[allow(dead_code)]
 fn part_a(grid: &Grid) {
@@ -964,6 +1052,7 @@ fn read_line() -> String {
         .expect("the line could not be read")
 }
 
+
 fn print_for_play(state: &SingleSpaceState) {
     let open_space_loc = state.open_space_loc;
     let goal_data_loc = state.base.goal_data_loc;
@@ -997,9 +1086,10 @@ enum ManualAction<'a> {
 }
 
 /// Plays the game interactively
+#[allow(dead_code)]
 fn play_manually(grid: &Grid) {
     match grid.get_initial_singlespacestate() {
-        Some(mut initial_state) => {
+        Some(initial_state) => {
             let mut step_count: usize = 0;
             let mut state = initial_state.clone();
             loop {
@@ -1042,7 +1132,7 @@ fn play_manually(grid: &Grid) {
 fn main() -> Result<(), Error> {
     println!("Starting...");
     let data = input()?;
-    play_manually(&data);
+    play_manually(&data); // FIXME: Restore?
     // part_a(&data); // FIXME: Restore
     // part_b(&data); // FIXME: Restore
     Ok(())
