@@ -271,8 +271,12 @@ fn part_a(instructions: &Vec<Instruction>) {
 }
 
 
-fn part_b(_instructions: &Vec<Instruction>) {
+fn part_b(instructions: &Vec<Instruction>) {
     println!("\nPart b:");
+    let mut instructions: Vec<Instruction> = (*instructions).clone(); // make a copy since we'll change it
+    let mut machine = Machine::new();
+    machine.regs[0] = 12; // set the initial input
+    simulate_machine(&mut machine, &mut instructions);
 }
 
 
