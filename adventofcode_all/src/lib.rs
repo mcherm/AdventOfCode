@@ -4,3 +4,5 @@ pub mod eznom;
 
 #[allow(unused)]
 pub mod hash_life;
+
+pub mod astar;

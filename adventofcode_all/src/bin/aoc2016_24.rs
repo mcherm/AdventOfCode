@@ -1,9 +1,9 @@
+#![allow(dead_code)] // FIXME: Remove this
 
 extern crate anyhow;
 
 use std::fs;
 use anyhow::Error;
-use std::cmp::Ordering;
 use std::collections::{HashMap, VecDeque};
 use std::fmt::{Debug, Display, Formatter};
 use std::hash::Hash;
@@ -21,7 +21,6 @@ use nom::{
 };
 
 
-const PRINT_EVERY_N_STEPS: usize = 1;
 
 
 fn input() -> Result<Grid, Error> {
@@ -338,114 +337,12 @@ impl<S: State> Debug for StateToConsider<S> {
 
 
 
-#[allow(dead_code)] // FIXME: Remove
-fn solve_with_astar<S: State>(initial_state: &mut S) -> Option<Vec<GridStep>> {
-    println!("Starting state: {:}", initial_state);
-
-    // visited_from maps from a state (which we have considered and explored its neighbors) to how
-    // we got there: (prev_state, prev_step, step_count).
-    let mut visited_from: HashMap<S, Option<(S, GridStep, usize)>> = HashMap::new();
-
-    // queue is a collection of states we will consider. What we store is
-    //   StateToConsider. The queue is kept sorted by sort_score()
-    let mut queue: VecDeque<StateToConsider<S>> = VecDeque::new();
-    queue.push_back(StateToConsider{state: initial_state.clone(), prev: None});
-
-    let mut loop_ctr: usize = 0;
-    loop {
-        loop_ctr += 1;
-
-        match queue.pop_front() {
-            None => {
-                return None; // we ran out of places to go. Guess it's not solvable!
-            }
-            Some(StateToConsider{state, prev}) => {
-                let step_count = match prev {
-                    None => 0,
-                    Some((_,_,step_count)) => step_count,
-                };
-
-                // What to do if we visited this before?
-                if let Some(prev) = visited_from.get(&state) {
-                    let been_here_same_or_better = match prev {
-                        None => true,
-                        Some((_visited_state, _grid_step, prev_steps)) => *prev_steps <= step_count, // FIXME: think carefully about off-by-one error
-                    };
-                    if been_here_same_or_better {
-                        // been here before, and it took same-or-fewer steps, so don't bother to re-examine
-                        continue;
-                    }
-                }
-
-
-                // -- Every so often, print it out so we can monitor progress --
-                if loop_ctr % PRINT_EVERY_N_STEPS == 0 {
-                    if PRINT_EVERY_N_STEPS > 1 || !visited_from.contains_key(&state.clone()) {
-                        state.show_state(loop_ctr, step_count, &visited_from, &queue);
-                    }
-                }
-
-                // -- mark that we have (or now will!) visited this one --
-                assert!(!visited_from.contains_key(&state)); // FIXME: Assert that we haven't been here before
-                visited_from.insert(state.clone(), prev);
-
-                // -- try each step from here --
-                for step in state.avail_steps() {
-                    let next_state: S = state.enact_step(step);
-                    let next_steps = step_count + 1;
-
-                    // -- maybe we've already been to this one --
-                    let earlier_visit = visited_from.get(&next_state);
-                    // -- decide whether to put next_state onto the queue... --
-                    let try_next_state = match earlier_visit {
-                        None => true, // never seen it, certainly want to try it out
-                        Some(None) => false, // the earlier visit was our starting position
-                        Some(Some((_, _, earlier_step_count))) => {
-                            match earlier_step_count.cmp(&next_steps) {
-                                Ordering::Greater => panic!("Found faster way to a visited site."),
-                                Ordering::Equal => false, // been here same distance; don't try it
-                                Ordering::Less => false, // been here better distance; don't try it
-                            }
-                        }
-                    };
-
-                    if try_next_state {
-                        if next_state.is_winning() {
-                            println!("\nSOLVED!! {}", next_state);
-                            let winning_steps = Some({
-                                let mut steps: Vec<GridStep> = Vec::new();
-                                steps.push(*step);
-                                let mut state_var: &S = &state;
-                                while let Some((prev_state, prev_step, _)) = visited_from.get(&state_var).unwrap() {
-                                    steps.push((*prev_step).clone());
-                                    state_var = prev_state;
-                                }
-                                steps.reverse();
-                                steps
-                            });
-                            return winning_steps
-                        } else {
-                            // -- Actually add this to the queue --
-                            let to_insert = StateToConsider{
-                                state: next_state,
-                                prev: Some((state.clone(), *step, step_count + 1))
-                            };
-                            let insert_idx = queue.partition_point(|x| x.sort_score() < to_insert.sort_score());
-                            queue.insert(insert_idx, to_insert);
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-
 
 
 #[allow(dead_code)]
 fn part_a(_grid: &Grid) {
     println!("\nPart a:");
+
 }
 
 
