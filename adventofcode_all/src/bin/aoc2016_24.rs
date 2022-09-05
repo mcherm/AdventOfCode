@@ -1,26 +1,27 @@
-#![allow(dead_code)] // FIXME: Remove this
 
 extern crate anyhow;
 
 use std::fs;
 use anyhow::Error;
-use std::collections::{HashMap, VecDeque};
 use std::fmt::{Debug, Display, Formatter};
-use std::hash::Hash;
-use itertools::Itertools;
-
-
+use std::hash::{Hash, Hasher};
+use std::collections::BTreeMap;
+use advent_lib::astar::{
+    solve_with_astar, State,
+    grid::{Coord, GridVec, GridMove, taxicab_dist, moves_from}
+};
 use nom::{
     IResult,
     branch::alt,
     bytes::complete::tag,
-    character::complete::{line_ending, not_line_ending},
+    character::complete::line_ending,
     combinator::map,
     multi::many1,
     sequence::terminated,
 };
 
 
+const PRINT_EVERY_N_MOVES: usize = 0;
 
 
 fn input() -> Result<Grid, Error> {
@@ -35,8 +36,6 @@ fn input() -> Result<Grid, Error> {
 
 
 
-type Coord = (usize, usize);
-
 type PointNum = u8;
 
 #[derive(Copy, Clone, Debug, Hash, Eq, PartialEq)]
@@ -46,75 +45,21 @@ enum Cell {
     Point(PointNum),
 }
 
-/// This is a data structure for storing items indexed by a Coord. It provide O(1) lookup
-/// and also provides Eq and Hash.
-#[derive(Clone, Debug, Eq, PartialEq, Hash)]
-struct GridVec<T: Eq + Hash + Clone> {
-    size: Coord,
-    data: Vec<T>,
-}
 
-#[derive(Debug)]
+#[derive(Debug, Eq, PartialEq)]
 struct Grid {
     nodes: GridVec<Cell>,
+    points: BTreeMap<PointNum,Coord>,
 }
 
-#[allow(dead_code)] // FIXME: Remove
-#[derive(Copy, Clone, Debug, Ord, PartialOrd, Eq, PartialEq)]
-enum Direction {
-    Up, Down, Left, Right
-}
-
-#[derive(Copy, Clone, Debug, Ord, PartialOrd, Eq, PartialEq)]
-struct GridStep {
-    from: Coord,
-    dir: Direction,
+#[derive(Debug, Clone, Eq, PartialEq)]
+struct RobotState<'a> {
+    grid: &'a Grid,
+    goal: &'a Coord,
+    robot_pos: Coord,
 }
 
 
-
-trait State : Display + Clone + Eq + Hash {
-    fn is_winning(&self) -> bool;
-    fn min_steps_to_win(&self) -> usize;
-    fn avail_steps(&self) -> &Vec<GridStep>;
-    fn enact_step(&self, step: &GridStep) -> Self;
-
-    // FIXME: This is probably temporary
-    fn show_state(
-        &self,
-        loop_ctr: usize,
-        step_count: usize,
-        visited_from: &HashMap<Self, Option<(Self, GridStep, usize)>>,
-        queue: &VecDeque<StateToConsider<Self>>
-    ) {
-        println!(
-            "\nAt {} went {} steps; at least {} to go for a total of {}:{:}. Have visited {} states and have {} queued.",
-            loop_ctr,
-            step_count,
-            self.min_steps_to_win(),
-            step_count + self.min_steps_to_win(),
-            self,
-            visited_from.len(),
-            queue.len()
-        );
-    }
-}
-
-
-/// This is what we insert into the queue while doing an A* search. It has a State and the
-/// number of steps it took to get there. They are sortable (because the queue is kept
-/// sorted) and the sort order is by step_count + state.min_steps_to_win()
-struct StateToConsider<S: State> {
-    state: S, // the state we will consider
-    prev: Option<(S, GridStep, usize)>, // Some(the previous state, the step from it, and the num_steps to get here) or None if this is the FIRST state.
-}
-
-
-
-
-fn nom_line(input: &str) -> IResult<&str, &str> {
-    terminated( not_line_ending, line_ending )(input)
-}
 
 impl Cell {
     fn parse(input: &str) -> IResult<&str, Self> {
@@ -151,198 +96,134 @@ impl Grid {
     }
 
     /// Constructor which works on a 2 dimensional vector. Panics if the vector isn't rectangular
-    /// or if it isn't at least 1x1.
+    /// or if it isn't at least 1x1. Also panics if it finds there is a duplicate PointNum or
+    /// the PointNum 0 is missing.
     fn from_vec2d(data: Vec<Vec<Cell>>) -> Self {
         let nodes = GridVec::from_vec2d(&data);
-        Grid{nodes}
-    }
-}
 
-
-/// This returns a list of the directions reachable from this coordinate.
-fn neighbor_dirs(coord: Coord, size: Coord) -> Vec<Direction> {
-    let mut answer = Vec::with_capacity(4);
-    if coord.0 > 0 {
-        answer.push(Direction::Left);
-    }
-    if coord.1 > 0 {
-        answer.push(Direction::Up);
-    }
-    if coord.1 + 1 < size.1 {
-        answer.push(Direction::Down);
-    }
-    if coord.0 + 1 < size.0 {
-        answer.push(Direction::Right);
-    }
-    answer
-}
-
-
-
-impl Grid {
-}
-
-
-
-impl Direction {
-    /// Returns the opposite of this direction
-    fn inverse(&self) -> Self {
-        match self {
-            Direction::Up => Direction::Down,
-            Direction::Down => Direction::Up,
-            Direction::Left => Direction::Right,
-            Direction::Right => Direction::Left,
-        }
-    }
-}
-
-
-/// This is used just to return an iterator of Coords.
-struct GridVecCoordIter {
-    size: Coord,
-    next_val: Option<Coord>,
-}
-
-impl Iterator for GridVecCoordIter {
-    type Item = Coord;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let answer = self.next_val;
-        match self.next_val {
-            None => {
-                self.next_val = Some((0,0));
-            },
-            Some((x, y)) => {
-                self.next_val = if x + 1 < self.size.0 {
-                    Some((x + 1, y))
-                } else if y + 1 < self.size.1 {
-                    Some((0, y + 1))
-                } else {
-                    None
-                };
-            },
-        }
-        answer
-    }
-}
-
-impl<T: Eq + Hash + Clone> GridVec<T> {
-    /// Construct from a vec (which must be rectangular and at least 1x1 in size or it panics).
-    fn from_vec2d(data_vec: &Vec<Vec<T>>) -> Self {
-        let height = data_vec.len();
-        assert!(height >= 1);
-        let width = data_vec.first().unwrap().len();
-        assert!(width >= 1);
-        let size = (width, height);
-        assert!(data_vec.iter().all(|x| x.len() == width));
-
-        let mut data = Vec::with_capacity(width * height);
-        for row in data_vec.iter() {
-            for cell in row.iter() {
-                data.push(cell.clone());
+        let mut points = BTreeMap::new();
+        for c in nodes.iter_indexes() {
+            let cell = nodes.get(&c);
+            match cell {
+                Cell::Point(point_num) => {
+                    assert!(!points.contains_key(point_num));
+                    points.insert(*point_num, c);
+                },
+                _ => {}, // ignore anything else
             }
         }
+        assert!(points.contains_key(&0));
 
-        GridVec{size, data}
+        Grid{nodes, points}
     }
 
-    fn coord_to_index(&self, coord: &Coord) -> usize {
-        if coord.0 >= self.size.0 || coord.1 >= self.size.1 {
-            panic!("Coord {:?} is out of bounds.", coord);
-        }
-        coord.1 * self.size.0 + coord.0
+
+    /// Returns the dimensions of the grid.
+    fn size(&self) -> Coord {
+        self.nodes.size()
     }
 
-    fn index_to_coord(&self, idx: usize) -> Coord {
-        (idx % self.size.0, idx / self.size.0)
-    }
 
-    /// This is used to iterate through the indexes of the coord. It happens to
-    /// loop through x faster than y.
-    fn iter_indexes(&self) -> impl Iterator<Item = Coord> {
-        GridVecCoordIter{size: self.size, next_val: Some((0,0))}
-    }
-
-    /// This returns (in O(1) time) the item in the GridVec at the given coord. If
-    /// the coord is not within size, then this panics.
-    fn get(&self, coord: &Coord) -> &T {
-        let idx = self.coord_to_index(coord);
-        self.data.get(idx).unwrap()
-    }
-
-    /// This returns (in O(1) time) a mutable reference to the item in the GridVec at the
-    /// given coord. If the coord is not within size then this panics.
-    fn get_mut(&mut self, coord: &Coord) -> &mut T {
-        let idx = self.coord_to_index(coord);
-        self.data.get_mut(idx).unwrap()
-    }
-}
-
-
-impl<T: Eq + Hash + Clone> IntoIterator for GridVec<T> {
-    type Item = T;
-    type IntoIter = std::vec::IntoIter<T>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.data.into_iter()
-    }
-}
-
-
-/// This converts from an iterator of (Coord,T) into a GridVec<T>. The current version
-/// will panic if there isn't exactly one value for each Coord.
-impl<T: Eq + Hash + Clone + Debug> FromIterator<(Coord, T)> for GridVec<T> {
-    fn from_iter<U: IntoIterator<Item=(Coord, T)>>(iter: U) -> Self {
-        let staging: Vec<(Coord, T)> = iter.into_iter().collect_vec();
-        let max_x = staging.iter().map(|(c,_)| c.0).max().unwrap_or(0);
-        let max_y = staging.iter().map(|(c,_)| c.1).max().unwrap_or(0);
-        let size: Coord = (max_x + 1, max_y + 1);
-
-        let get_value = |idx: usize| {
-            let coord = (idx % size.0, idx / size.0);
-            for (c,v) in &staging {
-                if *c == coord {
-                    return v.clone()
-                }
-            }
-            panic!("No value provided for coordinate {:?}", coord)
-        };
-
-        let indexes = 0..(size.0 * size.1);
-        let data: Vec<T> = indexes.map(get_value).collect();
-
-        GridVec{size, data}
-    }
-}
-
-
-
-impl<T: State> StateToConsider<T> {
-    fn sort_score(&self) -> usize {
-        let step_count = match self.prev {
-            None => 0,
-            Some((_,_,count)) => count
-        };
-        let answer = step_count + self.state.min_steps_to_win();
+    /// Returns a list of the PointNums appearing in the grid. Panics if any PointNum is
+    /// not unique. The PointNums will be in sorted order.
+    fn get_points(&self) -> Vec<PointNum> {
+        let mut answer: Vec<PointNum> = self.points.keys().map(|x| *x).collect();
+        answer.sort();
         answer
     }
+
+    /// Returns the state where the robot is on the specified coord and wants to go to
+    /// the specified location.
+    fn robot_at_point<'a>(&'a self, start: &Coord, goal: &'a Coord) -> RobotState<'a> {
+        let robot_pos = *start;
+        let grid = self;
+        RobotState{grid, goal, robot_pos}
+    }
+
+    /// Find the number of moves needed to go between the two PointNums. (Panics if they aren't
+    /// valid PointNums in this diagram.) Returns count_of_moves or panics if there is no
+    /// way to get between those two points.
+    fn find_pairwise_distance(&self, p1: PointNum, p2: PointNum) -> usize {
+        let start: Coord = *self.points.get(&p1).unwrap();
+        let goal: Coord = *self.points.get(&p2).unwrap();
+        let initial_state = self.robot_at_point(&start, &goal);
+        if let Some(solution) = solve_with_astar(&initial_state, PRINT_EVERY_N_MOVES) {
+            solution.len()
+        } else {
+            panic!("No path between points {} and {}.", p1, p2);
+        }
+    }
 }
 
-
-impl<S: State> Debug for StateToConsider<S> {
+impl<'a> Display for RobotState<'a> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "StateToConsider[{}] worth {}", self.state, self.sort_score())
+        write!(f, "@({},{})", self.robot_pos.0, self.robot_pos.1)
     }
 }
 
+impl<'a> Hash for RobotState<'a> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.robot_pos.hash(state);
+    }
+}
+
+impl<'a> State for RobotState<'a> {
+    type TMove = GridMove;
+
+    fn is_winning(&self) -> bool {
+        self.robot_pos == *self.goal
+    }
+
+    fn min_moves_to_win(&self) -> usize {
+        taxicab_dist(self.robot_pos, *self.goal)
+    }
+
+    fn avail_moves(&self) -> Vec<Self::TMove> {
+        moves_from(self.robot_pos, self.grid.size())
+    }
+
+    fn enact_move(&self, mv: &Self::TMove) -> Self {
+        RobotState{robot_pos: mv.to(), ..*self}
+    }
+}
+
+
+impl Display for Cell {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Cell::Open => write!(f, "."),
+            Cell::Wall => write!(f, "#"),
+            Cell::Point(point_num) => write!(f, "{}", point_num),
+        }
+    }
+}
+
+impl Display for Grid {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        for c in self.nodes.iter_indexes() {
+            if c.0 == 0 {
+                writeln!(f)?; // newline before each row
+            }
+            write!(f, "{}", self.nodes.get(&c))?;
+        }
+        writeln!(f)
+    }
+}
 
 
 
 
 #[allow(dead_code)]
-fn part_a(_grid: &Grid) {
+fn part_a(grid: &Grid) {
     println!("\nPart a:");
-
+    println!("Grid = {}", grid);
+    let points = grid.get_points();
+    println!("points = {:?}", points);
+    for (p1_pos, p1) in points.iter().enumerate() {
+        for p2 in points[(p1_pos + 1)..].iter() {
+            println!("From {} to {} takes {} moves.", p1, p2, grid.find_pairwise_distance(*p1, *p2));
+        }
+    }
 }
 
 

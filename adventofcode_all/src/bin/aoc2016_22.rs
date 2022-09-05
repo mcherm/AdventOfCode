@@ -10,7 +10,7 @@ use std::hash::{Hash, Hasher};
 use std::io::BufRead;
 use advent_lib::astar::{
     State, StateToConsider, solve_with_astar,
-    grid::{GridVec, GridMove, Coord, Direction, neighbor_dirs},
+    grid::{GridVec, GridMove, Coord, Direction, moves_from},
 };
 
 
@@ -386,8 +386,7 @@ fn derive_avail_moves(nodes: &GridVec<NodeSpace>) -> Vec<GridMove> {
     let indexes = 0..(nodes.size().0 * nodes.size().1);
     indexes.flat_map(|idx| {
         let coord = nodes.index_to_coord(idx);
-        neighbor_dirs(coord, nodes.size()).into_iter()
-            .map(move |dir| GridMove::new(coord, dir))
+        moves_from(coord, nodes.size()).into_iter()
             .filter(|mv| is_legal(mv, &nodes))
     }).collect()
 }
@@ -436,8 +435,8 @@ impl State for GenState {
         self.taxicab_plus_moving()
     }
 
-    fn avail_moves(&self) -> &Vec<GridMove> {
-        &self.avail_moves
+    fn avail_moves(&self) -> Vec<GridMove> {
+        self.avail_moves.clone()
     }
 
 
@@ -470,12 +469,11 @@ impl State for GenState {
             .copied()
             .collect();
         // re-consider everything that enters or leaves move.from or move.to()
-        let moves_out: Vec<GridMove> = neighbor_dirs(mv.from(), self.nodes.size()).into_iter()
-            .map(|dir| GridMove::new(mv.from(), dir)) // moves from the "from" location
+        let moves_out: Vec<GridMove> = moves_from(mv.from(), self.nodes.size()) // moves from the "from" location
+            .into_iter()
             .chain(
-                neighbor_dirs(mv.to(), self.nodes.size()).into_iter()
-                    .map(|dir| GridMove::new(mv.to(), dir)) // moves from the "to" location
-                    .filter(|s| s.to() != mv.from()) // except the one going to "from" location; we already got the reverse of that
+                moves_from(mv.to(), self.nodes.size()).into_iter() // moves from the "to" location
+                    .filter(|m| m.to() != mv.from()) // except the one going to "from" location; we already got the reverse of that
             ).collect();
         avail_moves.extend(moves_out.iter().filter(|m| is_legal(m, &nodes))); // add the legal "out" movess
         avail_moves.extend(moves_out.iter().map(|m| m.inverse()).filter(|m| is_legal(m, &nodes))); // add the legal "in" moves
@@ -550,7 +548,7 @@ impl State for SingleSpaceState {
             self.min_movess_open_space_must_take()
     }
 
-    fn avail_moves(&self) -> &Vec<GridMove> {
+    fn avail_moves(&self) -> Vec<GridMove> {
         self.base.avail_moves()
     }
 
@@ -707,12 +705,12 @@ impl Display for SingleSpaceState {
 
 fn find_winning_moves(grid: &Grid) -> Option<Vec<GridMove>> {
     match grid.get_initial_singlespacestate() {
-        Some(mut initial_state) => {
-            solve_with_astar(&mut initial_state, PRINT_EVERY_N_MOVES)
+        Some(initial_state) => {
+            solve_with_astar(&initial_state, PRINT_EVERY_N_MOVES)
         },
         None => {
-            let mut initial_state = grid.get_initial_genstate();
-            solve_with_astar(&mut initial_state, PRINT_EVERY_N_MOVES)
+            let initial_state = grid.get_initial_genstate();
+            solve_with_astar(&initial_state, PRINT_EVERY_N_MOVES)
         }
     }
 }

@@ -22,7 +22,7 @@ pub trait State : Display + Clone + Eq + Hash {
     ///
     /// NOTE: It would be nice to return an iterator rather than insisting that it be a Vec,
     ///   but returning "impl Iterator" is not possible in a trait.
-    fn avail_moves(&self) -> &Vec<Self::TMove>;
+    fn avail_moves(&self) -> Vec<Self::TMove>;
 
     /// Returns the new state achieved by performing one of the moves. The move provided
     /// MUST be one of those returned by avail_moves() or we risk a panic.
@@ -93,8 +93,10 @@ impl<TS: State> Debug for StateToConsider<TS> {
 ///
 /// print_every_n_moves either 0 (for don't print) or a number (eg: 1000) to print out some
 ///   progress notes every that many moves so we can tell it's still going.
-pub fn solve_with_astar<TS: State>(initial_state: &mut TS, print_every_n_moves: usize) -> Option<Vec<TS::TMove>> {
-    println!("Starting state: {:}", initial_state);
+pub fn solve_with_astar<TS: State>(initial_state: &TS, print_every_n_moves: usize) -> Option<Vec<TS::TMove>> {
+    if print_every_n_moves > 0 {
+        println!("Starting state: {:}", initial_state);
+    }
 
     // visited_from maps from a state (which we have considered and explored its neighbors) to how
     // we got there: (prev_state, prev_move, move_count).
@@ -133,7 +135,7 @@ pub fn solve_with_astar<TS: State>(initial_state: &mut TS, print_every_n_moves: 
 
 
                 // -- Every so often, print it out so we can monitor progress --
-                if loop_ctr % print_every_n_moves == 0 {
+                if print_every_n_moves > 0 && loop_ctr % print_every_n_moves == 0 {
                     if print_every_n_moves > 1 || !visited_from.contains_key(&state.clone()) {
                         state.show_state(loop_ctr, move_count, &visited_from, &queue);
                     }
@@ -145,7 +147,7 @@ pub fn solve_with_astar<TS: State>(initial_state: &mut TS, print_every_n_moves: 
 
                 // -- try each move from here --
                 for mv in state.avail_moves() {
-                    let next_state: TS = state.enact_move(mv);
+                    let next_state: TS = state.enact_move(&mv);
                     let next_moves = move_count + 1;
 
                     // -- maybe we've already been to this one --
@@ -165,7 +167,9 @@ pub fn solve_with_astar<TS: State>(initial_state: &mut TS, print_every_n_moves: 
 
                     if try_next_state {
                         if next_state.is_winning() {
-                            println!("\nSOLVED!! {}", next_state);
+                            if print_every_n_moves > 0 {
+                                println!("\nSOLVED!! {}", next_state);
+                            }
                             let winning_moves = Some({
                                 let mut moves: Vec<TS::TMove> = Vec::new();
                                 moves.push(mv.clone());
@@ -433,4 +437,14 @@ pub mod grid {
         answer
     }
 
+    /// This returns a list of the moves allowed from the given start point, on a grid
+    /// of the given size.
+    pub fn moves_from(start: Coord, size: Coord) -> Vec<GridMove> {
+        neighbor_dirs(start,size).iter().map(|dir| GridMove::new(start, *dir)).collect()
+    }
+
+    /// Returns the taxicab distance between the two coords.
+    pub fn taxicab_dist(c1: Coord, c2: Coord) -> usize {
+        c1.0.abs_diff(c2.0) + c1.1.abs_diff(c2.1)
+    }
 }
