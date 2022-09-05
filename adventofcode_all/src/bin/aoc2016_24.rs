@@ -1,5 +1,6 @@
 
 extern crate anyhow;
+extern crate once_cell;
 
 use std::fs;
 use anyhow::Error;
@@ -7,10 +8,7 @@ use std::fmt::{Debug, Display, Formatter};
 use std::hash::{Hash, Hasher};
 use std::collections::BTreeMap;
 use itertools::Itertools;
-use advent_lib::astar::{
-    solve_with_astar, State,
-    grid::{Coord, GridVec, GridMove, taxicab_dist, moves_from}
-};
+use once_cell::unsync::OnceCell;
 use nom::{
     IResult,
     branch::alt,
@@ -20,10 +18,15 @@ use nom::{
     multi::many1,
     sequence::terminated,
 };
+use advent_lib::astar::{
+    solve_with_astar, State,
+    grid::{Coord, GridVec, GridMove, taxicab_dist, moves_from}
+};
 use traveling_salesman::{Distances, solve_with_brute_force};
 
 
 const PRINT_EVERY_N_MOVES: usize = 0;
+const PRINT_DISTANCES: bool = true;
 
 
 fn input() -> Result<Grid, Error> {
@@ -48,13 +51,14 @@ enum Cell {
 }
 
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Debug)]
 struct Grid {
     nodes: GridVec<Cell>,
     points: BTreeMap<PointNum,Coord>,
+    cached_distances: OnceCell<Distances>,
 }
 
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone)]
 struct RobotState<'a> {
     grid: &'a Grid,
     goal: &'a Coord,
@@ -115,8 +119,8 @@ impl Grid {
             }
         }
         assert!(points.contains_key(&0));
-
-        Grid{nodes, points}
+        let cached_distances = OnceCell::new();
+        Grid{nodes, points, cached_distances}
     }
 
 
@@ -163,6 +167,36 @@ impl Grid {
             panic!("No path between points {} and {}.", p1, p2);
         }
     }
+
+    /// The private function that calculates the distances (an expensive calculation). Use
+    /// get_distances() which is cashed instead of using this directly.
+    fn calc_distances(&self) -> Distances {
+        let points = self.get_points();
+        if points.is_empty() {
+            panic!("No numbered points in the maze.");
+        }
+        if points.len() != usize::from(*points.last().unwrap()) + 1 { // points are known to be unique and sorted
+            panic!("Numbered points in the maze are skipping some value.");
+        }
+        let size_as_point_num = PointNum::try_from(points.len()).unwrap();
+        let mut distances = Distances::new_zeros(size_as_point_num);
+        for (p1_pos, p1) in points.iter().enumerate() {
+            for p2 in points[(p1_pos + 1)..].iter() {
+                let dist = self.find_pairwise_distance(*p1, *p2);
+                if PRINT_DISTANCES {
+                    println!("From {} to {} takes {} moves.", p1, p2, dist);
+                }
+                distances.set_dist(*p1, *p2, dist);
+            }
+        }
+        distances
+    }
+
+    /// Validate the data (or panic), measure all the pairwise distances, then return the
+    /// distances map. This gets cached because it's REALLY slow to calculate.
+    pub fn get_distances(&self) -> &Distances {
+        self.cached_distances.get_or_init(|| self.calc_distances())
+    }
 }
 
 impl<'a> Display for RobotState<'a> {
@@ -176,6 +210,16 @@ impl<'a> Hash for RobotState<'a> {
         self.robot_pos.hash(state);
     }
 }
+
+impl<'a> PartialEq for RobotState<'a> {
+    fn eq(&self, other: &Self) -> bool {
+        self.robot_pos == other.robot_pos && // same robot position
+            self.goal == other.goal && // same goal
+            std::ptr::eq(self.grid, other.grid) // ...and have the SAME EXACT grid object
+    }
+}
+
+impl<'a> Eq for RobotState<'a> {}
 
 impl<'a> State for RobotState<'a> {
     type TMove = GridMove;
@@ -241,6 +285,7 @@ mod traveling_salesman {
 
     /// Contains the distances between a set of nodes. The nodes are identified by integers
     /// starting from 0. Distances are usize.
+    #[derive(Debug, Clone)]
     pub struct Distances {
         size: NodeId,
         dist: Vec<usize>, // there are size*size elements
@@ -312,19 +357,21 @@ mod traveling_salesman {
 
     /// Solver that uses brute force. It returns the minimum path distance starting from
     /// node zero and visiting all other nodes.
-    ///
-    /// FIXME: This should return the particular order
-    pub fn solve_with_brute_force(distances: &Distances) -> Path {
+    pub fn solve_with_brute_force(distances: &Distances, return_home: bool) -> Path {
         let size = distances.size;
         let start_node: NodeId = 0;
         let mut best_path: Option<Path> = None;
         for rest_of_path in ((start_node + 1)..size).permutations(usize::from(size - 1)) {
             let dist = distances.dist(0, *rest_of_path.first().unwrap()) +
-                rest_of_path.windows(2).map(|pair| distances.dist(pair[0],pair[1])).sum::<usize>();
+                rest_of_path.windows(2).map(|pair| distances.dist(pair[0],pair[1])).sum::<usize>() +
+                if return_home {distances.dist(*rest_of_path.last().unwrap(),start_node)} else {0};
             let make_some_path = || {
-                let mut nodes = Vec::with_capacity(usize::from(size));
+                let mut nodes = Vec::with_capacity(usize::from(size) + if return_home {1} else {0});
                 nodes.push(start_node);
                 nodes.extend(rest_of_path);
+                if return_home {
+                    nodes.push(start_node);
+                }
                 Some(Path::new(nodes, dist))
             };
             match &best_path {
@@ -351,32 +398,18 @@ mod traveling_salesman {
 
 fn part_a(grid: &Grid) {
     println!("\nPart a:");
-    println!("Grid = {}", grid);
-    let points = grid.get_points();
-    if points.is_empty() {
-        panic!("No numbered points in the maze.");
-    }
-    if points.len() != usize::from(*points.last().unwrap()) + 1 { // points are known to be unique and sorted
-        panic!("Numbered points in the maze are skipping some value.");
-    }
-    let size_as_point_num = PointNum::try_from(points.len()).unwrap();
-    let mut distances = Distances::new_zeros(size_as_point_num);
-    for (p1_pos, p1) in points.iter().enumerate() {
-        for p2 in points[(p1_pos + 1)..].iter() {
-            let dist = grid.find_pairwise_distance(*p1, *p2);
-            println!("From {} to {} takes {} moves.", p1, p2, dist);
-            distances.set_dist(*p1, *p2, dist);
-        }
-    }
-
-    let min_path = solve_with_brute_force(&distances);
-    println!("The minimal path is {} steps with path {}.", min_path.moves(),  min_path);
+    let distances = grid.get_distances();
+    let min_path = solve_with_brute_force(&distances, false);
+    println!("The minimal path (not returning) is {} steps with path {}.", min_path.moves(),  min_path);
 }
 
 
 
-fn part_b(_grid: &Grid) {
+fn part_b(grid: &Grid) {
     println!("\nPart b:");
+    let distances = grid.get_distances();
+    let min_path = solve_with_brute_force(&distances, true);
+    println!("The minimal path (returning) is {} steps with path {}.", min_path.moves(),  min_path);
 }
 
 
@@ -387,16 +420,3 @@ fn main() -> Result<(), Error> {
     part_b(&data);
     Ok(())
 }
-
-
-
-// ==========================================================================================
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-}
-
-
-// 250 is too low.
