@@ -19,6 +19,7 @@ use nom::{
     multi::many1,
     sequence::terminated,
 };
+use traveling_salesman::{Distances, solve_with_brute_force};
 
 
 const PRINT_EVERY_N_MOVES: usize = 0;
@@ -211,19 +212,155 @@ impl Display for Grid {
 }
 
 
+/// This module contains the logic for finding an OPTIMAL solution to a variant of the
+/// traveling salesman problem. The variant from the standard problem is that the problem
+/// specifies a starting location (but not an ending one) and it does NOT require returning
+/// to the start position.
+///
+/// My intention is to implement a couple of different algorithms. Normally traveling
+/// salesman is solved with heuristics, but I need optimal solutions so I'll be using
+/// approaches like brute force and branch-and-prune.
+mod traveling_salesman {
+    use itertools::Itertools;
+    use std::fmt::{Display, Formatter};
+    use super::PointNum;
+
+    type NodeId = PointNum;
 
 
-#[allow(dead_code)]
+    /// Contains the distances between a set of nodes. The nodes are identified by integers
+    /// starting from 0. Distances are usize.
+    pub struct Distances {
+        size: NodeId,
+        dist: Vec<usize>, // there are size*size elements
+    }
+
+    /// Contains a specific path.
+    #[derive(Debug)]
+    pub struct Path {
+        moves: usize,
+        nodes: Vec<NodeId>,
+    }
+
+
+    impl Distances {
+        /// Returns a new Distances which has the given size and with all distances set
+        /// to zero.
+        pub fn new_zeros(size: NodeId) -> Self {
+            let dist = vec![0; usize::from(size) * usize::from(size)];
+            Distances{size, dist}
+        }
+
+        /// Returns the distance from n1 to n2. Panics if either is not a node in this.
+        pub fn dist(&self, n1: NodeId, n2: NodeId) -> usize {
+            assert!(n1 < self.size);
+            assert!(n2 < self.size);
+            *self.dist.get(self.idx(n1,n2)).unwrap()
+        }
+
+        /// Given two nodes, this finds the index into dist for their distance. Order matters;
+        /// swapping n1 and n2 will give two different indexes (although we ensure that those
+        /// locations will always store the same value).
+        fn idx(&self, n1: NodeId, n2: NodeId) -> usize {
+            usize::from(n1) * usize::from(self.size) + usize::from(n2)
+        }
+
+        /// Sets the distance between n1 and n2 to be d. Distances are symmetric, so this
+        /// sets both directions to the same value.
+        pub fn set_dist(&mut self, n1: NodeId, n2: NodeId, d: usize) {
+            let idx1 = self.idx(n1,n2);
+            let idx2 = self.idx(n2,n1);
+            self.dist[idx1] = d;
+            self.dist[idx2] = d;
+        }
+    }
+
+
+    impl Path {
+        fn new(nodes: Vec<NodeId>, moves: usize) -> Self {
+            Path{nodes: nodes, moves}
+        }
+
+        /// Returns the number of moves for this path
+        pub fn moves(&self) -> usize {
+            self.moves
+        }
+    }
+
+    impl Display for Path {
+        fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+            assert!(self.nodes.len() >= 1);
+            write!(f, "{}", self.nodes.first().unwrap())?;
+            for node in self.nodes.iter().skip(1) {
+                write!(f, "->{}", node)?;
+            }
+            Ok(())
+        }
+    }
+
+
+    /// Solver that uses brute force. It returns the minimum path distance starting from
+    /// node zero and visiting all other nodes.
+    ///
+    /// FIXME: This should return the particular order
+    pub fn solve_with_brute_force(distances: &Distances) -> Path {
+        let size = distances.size;
+        let start_node: NodeId = 0;
+        let mut best_path: Option<Path> = None;
+        for rest_of_path in ((start_node + 1)..size).permutations(usize::from(size - 1)) {
+            let dist = distances.dist(0, *rest_of_path.first().unwrap()) +
+                rest_of_path.windows(2).map(|pair| distances.dist(pair[0],pair[1])).sum::<usize>();
+            let make_some_path = || {
+                let mut nodes = Vec::with_capacity(usize::from(size));
+                nodes.push(start_node);
+                nodes.extend(rest_of_path);
+                Some(Path::new(nodes, dist))
+            };
+            match &best_path {
+                None => {
+                    best_path = make_some_path()
+                },
+                Some(prev_best_path) => {
+                    if dist < prev_best_path.moves {
+                        best_path = make_some_path()
+                    }
+                }
+            }
+        }
+
+        match best_path {
+            Some(path) => path,
+            None => panic!("Should have found at least one path!"),
+        }
+    }
+}
+
+
+
+
 fn part_a(grid: &Grid) {
     println!("\nPart a:");
     println!("Grid = {}", grid);
     let points = grid.get_points();
+    if points.is_empty() {
+        panic!("No numbered points in the maze.");
+    }
+    if points.len() != usize::from(*points.last().unwrap()) + 1 { // points are known to be unique and sorted
+        panic!("Numbered points in the maze are skipping some value.");
+    }
     println!("points = {:?}", points);
+    let size_as_point_num = PointNum::try_from(points.len()).unwrap();
+    let mut distances = Distances::new_zeros(size_as_point_num);
     for (p1_pos, p1) in points.iter().enumerate() {
         for p2 in points[(p1_pos + 1)..].iter() {
-            println!("From {} to {} takes {} moves.", p1, p2, grid.find_pairwise_distance(*p1, *p2));
+            let dist = grid.find_pairwise_distance(*p1, *p2);
+            println!("From {} to {} takes {} moves.", p1, p2, dist);
+            distances.set_dist(*p1, *p2, dist);
         }
     }
+
+    let min_path = solve_with_brute_force(&distances);
+    println!("The minimal path is {} steps with path {}.", min_path.moves(),  min_path);
 }
 
 
@@ -250,3 +387,6 @@ mod tests {
     use super::*;
 
 }
+
+
+// 250 is too low.
