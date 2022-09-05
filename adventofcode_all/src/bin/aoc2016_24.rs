@@ -6,6 +6,7 @@ use anyhow::Error;
 use std::fmt::{Debug, Display, Formatter};
 use std::hash::{Hash, Hasher};
 use std::collections::BTreeMap;
+use itertools::Itertools;
 use advent_lib::astar::{
     solve_with_astar, State,
     grid::{Coord, GridVec, GridMove, taxicab_dist, moves_from}
@@ -124,6 +125,14 @@ impl Grid {
         self.nodes.size()
     }
 
+    /// Returns a boolean indicating if the given location is a wall.
+    fn is_wall(&self, coord: Coord) -> bool {
+        match self.nodes.get(&coord) {
+            Cell::Wall => true,
+            _ => false,
+        }
+    }
+
 
     /// Returns a list of the PointNums appearing in the grid. Panics if any PointNum is
     /// not unique. The PointNums will be in sorted order.
@@ -180,7 +189,9 @@ impl<'a> State for RobotState<'a> {
     }
 
     fn avail_moves(&self) -> Vec<Self::TMove> {
-        moves_from(self.robot_pos, self.grid.size())
+        moves_from(self.robot_pos, self.grid.size()).into_iter()
+            .filter(|mv| !self.grid.is_wall(mv.to()))
+            .collect_vec()
     }
 
     fn enact_move(&self, mv: &Self::TMove) -> Self {
@@ -348,7 +359,6 @@ fn part_a(grid: &Grid) {
     if points.len() != usize::from(*points.last().unwrap()) + 1 { // points are known to be unique and sorted
         panic!("Numbered points in the maze are skipping some value.");
     }
-    println!("points = {:?}", points);
     let size_as_point_num = PointNum::try_from(points.len()).unwrap();
     let mut distances = Distances::new_zeros(size_as_point_num);
     for (p1_pos, p1) in points.iter().enumerate() {
