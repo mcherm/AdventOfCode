@@ -8,20 +8,35 @@ use std::fmt::{Debug, Display, Formatter};
 
 /// A trait for the states that the system can be in.
 pub trait State : Display + Clone + Eq + Hash {
-    type TMove: Move; // associated type for the moves between states
+    type TMove: Clone; // associated type for the moves between states
 
+    /// Returns true if this state is one that satisfies our goal.
     fn is_winning(&self) -> bool;
+
+    /// Returns an heuristic for the number of moves needed to win from this state. The
+    /// heuristic does not need to be correct, but it MUST not be too small: it should
+    /// be accurate or an overestimate.
     fn min_moves_to_win(&self) -> usize;
+
+    /// Returns the list of moves that can be made from this State.
+    ///
+    /// NOTE: It would be nice to return an iterator rather than insisting that it be a Vec,
+    ///   but returning "impl Iterator" is not possible in a trait.
     fn avail_moves(&self) -> &Vec<Self::TMove>;
+
+    /// Returns the new state achieved by performing one of the moves. The move provided
+    /// MUST be one of those returned by avail_moves() or we risk a panic.
     fn enact_move(&self, mv: &Self::TMove) -> Self;
 
-    // FIXME: This is probably temporary
+    /// For display purposes, prints to stdout the information about howe we are doing in our
+    /// A* search. Is really more of a helper function for display rather than part of the State
+    /// trait, but we declare it here so that implementors of the trait can override this.
     fn show_state(
         &self,
         loop_ctr: usize,
         move_count: usize,
         visited_from: &HashMap<Self, Option<(Self, Self::TMove, usize)>>,
-        queue: &VecDeque<StateToConsider<Self, Self::TMove>>
+        queue: &VecDeque<StateToConsider<Self>>
     ) {
         println!(
             "\nAt {} went {} moves; at least {} to go for a total of {}:{:}. Have visited {} states and have {} queued.",
@@ -35,31 +50,21 @@ pub trait State : Display + Clone + Eq + Hash {
         );
     }
 
-    // FIXME: Another attempt at the above
-    fn state_name(&self) -> String {
-        "".to_string()
-    }
 }
 
-
-// FIXME: Maybe I don't even need to have this as a trait. That would be nice.
-/// A trait for the transitions between states.
-pub trait Move : Clone {
-
-}
 
 
 
 /// This is what we insert into the queue while doing an A* search. It has a State and the
 /// number of moves it took to get there. They are sortable (because the queue is kept
 /// sorted) and the sort order is by move_count + state.min_movess_to_win()
-pub struct StateToConsider<TS: State, TM: Move> {
+pub struct StateToConsider<TS: State> {
     state: TS, // the state we will consider
-    prev: Option<(TS, TM, usize)>, // Some(the previous state, the move from it, and the num_moves to get here) or None if this is the FIRST state.
+    prev: Option<(TS, TS::TMove, usize)>, // Some(the previous state, the move from it, and the num_moves to get here) or None if this is the FIRST state.
 }
 
 
-impl<TS: State, TM: Move> StateToConsider<TS, TM> {
+impl<TS: State> StateToConsider<TS> {
     pub fn state(&self) -> &TS {
         &self.state
     }
@@ -75,7 +80,7 @@ impl<TS: State, TM: Move> StateToConsider<TS, TM> {
 }
 
 
-impl<TS: State, TM: Move> Debug for StateToConsider<TS,TM> {
+impl<TS: State> Debug for StateToConsider<TS> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "StateToConsider[{}] worth {}", self.state, self.sort_score())
     }
@@ -88,16 +93,16 @@ impl<TS: State, TM: Move> Debug for StateToConsider<TS,TM> {
 ///
 /// print_every_n_moves either 0 (for don't print) or a number (eg: 1000) to print out some
 ///   progress notes every that many moves so we can tell it's still going.
-pub fn solve_with_astar<TS: State<TMove=TM>, TM: Move>(initial_state: &mut TS, print_every_n_moves: usize) -> Option<Vec<TM>> {
+pub fn solve_with_astar<TS: State>(initial_state: &mut TS, print_every_n_moves: usize) -> Option<Vec<TS::TMove>> {
     println!("Starting state: {:}", initial_state);
 
     // visited_from maps from a state (which we have considered and explored its neighbors) to how
     // we got there: (prev_state, prev_move, move_count).
-    let mut visited_from: HashMap<TS, Option<(TS, TM, usize)>> = HashMap::new();
+    let mut visited_from: HashMap<TS, Option<(TS, TS::TMove, usize)>> = HashMap::new();
 
     // queue is a collection of states we will consider. What we store is
     //   StateToConsider. The queue is kept sorted by sort_score()
-    let mut queue: VecDeque<StateToConsider<TS,TM>> = VecDeque::new();
+    let mut queue: VecDeque<StateToConsider<TS>> = VecDeque::new();
     queue.push_back(StateToConsider{state: initial_state.clone(), prev: None});
 
     let mut loop_ctr: usize = 0;
@@ -135,7 +140,7 @@ pub fn solve_with_astar<TS: State<TMove=TM>, TM: Move>(initial_state: &mut TS, p
                 }
 
                 // -- mark that we have (or now will!) visited this one --
-                assert!(!visited_from.contains_key(&state)); // FIXME: Assert that we haven't been here before
+                assert!(!visited_from.contains_key(&state)); // Assert that we haven't been here before
                 visited_from.insert(state.clone(), prev);
 
                 // -- try each move from here --
@@ -162,7 +167,7 @@ pub fn solve_with_astar<TS: State<TMove=TM>, TM: Move>(initial_state: &mut TS, p
                         if next_state.is_winning() {
                             println!("\nSOLVED!! {}", next_state);
                             let winning_moves = Some({
-                                let mut moves: Vec<TM> = Vec::new();
+                                let mut moves: Vec<TS::TMove> = Vec::new();
                                 moves.push(mv.clone());
                                 let mut state_var: &TS = &state;
                                 while let Some((prev_state, prev_move, _)) = visited_from.get(&state_var).unwrap() {
@@ -190,11 +195,12 @@ pub fn solve_with_astar<TS: State<TMove=TM>, TM: Move>(initial_state: &mut TS, p
 }
 
 
+
+/// A module that specializes astar for the case where we're dealing with things in a grid.
 pub mod grid {
     use std::fmt::{Debug, Display, Formatter};
     use std::hash::Hash;
     use itertools::Itertools;
-    use super::Move;
 
 
     pub type Coord = (usize, usize);
@@ -225,7 +231,6 @@ pub mod grid {
     }
 
 
-    #[allow(dead_code)] // FIXME: Remove this later
     impl Direction {
         /// Returns the opposite of this direction
         fn inverse(&self) -> Self {
@@ -256,8 +261,6 @@ pub mod grid {
         }
     }
 
-    // FIXME: Remove this if it isn't needed
-    impl Move for GridMove {}
 
     impl<T: Eq + Hash + Clone> IntoIterator for GridVec<T> {
         type Item = T;
@@ -400,35 +403,34 @@ pub mod grid {
             self.from
         }
 
-        // FIXME: Remove this
-        /*
-        /// Returns true if the move is allowed given state constraints; false otherwise.
-        /// Bases that on the provided set of node sizes.
-        fn is_legal(&self, nodes: &GridVec<NodeSpace>) -> bool {
-            let fr = nodes.get(&self.from);
-            let to = nodes.get(&self.to());
-            fr.used > 0 && to.avail >= fr.used
-        }
-        */
-
         /// Given a move, this returns a move that goes from the destination to the start.
         pub fn inverse(&self) -> Self {
             Self{from: self.to(), dir: self.dir.inverse()}
         }
     }
 
-    // FIXME: Document this. And MOVE THIS!!!
-    /*
-    pub trait GridMoveLegalTester<T: Eq + Hash + Clone> {
-        fn is_legal(&self, nodes: &GridVec<T>, mv: &GridMove) -> bool;
-    }
-    */
-
-
     impl Display for GridMove {
         fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
             write!(f, "({},{})->({},{})", self.from.0, self.from.1, self.to().0, self.to().1)
         }
+    }
+
+    /// This returns a list of the directions reachable from this coordinate.
+    pub fn neighbor_dirs(coord: Coord, size: Coord) -> Vec<Direction> {
+        let mut answer = Vec::with_capacity(4);
+        if coord.0 > 0 {
+            answer.push(Direction::Left);
+        }
+        if coord.1 > 0 {
+            answer.push(Direction::Up);
+        }
+        if coord.1 + 1 < size.1 {
+            answer.push(Direction::Down);
+        }
+        if coord.0 + 1 < size.0 {
+            answer.push(Direction::Right);
+        }
+        answer
     }
 
 }

@@ -10,7 +10,7 @@ use std::hash::{Hash, Hasher};
 use std::io::BufRead;
 use advent_lib::astar::{
     State, StateToConsider, solve_with_astar,
-    grid::{GridVec, GridMove, Coord, Direction},
+    grid::{GridVec, GridMove, Coord, Direction, neighbor_dirs},
 };
 
 
@@ -100,9 +100,6 @@ struct SingleSpaceState {
 
 
 
-
-
-
 fn nom_usize(input: &str) -> IResult<&str, usize> {
     map(
         nom_u16,
@@ -167,25 +164,6 @@ impl GridLoader {
         assert_eq!( nodes.len(), (max_x + 1) * (max_y + 1) ); // Guarantees we got all of them
         Grid{nodes, size: (max_x + 1, max_y + 1)}
     }
-}
-
-
-/// This returns a list of the directions reachable from this coordinate.
-fn neighbor_dirs(coord: Coord, size: Coord) -> Vec<Direction> {
-    let mut answer = Vec::with_capacity(4);
-    if coord.0 > 0 {
-        answer.push(Direction::Left);
-    }
-    if coord.1 > 0 {
-        answer.push(Direction::Up);
-    }
-    if coord.1 + 1 < size.1 {
-        answer.push(Direction::Down);
-    }
-    if coord.0 + 1 < size.0 {
-        answer.push(Direction::Right);
-    }
-    answer
 }
 
 
@@ -372,40 +350,6 @@ impl Grid {
 }
 
 
-
-
-/// This is used just to return an iterator of Coords.
-struct GridVecCoordIter {
-    size: Coord,
-    next_val: Option<Coord>,
-}
-
-impl Iterator for GridVecCoordIter {
-    type Item = Coord;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let answer = self.next_val;
-        match self.next_val {
-            None => {
-                self.next_val = Some((0,0));
-            },
-            Some((x, y)) => {
-                self.next_val = if x + 1 < self.size.0 {
-                    Some((x + 1, y))
-                } else if y + 1 < self.size.1 {
-                    Some((0, y + 1))
-                } else {
-                    None
-                };
-            },
-        }
-        answer
-    }
-}
-
-
-
-
 impl Display for NodeSpace {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "{:3}T/{:3}T", self.used, self.used + self.avail)
@@ -582,7 +526,6 @@ impl SingleSpaceState {
         }
     }
 
-    // FIXME: This might be temporary
     /// Returns a dummy SingleSpaceState with the specified goal_data_loc and open_space_loc.
     fn dummy_with_space_at(&self, open_space_loc: Coord) -> Self {
         SingleSpaceState{open_space_loc,  ..self.clone()}
@@ -630,13 +573,13 @@ impl State for SingleSpaceState {
     }
 
 
-    // FIXME: This might be temporary
+    /// Override show_state to display much more information including an ascii picture.
     fn show_state(
         &self,
         loop_ctr: usize,
         move_count: usize,
         visited_from: &HashMap<Self, Option<(Self, GridMove, usize)>>,
-        queue: &VecDeque<StateToConsider<Self, GridMove>>)
+        queue: &VecDeque<StateToConsider<Self>>)
     {
         println!(
             "\nAt {} went {} moves; at least {} to go for a total of {}.",
@@ -671,14 +614,6 @@ impl State for SingleSpaceState {
             visited_from.len(),
             queue.len()
         );
-    }
-
-    // FIXME: Another attempt at the above
-    fn state_name(&self) -> String {
-        use std::fmt::Write as FmtWrite;
-        let mut s = String::default();
-        write!(s, "SingleSpaceState at {:?}", self.open_space_loc).unwrap();
-        s
     }
 
 }
@@ -863,8 +798,6 @@ fn play_manually(grid: &Grid) {
             let mut state = initial_state.clone();
             loop {
                 println!("After {} moves:", moves_taken.len());
-                // FIXME: Next println is only for debugging
-                println!("Estimating {} moves for space so {} moves to win", state.min_movess_open_space_must_take(), state.min_moves_to_win());
                 print_for_play(&state);
                 let input = read_line();
                 let manual_action: ManualAction = match input.as_str() {
