@@ -150,12 +150,25 @@ impl Stacks {
     }
 
     /// Modifies self by applying a particular instruction.
-    fn apply_instruction(&mut self, ins: &Instruction) -> Result<(), anyhow::Error> {
+    fn apply_instruction_part_1(&mut self, ins: &Instruction) -> Result<(), anyhow::Error> {
         assert!((ins.from - 1) < self.crates.len() && (ins.to - 1) < self.crates.len());
         for _ in 0..ins.count {
             let cr: Crate = self.crates[ins.from - 1].pop().context("Stack ran out")?;
             self.crates[ins.to - 1].push(cr);
         };
+        Ok(())
+    }
+
+    fn apply_instruction_part_2(&mut self, ins: &Instruction) -> Result<(), anyhow::Error> {
+        assert!((ins.from - 1) < self.crates.len() && (ins.to - 1) < self.crates.len());
+        let source = &mut self.crates[ins.from - 1];
+        let end = source.len();
+        if ins.count > end {
+            return Err(anyhow::Error::msg("Stack ran out"));
+        }
+        let start = source.len() - ins.count;
+        let mut moved_crates: Vec<Crate> = source.drain(start..end).collect();
+        self.crates[ins.to - 1].append(&mut moved_crates);
         Ok(())
     }
 
@@ -182,10 +195,18 @@ impl Puzzle {
         )(input)
     }
 
-    fn apply_instructions(&self) -> Result<Stacks, anyhow::Error> {
+    fn apply_instructions_part_1(&self) -> Result<Stacks, anyhow::Error> {
         let mut answer = self.start_stacks.clone();
         for ins in self.instructions.iter() {
-            answer.apply_instruction(ins)?;
+            answer.apply_instruction_part_1(ins)?;
+        }
+        Ok(answer)
+    }
+
+    fn apply_instructions_part_2(&self) -> Result<Stacks, anyhow::Error> {
+        let mut answer = self.start_stacks.clone();
+        for ins in self.instructions.iter() {
+            answer.apply_instruction_part_2(ins)?;
         }
         Ok(answer)
     }
@@ -194,14 +215,16 @@ impl Puzzle {
 
 fn part_a(input: &Puzzle) -> Result<(), anyhow::Error> {
     println!("\nPart a:");
-    let s = input.apply_instructions()?.get_top_crates_string()?;
+    let s = input.apply_instructions_part_1()?.get_top_crates_string()?;
     println!("Top crates: {}", s);
     Ok(())
 }
 
 
-fn part_b(_input: &Puzzle) -> Result<(), anyhow::Error> {
+fn part_b(input: &Puzzle) -> Result<(), anyhow::Error> {
     println!("\nPart b:");
+    let s = input.apply_instructions_part_2()?.get_top_crates_string()?;
+    println!("Top crates: {}", s);
     Ok(())
 }
 
