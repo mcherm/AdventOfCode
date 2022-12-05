@@ -7,11 +7,12 @@ use nom::{
     branch::alt,
     bytes::complete::tag,
     character::complete::{char, anychar, newline, digit1},
-    combinator::{value, map, rest},
+    combinator::{value, map},
     multi::{many0, many1, separated_list1},
     sequence::{terminated, tuple, delimited},
 };
 use nom::character::complete::u32 as nom_u32;
+use anyhow::Context;
 
 
 fn input() -> Result<Puzzle, anyhow::Error> {
@@ -25,13 +26,12 @@ fn input() -> Result<Puzzle, anyhow::Error> {
 
 
 
-type Num = u32;
 
 #[derive(Debug, Copy, Clone)]
 struct Instruction {
-    count: Num,
-    from: Num,
-    to: Num,
+    count: usize,
+    from: usize,
+    to: usize,
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -45,11 +45,6 @@ enum CrateOrSpace {
     Space,
 }
 
-#[derive(Debug)]
-struct RowOfStacks {
-    items: Vec<CrateOrSpace>,
-}
-
 #[derive(Debug, Clone)]
 struct Stacks {
     crates: Vec<Vec<Crate>>,
@@ -59,6 +54,11 @@ struct Stacks {
 struct Puzzle {
     start_stacks: Stacks,
     instructions: Vec<Instruction>
+}
+
+/// Converts a u32 to a usize, panicking if it fails.
+fn u32_to_usize(x: u32) -> usize {
+    usize::try_from(x).unwrap()
 }
 
 impl Instruction {
@@ -72,7 +72,7 @@ impl Instruction {
                 tag(" to "),
                 nom_u32,
             )),
-            |(_, c, _, f, _, t)| Instruction{count: c, from: f, to: t}
+            |(_, c, _, f, _, t)| Instruction{count: u32_to_usize(c), from: u32_to_usize(f), to: u32_to_usize(t)}
         )(input)
     }
 
@@ -143,9 +143,30 @@ impl Stacks {
             tuple((
                 many1(CrateOrSpace::parse_line),
                 Self::parse_col_nums,
+                newline,
             )),
-            |(v, _)| Stacks{ crates: transpose(v) }
+            |(v, _, _)| Stacks{ crates: transpose(v) }
         )(input)
+    }
+
+    /// Modifies self by applying a particular instruction.
+    fn apply_instruction(&mut self, ins: &Instruction) -> Result<(), anyhow::Error> {
+        assert!((ins.from - 1) < self.crates.len() && (ins.to - 1) < self.crates.len());
+        for _ in 0..ins.count {
+            let cr: Crate = self.crates[ins.from - 1].pop().context("Stack ran out")?;
+            self.crates[ins.to - 1].push(cr);
+        };
+        Ok(())
+    }
+
+    /// This reads the top crate of each stack and returns the result as a string. If any
+    /// stack is empty it returns an error.
+    fn get_top_crates_string(&self) -> Result<String, anyhow::Error> {
+        let mut answer: String = String::new();
+        for stack in self.crates.iter() {
+            answer.push( stack.last().context("Stack was empty")?.c );
+        }
+        Ok(answer)
     }
 }
 
@@ -160,11 +181,21 @@ impl Puzzle {
             |(start_stacks, _, instructions)| Puzzle{start_stacks, instructions}
         )(input)
     }
+
+    fn apply_instructions(&self) -> Result<Stacks, anyhow::Error> {
+        let mut answer = self.start_stacks.clone();
+        for ins in self.instructions.iter() {
+            answer.apply_instruction(ins)?;
+        }
+        Ok(answer)
+    }
 }
+
 
 fn part_a(input: &Puzzle) -> Result<(), anyhow::Error> {
     println!("\nPart a:");
-    println!("Puzzle: {:?}", input);
+    let s = input.apply_instructions()?.get_top_crates_string()?;
+    println!("Top crates: {}", s);
     Ok(())
 }
 
