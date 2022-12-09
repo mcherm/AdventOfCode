@@ -12,8 +12,10 @@ use nom::{
     sequence::{terminated, tuple},
 };
 use nom::character::complete::u64 as nom_file_size;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, BTreeSet};
+use std::collections::btree_set::Iter as BTreeSetIter;
 use std::fmt::{Display, Formatter};
+use std::string::ToString;
 use anyhow::anyhow;
 use itertools::Itertools;
 
@@ -134,21 +136,17 @@ struct Path {
 enum DirContent {
     File(FileSize),
     DirUnknown(),
-    DirKnown(HashSet<Path>),
+    DirKnown(BTreeSet<Path>),
 }
 
 /// Contains an entire directory structure, starting from a root node.
 #[derive(Debug)]
 struct FileSystem {
+    root_path: Path,
     files: HashMap<Path,DirContent>
 }
 
-
 impl Path {
-    /// Create the root path.
-    fn root() -> Self {
-        Path{full_path: "/".to_string()}
-    }
 
     /// Given a Path, returns a new Path that extends it by "name".
     fn extend(&self, name: &str) -> Self {
@@ -206,8 +204,9 @@ impl FileSystem {
         if !matches!(cmd_iter.next(), Some(Command::Cd(CdDestination::Root))) {
             return Err(anyhow::Error::msg("First command isn't \"cd \\\"."))
         }
+        let root_path: Path = Path{full_path: "/".to_string()};
         let mut files: HashMap<Path,DirContent> = HashMap::new();
-        let mut current_path: Path = Path::root();
+        let mut current_path: Path = root_path.clone();
         files.insert(current_path.clone(), DirContent::DirUnknown());
 
         // --- main loop... go until there are no more commands ---
@@ -225,7 +224,7 @@ impl FileSystem {
                 },
 
                 Command::Cd(CdDestination::Root) => {
-                    current_path = Path::root();
+                    current_path = root_path.clone();
                     confirm_path_is_known_to_be_dir(&files, &current_path)?;
                 },
 
@@ -236,7 +235,7 @@ impl FileSystem {
                     // FIXME: For better robustness, we COULD verify that if it's already known we have the same list
                     let parent_dir = files.get_mut(&current_path).unwrap(); // confirm_path_is_known_to_be_dir() makes this safe to unwrap
                     assert!(matches!(parent_dir, DirContent::DirUnknown() | DirContent::DirKnown(_)));
-                    *parent_dir = DirContent::DirKnown(HashSet::from_iter(dir_entries.iter().map(
+                    *parent_dir = DirContent::DirKnown(BTreeSet::from_iter(dir_entries.iter().map(
                         |dir_entry| current_path.extend(dir_entry.name())
                     )));
 
@@ -276,15 +275,108 @@ impl FileSystem {
             }
         }
 
-        Ok(FileSystem{files})
+        Ok(FileSystem{root_path, files})
+    }
+
+
+    /// This confirms whether every directory is fully known, returning an error if one isn't.
+    fn confirm_is_fully_known(&self) -> Result<(),anyhow::Error> {
+        let root = self.root_path.clone();
+        let mut paths: Vec<&Path> = vec![&root];
+        loop {
+            match paths.pop() {
+                None => return Ok(()),
+                Some(path) => {
+                    match self.files.get(&path) {
+                        Some(DirContent::File(_)) => {},
+                        Some(DirContent::DirKnown(new_paths)) => {
+                            paths.extend(new_paths.iter());
+                        },
+                        Some(DirContent::DirUnknown()) => {
+                            return Err(anyhow!("The contents of the directory {} are not known.", path))
+                        },
+                        None => {
+                            panic!("Path {} was reached but does not exist.", path);
+                        },
+                    }
+                },
+            }
+        }
+    }
+
+    // FIXME: I should make this cache things so it's efficient.
+    /// Given a path to a directory or file, this returns the total size of it. It panics
+    /// if at any point it can't iterate properly (confirm_is_fully_known() should guarantee
+    /// this will be safe to call).
+    fn get_dir_size(&self, path: &Path) -> FileSize {
+        match self.files.get(path) {
+            Some(DirContent::File(size)) => *size,
+            Some(DirContent::DirKnown(child_paths)) => child_paths.iter().map(|x| self.get_dir_size(x)).sum(),
+            Some(DirContent::DirUnknown()) => panic!("Path {} has not been populated.", path),
+            None => panic!("Path {} was reached but does not exist.", path),
+        }
+    }
+
+
+    /// This returns an iterator of the DirContent::DirKnown(HashSet<Path>) objects.
+    fn iter_dir_paths<'a>(&'a self) -> DirPathIter<'a> {
+        if let Some(DirContent::DirKnown(path_set)) = self.files.get(&self.root_path) {
+            DirPathIter{first_val: Some(&self.root_path), files: &self.files, stack: vec![path_set.iter()]}
+        } else {
+            panic!();
+        }
+    }
+
+}
+
+struct DirPathIter<'a> {
+    first_val: Option<&'a Path>,
+    files: &'a HashMap<Path,DirContent>,
+    stack: Vec<BTreeSetIter<'a,Path>>,
+}
+
+impl<'a> Iterator for DirPathIter<'a> {
+    type Item = &'a Path;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if let Some(path) = self.first_val {
+            self.first_val = None;
+            return Some(path);
+        }
+        loop {
+            match self.stack.last_mut() {
+                None => return None, // we've used up the whole stack
+                Some(last_iter) => {
+                    match last_iter.next() {
+                        None => { // we've used up this iter
+                            self.stack.pop(); // toss it out
+                            continue; // continue with the parent
+                        },
+                        Some(path) => { // we've found a path
+                            match self.files.get(path) {
+                                Some(DirContent::DirKnown(child_paths)) => {
+                                    // --- it's a dir; we can use it ---
+                                    self.stack.push(child_paths.iter()); // push descendants on the stack
+                                    return Some(path); // return this one
+                                },
+                                Some(DirContent::File(_)) => continue, // continue looking
+                                Some(DirContent::DirUnknown()) => panic!(),
+                                None => panic!(),
+                            }
+                        },
+                    }
+                },
+            }
+        }
     }
 }
+
 
 impl Display for FileSystem {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "\n")?;
         for item in self.files.iter().sorted_by_key(|pair| pair.0) {
-            write!(f, "{}: {:?}\n", item.0, item.1)?;
+            write!(f, "{}: {:?} (size = {})\n", item.0, item.1, self.get_dir_size(item.0))?;
         }
         Ok(())
     }
@@ -294,12 +386,21 @@ impl Display for FileSystem {
 
 // ======= Analyzing =======
 
+
+
 // ======= main() =======
 
 fn part_a(input: &Vec<Command>) -> Result<(), anyhow::Error> {
     println!("\nPart a:");
     let file_sys = FileSystem::build_from_commands(input)?;
+    file_sys.confirm_is_fully_known()?;
     println!("FILE SYS: {}", file_sys);
+    println!("Total size: {}", file_sys.get_dir_size(&file_sys.root_path));
+    println!();
+    for d in file_sys.iter_dir_paths() {
+        println!("  dir: {:?}", d);
+    }
+
     Ok(())
 }
 
