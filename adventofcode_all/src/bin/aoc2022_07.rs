@@ -1,5 +1,6 @@
 
 extern crate anyhow;
+extern crate elsa;
 
 use std::fs;
 use nom::{
@@ -18,6 +19,7 @@ use std::fmt::{Display, Formatter};
 use std::string::ToString;
 use anyhow::anyhow;
 use itertools::Itertools;
+use elsa::map::FrozenMap;
 
 
 // ======= Parsing =======
@@ -140,10 +142,10 @@ enum DirContent {
 }
 
 /// Contains an entire directory structure, starting from a root node.
-#[derive(Debug)]
 struct FileSystem {
-    root_path: Path,
-    files: HashMap<Path,DirContent>
+    files: HashMap<Path,DirContent>, // actual field
+    root_path: Path, // a constant
+    size_cache: FrozenMap<Path,Box<FileSize>>, // a not-externally-visible cache
 }
 
 impl Path {
@@ -275,7 +277,8 @@ impl FileSystem {
             }
         }
 
-        Ok(FileSystem{root_path, files})
+        let size_cache = FrozenMap::new();
+        Ok(FileSystem{root_path, files, size_cache})
     }
 
 
@@ -304,16 +307,24 @@ impl FileSystem {
         }
     }
 
-    // FIXME: I should make this cache things so it's efficient.
     /// Given a path to a directory or file, this returns the total size of it. It panics
     /// if at any point it can't iterate properly (confirm_is_fully_known() should guarantee
     /// this will be safe to call).
     fn get_dir_size(&self, path: &Path) -> FileSize {
-        match self.files.get(path) {
-            Some(DirContent::File(size)) => *size,
-            Some(DirContent::DirKnown(child_paths)) => child_paths.iter().map(|x| self.get_dir_size(x)).sum(),
-            Some(DirContent::DirUnknown()) => panic!("Path {} has not been populated.", path),
-            None => panic!("Path {} was reached but does not exist.", path),
+        match self.size_cache.get(path) {
+            Some(size) => *size,
+            None => {
+                match self.files.get(path) {
+                    Some(DirContent::File(size)) => *size,
+                    Some(DirContent::DirKnown(child_paths)) => {
+                        let dir_size = child_paths.iter().map(|x| self.get_dir_size(x)).sum();
+                        self.size_cache.insert(path.clone(), Box::new(dir_size));
+                        dir_size
+                    },
+                    Some(DirContent::DirUnknown()) => panic!("Path {} has not been populated.", path),
+                    None => panic!("Path {} was reached but does not exist.", path),
+                }
+            },
         }
     }
 
@@ -394,19 +405,42 @@ fn part_a(input: &Vec<Command>) -> Result<(), anyhow::Error> {
     println!("\nPart a:");
     let file_sys = FileSystem::build_from_commands(input)?;
     file_sys.confirm_is_fully_known()?;
-    println!("FILE SYS: {}", file_sys);
-    println!("Total size: {}", file_sys.get_dir_size(&file_sys.root_path));
-    println!();
-    for d in file_sys.iter_dir_paths() {
-        println!("  dir: {:?}", d);
-    }
 
+    let mut total = 0;
+    for dir_path in file_sys.iter_dir_paths() {
+        let dir_size = file_sys.get_dir_size(dir_path);
+        if dir_size <= 100000 {
+            total += dir_size;
+        }
+    }
+    println!("Total size of small dirs for part 1 is {}", total);
     Ok(())
 }
 
 
-fn part_b(_input: &Vec<Command>) -> Result<(), anyhow::Error> {
+fn part_b(input: &Vec<Command>) -> Result<(), anyhow::Error> {
     println!("\nPart b:");
+    let file_sys = FileSystem::build_from_commands(input)?;
+    file_sys.confirm_is_fully_known()?;
+
+    const TOTAL_DISK_SPACE: FileSize = 70000000;
+    const NEEDED_FREE_SPACE: FileSize = 30000000;
+    let space_in_use = file_sys.get_dir_size(&file_sys.root_path);
+    let need_to_free = space_in_use - (TOTAL_DISK_SPACE - NEEDED_FREE_SPACE);
+    if need_to_free <= 0 {
+        println!("Nothing needs to be deleted; there is enough free space.");
+    } else {
+        let mut size_of_smallest_candidate = space_in_use; // at worst, we can delete everything
+        let mut path_of_smallest_candidate = &file_sys.root_path;
+        for dir_path in file_sys.iter_dir_paths() {
+            let dir_size = file_sys.get_dir_size(dir_path);
+            if dir_size >= need_to_free && dir_size < size_of_smallest_candidate {
+                size_of_smallest_candidate = dir_size;
+                path_of_smallest_candidate = dir_path;
+            }
+        }
+        println!("Delete directory {} to free up {} space.", path_of_smallest_candidate, size_of_smallest_candidate);
+    }
     Ok(())
 }
 
