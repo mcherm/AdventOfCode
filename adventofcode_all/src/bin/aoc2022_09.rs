@@ -89,9 +89,15 @@ type Pos = i32;
 struct Coord(Pos,Pos);
 
 #[derive(Debug)]
+/// A "rope" is more like a chain -- it consists of a series of "knots" each of which
+/// is at a location. The "head" is the first link and the "tail" is the last link.
+struct Rope {
+    links: Vec<Coord>
+}
+
+#[derive(Debug)]
 struct Grid {
-    head: Coord,
-    tail: Coord,
+    rope: Rope,
     tail_visited: BTreeSet<Coord>,
 }
 
@@ -106,17 +112,6 @@ impl From<Dir> for Coord {
     }
 }
 
-// FIXME: Remove
-// impl From<Motion> for Coord {
-//     fn from(motion: Motion) -> Self {
-//         match motion.dir {
-//             Dir::U => Self(0, motion.dist as Pos),
-//             Dir::D => Self(0, -1 *(motion.dist as Pos)),
-//             Dir::L => Self(-1 * (motion.dist as Pos), 0),
-//             Dir::R => Self(motion.dist as Pos, 0),
-//         }
-//     }
-// }
 
 impl Display for Coord {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
@@ -140,43 +135,78 @@ impl AddAssign for Coord {
     }
 }
 
+impl Rope {
+    fn new(len: usize) -> Self {
+        assert!(len >= 1); // No ropes of length zero!
+        Rope{links: vec![Coord(0,0); len]}
+    }
+
+    /// Returns the Coord of the tail of the rope.
+    fn tail(&self) -> Coord {
+        self.links[self.links.len() - 1]
+    }
+
+    /// Iterate through the links (from head to tail), with the ability to
+    /// mutate each one (but NOT to mutate the list!).
+    fn iter_mut(&mut self) -> impl Iterator<Item=&mut Coord> {
+        self.links.iter_mut()
+    }
+}
+
+impl Display for Rope {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Rope(")?;
+        let mut it = self.links.iter();
+        write!(f, "{}", it.next().unwrap())?;
+        for link in it {
+            write!(f, ", {}", link)?;
+        }
+        write!(f, ")")
+    }
+}
+
+
 impl Grid {
-    fn new() -> Self {
-        let head = Coord(0,0);
-        let tail = Coord(0,0);
+    fn new(rope: Rope) -> Self {
         let mut tail_visited = BTreeSet::new();
-        tail_visited.insert(tail);
-        Grid{head, tail, tail_visited}
+        tail_visited.insert(rope.tail());
+        Self{rope, tail_visited}
     }
 
     /// Applies a motion to this Grid.
+    #[allow(overlapping_range_endpoints)]
     fn apply_motion(&mut self, motion: &Motion) {
         for _ in 0..motion.dist {
-            // --- move the head ---
-            self.head += motion.dir.into();
-            // --- move the tail ---
-            match self.head - self.tail {
-                // still touching; tail doesn't move
-                Coord(-1 ..= 1, -1 ..= 1) => {},
-                // two steps in one direction
-                Coord(-2, 0) => self.tail += Coord(-1, 0),
-                Coord(2, 0) => self.tail += Coord(1, 0),
-                Coord(0, -2) => self.tail += Coord(0, -1),
-                Coord(0, 2) => self.tail += Coord(0, 1),
-                // not touching
-                Coord(-2, -1) => self.tail += Coord(-1, -1),
-                Coord(-2, 1) => self.tail += Coord(-1, 1),
-                Coord(2, -1) => self.tail += Coord(1, -1),
-                Coord(2, 1) => self.tail += Coord(1, 1),
-                Coord(-1, -2) => self.tail += Coord(-1, -1),
-                Coord(1, -2) => self.tail += Coord(1, -1),
-                Coord(-1, 2) => self.tail += Coord(-1, 1),
-                Coord(1, 2) => self.tail += Coord(1, 1),
-                // other moves should not be possible
-                Coord(_, _) => panic!("Should not be possible after just one step."),
+            let mut links = self.rope.iter_mut(); // mutable iterator of "&mut link"s
+            // --- move the head (just by one step) ---
+            let head = links.next().unwrap(); // we ARE guaranteed at least 1 link in a rope
+            *head += motion.dir.into();
+            // --- move the other links, each following the previous ---
+            let mut prev = head;
+            for link in links {
+                match *prev - *link {
+                    // still touching; tail doesn't move
+                    Coord(-1 ..= 1, -1 ..= 1) => {},
+                    // two steps in one direction
+                    Coord(-2,  0) => *link += Coord(-1,  0),
+                    Coord( 2,  0) => *link += Coord( 1,  0),
+                    Coord( 0, -2) => *link += Coord( 0, -1),
+                    Coord( 0,  2) => *link += Coord( 0,  1),
+                    // not touching
+                    Coord(-2 ..= -1, -2 ..= -1) => *link += Coord(-1, -1),
+                    Coord(-2 ..= -1,  1 ..=  2) => *link += Coord(-1,  1),
+                    Coord( 1 ..=  2, -2 ..= -1) => *link += Coord( 1, -1),
+                    Coord( 1 ..=  2,  1 ..=  2) => *link += Coord( 1,  1),
+                    // other moves should not be possible
+                    Coord(_, _) => panic!(
+                        "Should not be possible after just one step. Link {} follows {}",
+                        *link, *prev
+                    ),
+                }
+                prev = link;
             }
             // --- update tail_visited ---
-            self.tail_visited.insert(self.tail);
+            self.tail_visited.insert(*prev);
         }
     }
 
@@ -185,6 +215,7 @@ impl Grid {
         self.tail_visited.len()
     }
 }
+
 
 /// Define a wrapper used to support Display of positions in a grid.
 struct Positions<'a>(&'a Grid);
@@ -198,7 +229,7 @@ impl<'a> Display for Positions<'a> {
             if coord.1 < min_y {min_y = coord.1;}
             if coord.1 > max_y {max_y = coord.1;}
         }
-        for y in (min_x..=max_y).rev() {
+        for y in (min_y..=max_y).rev() {
             for x in min_x..=max_x {
                 write!(f, "{}", if self.0.tail_visited.contains(&Coord(x,y)) {'#'} else {'.'})?;
             }
@@ -212,20 +243,26 @@ impl<'a> Display for Positions<'a> {
 
 fn part_a(motions: &Vec<Motion>) -> Result<(), anyhow::Error> {
     println!("\nPart a:");
-    let mut grid = Grid::new();
+    let mut grid = Grid::new(Rope::new(2));
     for motion in motions {
         grid.apply_motion(&motion);
     }
-    println!("Head: {}", grid.head);
-    println!("Tail: {}", grid.tail);
+    println!("Rope: {}", grid.rope);
     println!("{}", Positions(&grid));
     println!("Which is a total of {} positions visited.", grid.count_visited());
     Ok(())
 }
 
 
-fn part_b(_input: &Vec<Motion>) -> Result<(), anyhow::Error> {
+fn part_b(motions: &Vec<Motion>) -> Result<(), anyhow::Error> {
     println!("\nPart b:");
+    let mut grid = Grid::new(Rope::new(10));
+    for motion in motions {
+        grid.apply_motion(&motion);
+    }
+    println!("Rope: {}", grid.rope);
+    println!("{}", Positions(&grid));
+    println!("Which is a total of {} positions visited.", grid.count_visited());
     Ok(())
 }
 
