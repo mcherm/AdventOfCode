@@ -136,6 +136,10 @@ fn find_first_of_each_height(tree_grid: &TreeGrid, x: usize, backward: bool, swa
 }
 
 /// Finds a BoolGrid of all the visible trees.
+///
+/// NOTE: I have tried to optimize the algorithm here. I am NOT
+/// checking every cell in the grid -- in fact,  I think the approach
+/// here is nearly optimal.
 fn find_visible(tree_grid: &TreeGrid) -> BoolGrid {
     let mut visible = BoolGrid::new(tree_grid.cols, tree_grid.rows);
     for x in 0..tree_grid.cols {
@@ -153,6 +157,58 @@ fn find_visible(tree_grid: &TreeGrid) -> BoolGrid {
     visible
 }
 
+enum Direction { N, S, E, W }
+
+impl Direction {
+    /// Given x, returns the new x if stepping in direction self. Panics if out of range.
+    fn step_x(&self, x: usize) -> usize {
+        match self { Direction::N => x, Direction::S => x, Direction::E => x + 1, Direction::W => x - 1 }
+    }
+
+    /// Given x, returns the new x if stepping in direction self. Panics if out of range.
+    fn step_y(&self, y: usize) -> usize {
+        match self { Direction::N => y - 1, Direction::S => y + 1, Direction::E => y, Direction::W => y }
+    }
+
+    /// If moving in direction self, on tree_grid and you are now at (legal) position (x,y), then
+    /// you can't take any more steps or you'll run off the grid.
+    fn stop_here(&self, tree_grid: &TreeGrid, x: usize, y: usize) -> bool {
+        match self {
+            Direction::N => y == 0,
+            Direction::S => y == tree_grid.rows - 1,
+            Direction::E => x == tree_grid.cols - 1,
+            Direction::W => x == 0,
+        }
+    }
+}
+
+/// Finds the view_distance from (start_x, start_y) in the given direction.
+fn find_view_distance(tree_grid: &TreeGrid, start_x: usize, start_y: usize, dir: Direction) -> usize {
+    let (mut x, mut y) = (start_x, start_y);
+    let h = tree_grid.get(x,y);
+    let mut steps = 0;
+    while ! dir.stop_here(tree_grid, x, y) {
+        steps += 1;
+        x = dir.step_x(x);
+        y = dir.step_y(y);
+        if tree_grid.get(x,y) >= h {
+            return steps
+        }
+    }
+    steps
+}
+
+/// Finds the "scenic score" for the tree at location (x,y).
+///
+/// NOTE: Unlike in part A, I don't have any cleverness in the algorithm;
+/// just brute force.
+fn find_scenic_score(tree_grid: &TreeGrid, x: usize, y: usize) -> usize {
+    let mut score = 1;
+    for dir in [Direction::N, Direction::S, Direction::E, Direction::W] {
+        score *= find_view_distance(tree_grid, x, y, dir);
+    }
+    score
+}
 
 
 // ======= main() =======
@@ -165,8 +221,20 @@ fn part_a(tree_grid: &TreeGrid) {
 }
 
 
-fn part_b(_tree_grid: &TreeGrid) {
+fn part_b(tree_grid: &TreeGrid) {
     println!("\nPart b:");
+    let mut max_score = 0;
+    for y in 0..tree_grid.rows {
+        for x in 0..tree_grid.cols {
+            let score = find_scenic_score(tree_grid, x, y);
+            if score > max_score {
+                max_score = score;
+            }
+            print!("{:5} ", score);
+        }
+        println!();
+    }
+    println!("The max score is {}", max_score);
 }
 
 
