@@ -2,6 +2,7 @@
 extern crate anyhow;
 extern crate elsa;
 
+use std::fmt::{Display, Formatter};
 use std::fs;
 use nom::{
     IResult,
@@ -63,6 +64,13 @@ impl Instruction {
 
 // ======= Calculations =======
 
+const CRT_WIDE: usize = 40;
+const CRT_TALL: usize = 6;
+
+struct Crt {
+    pixels: [[bool; CRT_WIDE]; CRT_TALL],
+}
+
 fn process<'a>(instructions: &'a Vec<Instruction>) -> RegisterValueIter<'a> {
     RegisterValueIter::new(instructions)
 }
@@ -116,6 +124,37 @@ impl<'a> Iterator for RegisterValueIter<'a> {
     }
 }
 
+impl Crt {
+    fn new() -> Self {
+        Self{pixels: [[false; CRT_WIDE]; CRT_TALL]}
+    }
+
+    /// Given instructions, renders those on the Crt.
+    fn render(&mut self, instructions: &Vec<Instruction>) {
+        // Note: my "clock" is zero-based so it's one less than the problem's clock. My indexing
+        // is ALSO zero-based so it works out.
+        for (clock, val) in process(instructions).enumerate() {
+            println!("Value at clock {} is {}", clock, val);
+            let y = clock / CRT_WIDE;
+            let x = clock % CRT_WIDE;
+            if matches!((x as Num) - val, -1 ..= 1) {
+                self.pixels[y][x] = true;
+            }
+        }
+    }
+}
+
+impl Display for Crt {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        for y in 0..CRT_TALL {
+            for x in 0..CRT_WIDE {
+                write!(f, "{}", if self.pixels[y][x] {"##"} else {".."} )?;
+            }
+            writeln!(f)?;
+        }
+        Ok(())
+    }
+}
 
 // ======= main() =======
 
@@ -136,8 +175,11 @@ fn part_a(input: &Vec<Instruction>) -> Result<(), anyhow::Error> {
 }
 
 
-fn part_b(_input: &Vec<Instruction>) -> Result<(), anyhow::Error> {
+fn part_b(input: &Vec<Instruction>) -> Result<(), anyhow::Error> {
     println!("\nPart b:");
+    let mut crt = Crt::new();
+    crt.render(input);
+    println!("{}", crt);
     Ok(())
 }
 
