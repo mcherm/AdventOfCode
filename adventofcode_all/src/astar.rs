@@ -249,10 +249,10 @@ pub mod grid {
         /// Useful sometimes for rendering a GridMove.
         pub fn to_ascii_picture(&self) -> char {
             match self {
-                Direction::Down => '^',
-                Direction::Up => 'v',
-                Direction::Left => '>',
-                Direction::Right => '<',
+                Direction::Down => 'v',
+                Direction::Up => '^',
+                Direction::Left => '<',
+                Direction::Right => '>',
             }
         }
     }
@@ -262,6 +262,11 @@ pub mod grid {
         /// Useful sometimes for rendering a GridMove.
         pub fn direction_to_ascii_picture(&self) -> char {
             self.dir.to_ascii_picture()
+        }
+
+        /// Useful sometimes for rendering a GridMove.
+        pub fn direction_rev_to_ascii_picture(&self) -> char {
+            self.dir.inverse().to_ascii_picture()
         }
     }
 

@@ -596,7 +596,7 @@ impl State for SingleSpaceState {
                 c if self.base.nodes.get(&c).used >= self.min_blocker_content => '#',
                 c if visited_from.contains_key(&self.dummy_with_space_at(c)) => match visited_from.get(&self.dummy_with_space_at(c)).unwrap() {
                     None => '@',
-                    Some((_, grid_move, _)) => grid_move.direction_to_ascii_picture(),
+                    Some((_, grid_move, _)) => grid_move.direction_rev_to_ascii_picture(),
                 },
                 c if queue.iter().any(|x| {
                     x.state().base.goal_data_loc == self.base.goal_data_loc &&
