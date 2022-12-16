@@ -42,7 +42,7 @@ impl InputGrid {
     }
 }
 
-// ======= Calculations =======
+// ======= Common Calculations =======
 
 type Height = char;
 
@@ -52,13 +52,6 @@ struct HeightMap {
     start: Coord,
     end: Coord,
 }
-
-#[derive(Debug, Hash, Eq, PartialEq, Clone)]
-struct WanderState<'a> {
-    height_map: &'a HeightMap,
-    pos: Coord,
-}
-
 
 impl HeightMap {
     fn new(input: &InputGrid) -> Result<Self, anyhow::Error> {
@@ -125,6 +118,30 @@ impl Display for HeightMap {
     }
 }
 
+/// This is just a wrapper allowing us to define Display for a pair of things.
+struct DisplayPath<'a>(&'a HeightMap, &'a Vec<GridMove>);
+
+impl<'a> Display for DisplayPath<'a> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let mut hash_map = HashMap::from([
+            (self.0.start, 'S'),
+        ]);
+        for mv in self.1.iter() {
+            hash_map.insert(mv.from(), mv.direction_to_ascii_picture());
+        }
+        hash_map.insert(self.0.end, 'E');
+        fmt_letters_with_overlaps(f, &self.0.spots, &hash_map)
+    }
+}
+
+// ======= Part 1 Solution =======
+
+#[derive(Debug, Hash, Eq, PartialEq, Clone)]
+struct WanderState<'a> {
+    height_map: &'a HeightMap,
+    pos: Coord,
+}
+
 impl<'a> Display for WanderState<'a> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         writeln!(f)?;
@@ -135,8 +152,6 @@ impl<'a> Display for WanderState<'a> {
         ]))
     }
 }
-
-
 
 impl<'a> State for WanderState<'a> {
     type TMove = GridMove;
@@ -164,22 +179,52 @@ impl<'a> State for WanderState<'a> {
     }
 }
 
-/// This is just a wrapper allowing us to define Display for a pair of things.
-struct DisplayPath<'a>(&'a HeightMap, &'a Vec<GridMove>);
+// ======= Part 2 Solution =======
 
-impl<'a> Display for DisplayPath<'a> {
+#[derive(Debug, Hash, Eq, PartialEq, Clone)]
+struct FindPathState<'a> {
+    height_map: &'a HeightMap,
+    pos: Coord,
+}
+
+impl<'a> Display for FindPathState<'a> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        let mut hash_map = HashMap::from([
-            (self.0.end, 'E'),
-            (self.0.start, 'S'),
-        ]);
-        for mv in self.1.iter() {
-            hash_map.insert(mv.from(), mv.direction_to_ascii_picture());
-        }
-        fmt_letters_with_overlaps(f, &self.0.spots, &hash_map)
+        writeln!(f)?;
+        fmt_letters_with_overlaps(f, &self.height_map.spots, &HashMap::from([
+            (self.height_map.start, 'S'),
+            (self.height_map.end, 'E'),
+            (self.pos, '*'),
+        ]))
     }
 }
 
+impl<'a> State for FindPathState<'a> {
+    type TMove = GridMove;
+
+    fn is_winning(&self) -> bool {
+        *self.height_map.spots.get(&self.pos) == 'a'
+    }
+
+    fn min_moves_to_win(&self) -> usize {
+        let height = *self.height_map.spots.get(&self.pos);
+        let delta_height = (height as i64) - ('a' as i64);
+        delta_height as usize
+    }
+
+    fn avail_moves(&self) -> Vec<Self::TMove> {
+        moves_from(self.pos, self.height_map.spots.size()).into_iter()
+            .filter(|mv| {
+                let from_height = self.height_map.spots.get(&mv.from());
+                let to_height = self.height_map.spots.get(&mv.to());
+                (i64::from(u32::from(*to_height))) - (i64::from(u32::from(*from_height))) >= -1 // not more than 1 step down
+            })
+            .collect()
+    }
+
+    fn enact_move(&self, mv: &Self::TMove) -> Self {
+        FindPathState{ height_map: self.height_map, pos: mv.to() }
+    }
+}
 
 
 // ======= main() =======
@@ -201,8 +246,21 @@ fn part_a(input: &InputGrid) -> Result<(), anyhow::Error> {
 }
 
 
-fn part_b(_input: &InputGrid) -> Result<(), anyhow::Error> {
+fn part_b(input: &InputGrid) -> Result<(), anyhow::Error> {
     println!("\nPart b:");
+
+    let height_map = &HeightMap::new(input)?;
+    let pos = height_map.end.clone();
+    let initial_state = FindPathState{height_map, pos};
+    if let Some(solution) = solve_with_astar(&initial_state, PRINT_EVERY_N_MOVES) {
+        println!("It was solved");
+        println!("{}", DisplayPath(height_map, &solution));
+        println!();
+        println!("That took {} steps.", solution.len());
+    } else {
+        Err(anyhow!("No path found."))?;
+    }
+
     Ok(())
 }
 
