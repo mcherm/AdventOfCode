@@ -28,7 +28,7 @@ fn input() -> Result<Vec<LineSpec>, anyhow::Error> {
 
 type Num = u32;
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
 struct Point(Num, Num);
 
 #[derive(Debug)]
@@ -126,6 +126,7 @@ enum GridCell { Empty, Wall, Sand }
 struct Grid {
     size: Point,
     cells: Vec<GridCell>,
+    has_floor: bool,
 }
 
 /// Returns the index into a vector for a grid of size size. Assumes everything is the right
@@ -133,22 +134,30 @@ struct Grid {
 fn grid_idx(size: &Point, p: &Point) -> usize {
     assert!(p.0 < size.0);
     assert!(p.1 < size.1);
-    (p.1 as usize) * (size.0 as usize) + (p.0 as usize)
+    (p.0 as usize) * (size.1 as usize) + (p.1 as usize)
 }
 
 
 impl Grid {
-    fn new(lines: &Vec<LineSpec>) -> Self {
+    fn new(lines: &Vec<LineSpec>, has_floor: bool) -> Self {
         assert!(lines.len() > 0);
         assert!(lines[0].points.len() > 1);
         let max_x = lines.iter().map(|line| line.points.iter().map(|p| p.0).max().unwrap()).max().unwrap();
         let max_y = lines.iter().map(|line| line.points.iter().map(|p| p.1).max().unwrap()).max().unwrap();
-        let size = Point(max_x + 2, max_y + 2); // ensure there's 1 extra space
+        let extra_x = 2; // a space to fall in AND one more space to the right
+        let extra_y = if has_floor {2} else {1}; // 1 extra row OR just enough for the solid floor
+        let size = Point(max_x + extra_x + 1, max_y + extra_y + 1); // set bounds accordingly
         let mut cells = vec![GridCell::Empty; (size.0 * size.1) as usize];
         for line in lines.iter() {
             line.draw(&size, &mut cells);
         }
-        Grid{size, cells}
+        if has_floor {
+            let y = size.1 - 1;
+            for x in 0..size.0 {
+                cells[grid_idx(&size, &Point(x,y))] = GridCell::Wall;
+            }
+        }
+        Grid{size, cells, has_floor}
     }
 
     fn idx(&self, p: Point) -> usize {
@@ -165,9 +174,14 @@ impl Grid {
     }
 
     /// This returns where a piece of sand added at Point(500,0) will come to rest, or None
-    /// if it will fall into the void.
+    /// if it will fall into the void or if it sits at Point(500,0)
     fn sand_resting_place(&self) -> Option<Point> {
-        let mut s = Point(500,0); // set the starting point for the sand
+        const SOURCE: Point = Point(500,0);
+        if self.get(SOURCE) != GridCell::Empty {
+            // The source of sand is blocked
+            return None;
+        }
+        let mut s = SOURCE; // set the starting point for the sand
         loop {
             if s.1 + 1 == self.size.1 {
                 return None; // it fell to infinity
@@ -201,12 +215,29 @@ impl Grid {
             match rest_at {
                 Some(p) => {
                     count += 1;
-                    self.set(p, GridCell::Sand)
+                    self.set(p, GridCell::Sand);
+                    if p.0 >= self.size.0 - 2 {
+                        // sand got too far to the right; make it bigger
+                        self.add_column();
+                    }
                 },
                 None => {
                     return count;
                 },
             }
+        }
+    }
+
+    /// Calling this makes it one column wider.
+    ///
+    /// NOTE: By design, I'm using colum-then-row for my grid so I can make it wider by
+    ///   just expanding the grid. If that weren't efficient, then the API for this might
+    ///   need to be different.
+    fn add_column(&mut self) {
+        self.size = Point(self.size.0 + 1, self.size.1);
+        self.cells.extend(vec![GridCell::Empty; self.size.1 as usize]);
+        if self.has_floor {
+            self.set(Point(self.size.0 - 1, self.size.1 - 1), GridCell::Wall);
         }
     }
 }
@@ -240,7 +271,7 @@ impl Display for Grid {
 
 fn part_a(input: &Vec<LineSpec>) {
     println!("\nPart a:");
-    let mut grid = Grid::new(input);
+    let mut grid = Grid::new(input, false);
     println!("{}", grid);
     println!();
     println!("After pouring:");
@@ -251,8 +282,16 @@ fn part_a(input: &Vec<LineSpec>) {
 }
 
 
-fn part_b(_input: &Vec<LineSpec>) {
+fn part_b(input: &Vec<LineSpec>) {
     println!("\nPart b:");
+    let mut grid = Grid::new(input, true);
+    println!("{}", grid);
+    println!();
+    println!("After pouring:");
+    let count = grid.pour_sand();
+    println!("{}", grid);
+    println!();
+    println!("That was {} grains of sand.", count);
 }
 
 
