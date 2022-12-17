@@ -14,8 +14,6 @@ use nom::{
 };
 use nom::character::complete::u8 as nom_u8;
 use std::iter::zip;
-use std::ops::Index;
-// use std::fmt::{Display, Formatter};
 
 
 
