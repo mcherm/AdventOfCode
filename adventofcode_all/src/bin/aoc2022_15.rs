@@ -8,10 +8,10 @@ use nom::{
     bytes::complete::tag,
     character::complete::line_ending,
 };
-use nom::character::complete::i32 as nom_i32;
+use nom::character::complete::i64 as nom_i64;
 use std::fmt::{Display, Formatter};
 use std::cmp::{min, max};
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, BTreeMap, HashSet};
 
 
 // ======= Parsing =======
@@ -26,9 +26,9 @@ fn input() -> Result<Vec<SensorAndBeacon>, anyhow::Error> {
 }
 
 
-type Num = i32;
+type Num = i64;
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
 struct Point(Num, Num);
 
 #[derive(Debug)]
@@ -43,9 +43,9 @@ impl Point {
         nom::combinator::map(
             nom::sequence::tuple((
                 tag("x="),
-                nom_i32,
+                nom_i64,
                 tag(", y="),
-                nom_i32,
+                nom_i64,
             )),
             |(_, x, _, y)| Point(x,y)
         )(input)
@@ -104,10 +104,25 @@ impl SensorAndBeacon {
             Some(span)
         }
     }
+
+    /// Returns the list of 4 diagonals that are just OUTSIDE the radius -- the only
+    /// ones that could contain the sought-after location. Does not include the corners.
+    fn bounding_diags(&self) -> [DiagSpan; 4] {
+        let Point(sx, sy) = self.sensor;
+        let r = self.radius();
+        let center_sum = sx + sy;
+        let center_dif = sx - sy;
+        [
+            DiagSpan::new(Diagonal::PosSlope(center_sum + (r + 1)), Point(sx + 1, sy + r), Point(sx + r, sy + 1), FillDirection::Left),
+            DiagSpan::new(Diagonal::PosSlope(center_sum - (r + 1)), Point(sx - r, sy - 1), Point(sx - 1, sy - r), FillDirection::Right),
+            DiagSpan::new(Diagonal::NegSlope(center_dif - (r + 1)), Point(sx - r, sy + 1), Point(sx - 1, sy + r), FillDirection::Right),
+            DiagSpan::new(Diagonal::NegSlope(center_dif + (r + 1)), Point(sx + 1, sy - r), Point(sx + r, sy - 1), FillDirection::Left),
+        ]
+    }
 }
 
 
-// ======= Compute =======
+// ======= Part 1 Compute =======
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 struct Span {
@@ -213,7 +228,154 @@ impl Row {
     }
 }
 
+// ======= Part 2 Compute =======
 
+/// Represents a specific diagonal "row".
+#[derive(Debug, Eq, PartialEq, Copy, Clone)]
+enum Diagonal {
+    PosSlope(Num), // goes SW<->NE; x + y is a fixed value
+    NegSlope(Num), // goes NW<->SE; x - y is a fixed value
+}
+
+#[derive(Debug, Eq, PartialEq, Copy, Clone)]
+enum FillDirection {Left, Right}
+
+/// Represents a span in a particular diagonal.
+#[derive(Debug, Eq, PartialEq, Copy, Clone)]
+struct DiagSpan {
+    diag: Diagonal,
+    x_span: Span,
+    fill: FillDirection,
+}
+
+/// Represents a collection of DiagSpans.
+#[derive(Debug)]
+struct DiagSpanCollection {
+    pos_spans: BTreeMap<Num,Vec<DiagSpan>>,
+    neg_spans: BTreeMap<Num,Vec<DiagSpan>>,
+}
+
+
+impl Diagonal {
+    /// Returns true if the point is on this diagonal; false if not.
+    fn contains(&self, p: Point) -> bool {
+        match self {
+            Diagonal::PosSlope(n) => p.0 + p.1 == *n,
+            Diagonal::NegSlope(n) => p.0 - p.1 == *n,
+        }
+    }
+
+    /// Returns the point along this Diagonal that has the given x value.
+    fn point_at_x(&self, x_value: Num) -> Point {
+        match self {
+            Diagonal::PosSlope(n) => Point(x_value, *n - x_value),
+            Diagonal::NegSlope(n) => Point(x_value, x_value - *n),
+        }
+    }
+}
+
+impl DiagSpan {
+    /// Constructs a DiagSpan. start and end can be in any order.
+    fn new(diag: Diagonal, start: Point, end: Point, fill: FillDirection) -> Self {
+        assert!(diag.contains(start) && diag.contains(end));
+        let x_span = Span::new(min(start.0, end.0), max(start.0, end.0));
+        DiagSpan{diag, x_span, fill}
+    }
+
+
+    /// If these two spans overlap at all, this returns a span containing the overlap;
+    /// if not, it returns None. This may ONLY be called on spans that have the same
+    /// Diagonal, or this will panic. The span returned will always have the FillDirection
+    /// of self, regardless of other.
+    fn intersect(&self, other: &Self) -> Option<Self> {
+        assert!(self.diag == other.diag);
+        if self.x_span.start <= other.x_span.end && self.x_span.end >= other.x_span.start {
+            let start_x = max(self.x_span.start, other.x_span.start);
+            let end_x = min(self.x_span.end, other.x_span.end);
+            let start_p = self.diag.point_at_x(start_x);
+            let end_p = self.diag.point_at_x(end_x);
+            let diag_span = DiagSpan::new(self.diag, start_p, end_p, self.fill);
+            Some(diag_span)
+        } else {
+            None
+        }
+    }
+
+    /// Iterates
+    fn iter_points(&self) -> impl Iterator<Item=Point> {
+        DiagSpanPointIter{diag: self.diag, next_x: self.x_span.start, max_x: self.x_span.end}
+    }
+}
+
+struct DiagSpanPointIter {
+    diag: Diagonal,
+    next_x: Num,
+    max_x: Num,
+}
+impl<'a> Iterator for DiagSpanPointIter {
+    type Item = Point;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.next_x > self.max_x {
+            None
+        } else {
+            let x = self.next_x;
+            self.next_x += 1;
+            Some(self.diag.point_at_x(x))
+        }
+    }
+}
+
+
+impl DiagSpanCollection {
+    fn new() -> Self {
+        DiagSpanCollection{pos_spans: BTreeMap::new(), neg_spans: BTreeMap::new()}
+    }
+
+    fn add_span(&mut self, dspan: DiagSpan) {
+        match dspan {
+            DiagSpan{diag: Diagonal::PosSlope(n), ..} => {
+                self.pos_spans.entry(n).or_default().push(dspan);
+            }
+            DiagSpan{diag: Diagonal::NegSlope(n), ..} => {
+                self.neg_spans.entry(n).or_default().push(dspan);
+            }
+        }
+    }
+
+    /// We can have a lone point ONLY if it lies along two PosSlope spans, one with
+    /// fill=Left and one with fill=Right and ALSO lies along two NegSlope spans that
+    /// also face opposite directions. This method exhaustively finds all such points
+    /// and returns a list of them.
+    ///
+    /// NOTE: It does NOT find points along the edge of the region, which could (in
+    /// theory) satisfy the requirements. It also does not enforce that the point
+    /// must be in the region.
+    fn lone_points(&self) -> Vec<Point> {
+        fn matches_from_span_map(span_map: &BTreeMap<Num,Vec<DiagSpan>>) -> Vec<DiagSpan> {
+            let mut answer = Vec::new();
+            for (_num, spans) in span_map.iter() {
+                let (left_spans, right_spans): (Vec<&DiagSpan>, Vec<&DiagSpan>)
+                    = spans.iter().partition(|x| x.fill == FillDirection::Left);
+                for a_span in &left_spans {
+                    for b_span in &right_spans {
+                        match a_span.intersect(b_span) {
+                            None => {},
+                            Some(span) => {
+                                answer.push(span);
+                            },
+                        }
+                    }
+                }
+            }
+            answer
+        }
+        let pos_hits: HashSet<Point> = matches_from_span_map(&self.pos_spans).iter().flat_map(|x| x.iter_points()).collect();
+        let neg_hits: HashSet<Point> = matches_from_span_map(&self.neg_spans).iter().flat_map(|x| x.iter_points()).collect();
+        let hits = pos_hits.intersection(&neg_hits);
+        hits.map(|x| *x).collect()
+    }
+}
 
 
 // ======= main() =======
@@ -229,8 +391,21 @@ fn part_a(input: &Vec<SensorAndBeacon>) {
 }
 
 
-fn part_b(_input: &Vec<SensorAndBeacon>) {
+fn part_b(input: &Vec<SensorAndBeacon>) {
     println!("\nPart b:");
+    let mut diag_spans = DiagSpanCollection::new();
+    for sab in input {
+        for d_span in sab.bounding_diags() {
+            diag_spans.add_span(d_span);
+        }
+    }
+    let lone_points = diag_spans.lone_points();
+    for p in lone_points {
+        if p.0 >= 0 && p.0 <= 4000000 && p.1 >= 0 && p.1 <= 4000000 {
+            let tuning_frequency = p.0 * 4000000 + p.1;
+            println!("A possible answer is point {} with frequency {}", p, tuning_frequency);
+        }
+    }
 }
 
 
