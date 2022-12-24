@@ -18,8 +18,8 @@ use itertools::Itertools;
 
 // ======= Constants =======
 
-const PRINT_WORK: bool = true;
-const MAX_STEPS: usize = 5;
+const PRINT_WORK: bool = false;
+const MAX_STEPS: usize = 30;
 
 // ======= Parsing =======
 
@@ -130,10 +130,23 @@ impl<'a> SolverState<'a> {
     /// Returns a cap on the the maximum possible future release. The heuristic used
     /// may change over time, but for now it assumes instantaneous travel to all locations.
     fn calc_score(valve_maze: &'a ValveMaze, time_completed: usize, unopened_valves: &OrdSet<String>, pressure_released: usize) -> [usize;2] {
-        let remaining_steps = MAX_STEPS - time_completed;
-        let possible_release = unopened_valves.iter()
-            .map(|name| (valve_maze.valves.get(name).unwrap().flow_rate as usize) * remaining_steps)
-            .product();
+        let mut flow_rates: Vec<usize> = unopened_valves.iter()
+            .map(|name| (valve_maze.valves.get(name).unwrap().flow_rate as usize))
+            .collect_vec();
+        flow_rates.sort_by_key(|x| std::cmp::Reverse(*x)); // put big ones first
+        let mut remaining_steps = MAX_STEPS - time_completed;
+        let mut possible_release = 0;
+        for flow_rate in flow_rates {
+            if remaining_steps <= 1 {
+                break;
+            } else {
+                remaining_steps -= 1; // have to open the valve
+                possible_release += flow_rate * remaining_steps;
+                if remaining_steps > 0 {
+                    remaining_steps -= 1; // have to walk to a new location
+                }
+            }
+        }
         [pressure_released, possible_release]
     }
 
@@ -194,7 +207,7 @@ impl<'a> SolverState<'a> {
         prev_steps.push_back(Step::OpenValve(self.location.clone()));
         let mut unopened_valves = self.unopened_valves.clone();
         unopened_valves.remove(&self.location);
-        let new_pressure_released = (flow_rate as usize) * (MAX_STEPS - self.time_completed);
+        let new_pressure_released = (flow_rate as usize) * (MAX_STEPS - self.time_completed - 1);
         let time_completed = self.time_completed + 1;
         let score = Self::calc_score(
             self.valve_maze,
@@ -267,11 +280,9 @@ fn solve(valve_maze: &ValveMaze) -> SolverState {
             Some(state) => {
                 // Add the possible next states onto the list, but ONLY if it's POSSIBLE for one to beat the best
                 let best_released = best_state.pressure_released();
-                if state.max_possible() > best_released {
-                    for next_state in state.next_states(valve_maze) {
-                        if next_state.max_possible() > best_released {
-                            states_to_try.push(next_state); // they get sorted as they are inserted
-                        }
+                for next_state in state.next_states(valve_maze) {
+                    if next_state.max_possible() > best_released {
+                        states_to_try.push(next_state); // they get sorted as they are inserted
                     }
                 }
                 // Check if this one is the new best state
