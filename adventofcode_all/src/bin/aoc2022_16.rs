@@ -1,6 +1,7 @@
 
 extern crate anyhow;
 
+use std::cmp::Ordering;
 use std::fs;
 use nom;
 use nom::{
@@ -9,13 +10,16 @@ use nom::{
     character::complete::line_ending,
 };
 use nom::character::complete::u32 as nom_Num;
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::{BinaryHeap, BTreeMap};
+use im::ordset::OrdSet;
+use im::Vector;
 use itertools::Itertools;
 
 
 // ======= Constants =======
 
-const MAX_STEPS: usize = 4;
+const PRINT_WORK: bool = true;
+const MAX_STEPS: usize = 5;
 
 // ======= Parsing =======
 
@@ -77,39 +81,32 @@ impl ValveDesc {
 
 // ======= Part 1 Compute =======
 
-#[derive(Debug)]
+#[derive(Debug, Eq, PartialEq)]
 struct Valve {
     flow_rate: Num,
     leads_to: Vec<String>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Eq, PartialEq)]
 struct ValveMaze {
     valves: BTreeMap<String, Valve>
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 enum Step {
     OpenValve(String),
     MoveTo(String),
 }
 
-#[derive(Debug)]
-struct SolverState {
+#[derive(Debug, Eq, PartialEq)]
+struct SolverState<'a> {
+    valve_maze: &'a ValveMaze,
     location: String,
     time_completed: usize,
-    prev_steps: Vec<Step>,
-    opened_valves: BTreeSet<String>,
-    pressure_released: usize,
+    prev_steps: Vector<Step>,
+    unopened_valves: OrdSet<String>, // FIXME: Can this be &'a str instead?
+    score: [usize; 2], // the score is [pressure_released, possible_release]
 }
-
-struct Solver<'a> {
-    valve_maze: &'a ValveMaze,
-    // FIXME: Remove the next lines
-    // states_to_try: VecDeque<SolverState>,
-    // best_state: Option<SolverState>,
-}
-
 
 
 impl ValveMaze {
@@ -128,16 +125,48 @@ impl ValveMaze {
 }
 
 
-impl SolverState {
+impl<'a> SolverState<'a> {
+
+    /// Returns a cap on the the maximum possible future release. The heuristic used
+    /// may change over time, but for now it assumes instantaneous travel to all locations.
+    fn calc_score(valve_maze: &'a ValveMaze, time_completed: usize, unopened_valves: &OrdSet<String>, pressure_released: usize) -> [usize;2] {
+        let remaining_steps = MAX_STEPS - time_completed;
+        let possible_release = unopened_valves.iter()
+            .map(|name| (valve_maze.valves.get(name).unwrap().flow_rate as usize) * remaining_steps)
+            .product();
+        [pressure_released, possible_release]
+    }
+
+    fn pressure_released(&self) -> usize {
+        return self.score[0];
+    }
+
+    fn possible_release(&self) -> usize {
+        return self.score[1];
+    }
+
+    /// Returns (an overestimate of) the largest score it's possible to get, starting from this location.
+    fn max_possible(&self) -> usize {
+        self.pressure_released() + self.possible_release()
+    }
 
     /// The initial SolverState
-    fn initial() -> Self {
+    fn initial(valve_maze: &'a ValveMaze) -> Self {
+        let location = "AA".to_string();
+        let time_completed = 0;
+        let prev_steps = Vector::new();
+        let unopened_valves = valve_maze.valves.iter()
+            .filter_map(|(name, valve)| if valve.flow_rate == 0 {None} else {Some(name.clone())})
+            .collect();
+        let pressure_released = 0;
+        let score = Self::calc_score(valve_maze, time_completed, &unopened_valves, pressure_released);
         SolverState{
-            location: "AA".to_string(),
-            time_completed: 0,
-            prev_steps: Vec::new(),
-            opened_valves: BTreeSet::new(),
-            pressure_released: 0,
+            valve_maze,
+            location,
+            time_completed,
+            prev_steps,
+            unopened_valves,
+            score,
         }
     }
 
@@ -145,7 +174,7 @@ impl SolverState {
     fn next_states(&self, valve_maze: &ValveMaze) -> Vec<Self> {
         let mut answer = Vec::new();
         if self.time_completed < MAX_STEPS {
-            if ! self.opened_valves.contains(&self.location) {
+            if self.unopened_valves.contains(&self.location) {
                 let flow_rate = valve_maze.valves.get(&self.location).unwrap().flow_rate;
                 answer.push(self.do_open_valve(flow_rate));
             }
@@ -159,69 +188,106 @@ impl SolverState {
     /// The state we get to by opening a valve from here. Assumes that it's valid to do. The
     /// flow_rate of this valve is passed in.
     fn do_open_valve(&self, flow_rate: Num) -> Self {
+        let valve_maze = self.valve_maze;
+        let location = self.location.clone();
         let mut prev_steps = self.prev_steps.clone();
-        prev_steps.push(Step::OpenValve(self.location.clone()));
-        let mut opened_valves = self.opened_valves.clone();
-        opened_valves.insert(self.location.clone());
+        prev_steps.push_back(Step::OpenValve(self.location.clone()));
+        let mut unopened_valves = self.unopened_valves.clone();
+        unopened_valves.remove(&self.location);
         let new_pressure_released = (flow_rate as usize) * (MAX_STEPS - self.time_completed);
+        let time_completed = self.time_completed + 1;
+        let score = Self::calc_score(
+            self.valve_maze,
+            time_completed,
+            &unopened_valves,
+            self.pressure_released() + new_pressure_released
+        );
         SolverState{
-            location: self.location.clone(),
-            time_completed: self.time_completed + 1,
+            valve_maze,
+            location,
+            time_completed,
             prev_steps,
-            opened_valves,
-            pressure_released: self.pressure_released + new_pressure_released,
+            unopened_valves,
+            score
         }
     }
 
     /// The state we get to by taking a step from here. Assumes that it's valid to do. the
     /// step is passed in.
     fn do_go_to(&self, next_location: &String) -> Self {
+        let valve_maze = self.valve_maze;
+        let location = next_location.clone();
+        let time_completed = self.time_completed + 1;
         let mut prev_steps = self.prev_steps.clone();
-        prev_steps.push(Step::MoveTo(next_location.clone()));
+        prev_steps.push_back(Step::MoveTo(next_location.clone()));
+        let unopened_valves = self.unopened_valves.clone();
+        let score = Self::calc_score(valve_maze, time_completed, &unopened_valves, self.pressure_released());
         SolverState{
-            location: next_location.clone(),
-            time_completed: self.time_completed + 1,
+            valve_maze,
+            location,
+            time_completed,
             prev_steps,
-            opened_valves: self.opened_valves.clone(),
-            pressure_released: self.pressure_released,
+            unopened_valves,
+            score,
         }
+    }
+
+}
+
+impl<'a> PartialOrd for SolverState<'a> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other)) // just default to the total ordering
+    }
+}
+
+impl<'a> Ord for SolverState<'a> {
+    fn cmp(&self, other: &Self) -> Ordering {
+        let mut answer = self.score.cmp(&other.score); // sort by score
+        if answer == Ordering::Equal {
+            answer = self.prev_steps.cmp(&other.prev_steps); // break ties with path
+        }
+        answer
     }
 }
 
 
-// struct Solver<'a> {
-//     valve_maze: &'a ValveMaze,
-//     states_to_try: VecDeque<SolverState>
-// }
-
-impl<'a> Solver<'a> {
-    fn new(valve_maze: &'a ValveMaze) -> Self {
-        Solver{valve_maze}
-    }
-
-    /// Solves it, returning the final state
-    fn solve(&self) -> SolverState {
-        let mut best_state: Option<SolverState> = None;
-        let mut states_to_try = VecDeque::from([SolverState::initial()]);
-        loop {
-            match states_to_try.pop_front() {
-                None => {
-                    // Nothing left to try so we've solved it
-                    return best_state.unwrap();
-                }
-                Some(state) => {
-                    states_to_try.extend(state.next_states(self.valve_maze));
-                    match &best_state {
-                        None => best_state = Some(state),
-                        Some(best) => if state.pressure_released > best.pressure_released {
-                            best_state = Some(state);
+/// Solves it, returning the final state
+fn solve(valve_maze: &ValveMaze) -> SolverState {
+    let mut states_tried = 0;
+    let mut best_state = SolverState::initial(valve_maze);
+    let mut states_to_try: BinaryHeap<SolverState> = BinaryHeap::from([SolverState::initial(valve_maze)]);
+    loop {
+        states_tried += 1;
+        match states_to_try.pop() {
+            None => {
+                // Nothing left to try so we've solved it
+                println!("Tried a total of {} states.", states_tried);
+                return best_state;
+            }
+            Some(state) => {
+                // Add the possible next states onto the list, but ONLY if it's POSSIBLE for one to beat the best
+                let best_released = best_state.pressure_released();
+                if state.max_possible() > best_released {
+                    for next_state in state.next_states(valve_maze) {
+                        if next_state.max_possible() > best_released {
+                            states_to_try.push(next_state); // they get sorted as they are inserted
                         }
+                    }
+                }
+                // Check if this one is the new best state
+                if state.pressure_released() > best_state.pressure_released() {
+                    if PRINT_WORK {
+                        println!("New best: [{}, {}] -> {} {:?}", state.pressure_released(), state.possible_release(), state.max_possible(), state.prev_steps); // FIXME: debugging
+                    }
+                    best_state = state;
+                } else {
+                    if PRINT_WORK {
+                        println!("   tried: [{}, {}] -> {} {:?}", state.pressure_released(), state.possible_release(), state.max_possible(), state.prev_steps); // FIXME: debugging
                     }
                 }
             }
         }
     }
-
 }
 
 
@@ -230,10 +296,9 @@ impl<'a> Solver<'a> {
 fn part_a(input: &Vec<ValveDesc>) {
     println!("\nPart a:");
     let valve_maze = ValveMaze::new(input);
-    let solver = Solver::new(&valve_maze);
-    let solved_state = solver.solve();
+    let solved_state = solve(&valve_maze);
     println!("Path {:?}", solved_state.prev_steps);
-    println!("Releases {}", solved_state.pressure_released);
+    println!("Releases {}", solved_state.pressure_released());
 }
 
 
