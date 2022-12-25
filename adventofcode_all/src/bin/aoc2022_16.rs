@@ -105,6 +105,7 @@ struct SolverState<'a> {
     time_completed: usize,
     prev_steps: Vector<Step>,
     unopened_valves: OrdSet<String>, // FIXME: Can this be &'a str instead?
+    unopened_flow_rates: Vec<usize>,
     score: [usize; 2], // the score is [pressure_released, possible_release]
 }
 
@@ -129,14 +130,14 @@ impl<'a> SolverState<'a> {
 
     /// Returns a cap on the the maximum possible future release. The heuristic used
     /// may change over time, but for now it assumes instantaneous travel to all locations.
-    fn calc_score(valve_maze: &'a ValveMaze, time_completed: usize, unopened_valves: &OrdSet<String>, pressure_released: usize) -> [usize;2] {
-        let mut flow_rates: Vec<usize> = unopened_valves.iter()
-            .map(|name| (valve_maze.valves.get(name).unwrap().flow_rate as usize))
-            .collect_vec();
-        flow_rates.sort_by_key(|x| std::cmp::Reverse(*x)); // put big ones first
+    fn calc_score(
+        time_completed: usize,
+        unopened_flow_rates: &Vec<usize>,
+        pressure_released: usize
+    ) -> [usize;2] {
         let mut remaining_steps = MAX_STEPS - time_completed;
         let mut possible_release = 0;
-        for flow_rate in flow_rates {
+        for flow_rate in unopened_flow_rates.iter() {
             if remaining_steps <= 1 {
                 break;
             } else {
@@ -168,17 +169,22 @@ impl<'a> SolverState<'a> {
         let location = "AA".to_string();
         let time_completed = 0;
         let prev_steps = Vector::new();
-        let unopened_valves = valve_maze.valves.iter()
+        let unopened_valves: OrdSet<String> = valve_maze.valves.iter()
             .filter_map(|(name, valve)| if valve.flow_rate == 0 {None} else {Some(name.clone())})
             .collect();
+        let mut unopened_flow_rates: Vec<usize> = unopened_valves.iter()
+            .map(|name| (valve_maze.valves.get(name).unwrap().flow_rate as usize))
+            .collect();
+        unopened_flow_rates.sort_by_key(|x| std::cmp::Reverse(*x)); // put big ones first
         let pressure_released = 0;
-        let score = Self::calc_score(valve_maze, time_completed, &unopened_valves, pressure_released);
+        let score = Self::calc_score(time_completed, &unopened_flow_rates, pressure_released);
         SolverState{
             valve_maze,
             location,
             time_completed,
             prev_steps,
             unopened_valves,
+            unopened_flow_rates,
             score,
         }
     }
@@ -207,12 +213,15 @@ impl<'a> SolverState<'a> {
         prev_steps.push_back(Step::OpenValve(self.location.clone()));
         let mut unopened_valves = self.unopened_valves.clone();
         unopened_valves.remove(&self.location);
+        let mut unopened_flow_rates: Vec<usize> = self.unopened_flow_rates.clone();
+        let newly_opened_valve_flow_rate = valve_maze.valves.get(&location).unwrap().flow_rate as usize;
+        let pos_to_remove = unopened_flow_rates.iter().position(|x| *x == newly_opened_valve_flow_rate).unwrap();
+        unopened_flow_rates.remove(pos_to_remove);
         let new_pressure_released = (flow_rate as usize) * (MAX_STEPS - self.time_completed - 1);
         let time_completed = self.time_completed + 1;
         let score = Self::calc_score(
-            self.valve_maze,
             time_completed,
-            &unopened_valves,
+            &unopened_flow_rates,
             self.pressure_released() + new_pressure_released
         );
         SolverState{
@@ -221,6 +230,7 @@ impl<'a> SolverState<'a> {
             time_completed,
             prev_steps,
             unopened_valves,
+            unopened_flow_rates,
             score
         }
     }
@@ -234,13 +244,15 @@ impl<'a> SolverState<'a> {
         let mut prev_steps = self.prev_steps.clone();
         prev_steps.push_back(Step::MoveTo(next_location.clone()));
         let unopened_valves = self.unopened_valves.clone();
-        let score = Self::calc_score(valve_maze, time_completed, &unopened_valves, self.pressure_released());
+        let unopened_flow_rates = self.unopened_flow_rates.clone();
+        let score = Self::calc_score(time_completed, &unopened_flow_rates, self.pressure_released());
         SolverState{
             valve_maze,
             location,
             time_completed,
             prev_steps,
             unopened_valves,
+            unopened_flow_rates,
             score,
         }
     }
