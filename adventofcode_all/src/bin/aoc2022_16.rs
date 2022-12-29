@@ -18,7 +18,8 @@ use itertools::Itertools;
 
 // ======= Constants =======
 
-const PRINT_WORK: bool = false;
+const PRINT_WORK: bool = true;
+const PRINT_RESULTS: bool = false;
 const MAX_STEPS: usize = 30;
 
 // ======= Parsing =======
@@ -81,7 +82,7 @@ impl ValveDesc {
 
 // ======= Part 1 Compute =======
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq, Clone)]
 struct Valve {
     flow_rate: Num,
     leads_to: Vec<String>,
@@ -230,17 +231,17 @@ impl<'a> SolverState<'a> {
         let mut possible_release = 0;
         let mut flow_rate_iter = unopened_flow_rates.iter();
         while remaining_steps > 0 {
-            for _actor_num in 0..num_actors {
-                if remaining_steps > 0 {
-                    remaining_steps -= 1; // have to open the valve
+            if remaining_steps > 0 {
+                remaining_steps -= 1; // have to open the valve
+                for _actor_num in 0..num_actors {
                     let flow_rate = match flow_rate_iter.next() {
                         None => break,
                         Some(flow_rate) => flow_rate
                     };
                     possible_release += flow_rate * remaining_steps;
-                    if remaining_steps > 0 {
-                        remaining_steps -= 1; // have to walk to a new location
-                    }
+                }
+                if remaining_steps > 0 {
+                    remaining_steps -= 1; // have to walk to a new location
                 }
             }
         }
@@ -333,7 +334,6 @@ impl<'a> SolverState<'a> {
             .collect_vec()
     }
 
-
     /// Given a GroupStep to take from here, this returns the new state that step would reach.
     fn build_next_state(&self, group_step: GroupStep) -> Self {
         let valve_maze = self.valve_maze;
@@ -360,59 +360,6 @@ impl<'a> SolverState<'a> {
             score,
         }
     }
-
-    // /// The state we get to by opening a valve from here. Assumes that it's valid to do. The
-    // /// flow_rate of this valve is passed in.
-    // fn do_open_valve(&self, flow_rate: Num) -> Self {
-    //     let valve_maze = self.valve_maze;
-    //     let location = self.location.clone();
-    //     let mut prev_steps = self.prev_steps.clone();
-    //     prev_steps.push_back(Step::OpenValve(self.location.to_string()));
-    //     let mut unopened_valves = self.unopened_valves.clone();
-    //     unopened_valves.remove(&self.location);
-    //     let mut unopened_flow_rates: Vec<usize> = self.unopened_flow_rates.clone();
-    //     let newly_opened_valve_flow_rate = valve_maze.valves.get(location).unwrap().flow_rate as usize;
-    //     let pos_to_remove = unopened_flow_rates.iter().position(|x| *x == newly_opened_valve_flow_rate).unwrap();
-    //     unopened_flow_rates.remove(pos_to_remove);
-    //     let new_pressure_released = (flow_rate as usize) * (MAX_STEPS - self.time_completed - 1);
-    //     let time_completed = self.time_completed + 1;
-    //     let score = Self::calc_score(
-    //         time_completed,
-    //         &unopened_flow_rates,
-    //         self.pressure_released() + new_pressure_released
-    //     );
-    //     SolverState{
-    //         valve_maze,
-    //         location,
-    //         time_completed,
-    //         prev_steps,
-    //         unopened_valves,
-    //         unopened_flow_rates,
-    //         score
-    //     }
-    // }
-
-    // /// The state we get to by taking a step from here. Assumes that it's valid to do. the
-    // /// step is passed in.
-    // fn do_go_to(&self, next_location: &'a str) -> Self {
-    //     let valve_maze = self.valve_maze;
-    //     let location = next_location;
-    //     let time_completed = self.time_completed + 1;
-    //     let mut prev_steps = self.prev_steps.clone();
-    //     prev_steps.push_back(Step::MoveTo(next_location.to_string()));
-    //     let unopened_valves = self.unopened_valves.clone();
-    //     let unopened_flow_rates = self.unopened_flow_rates.clone();
-    //     let score = Self::calc_score(time_completed, &unopened_flow_rates, self.pressure_released());
-    //     SolverState{
-    //         valve_maze,
-    //         location,
-    //         time_completed,
-    //         prev_steps,
-    //         unopened_valves,
-    //         unopened_flow_rates,
-    //         score,
-    //     }
-    // }
 
 }
 
@@ -457,18 +404,83 @@ fn solve(valve_maze: &ValveMaze, has_elephant: bool) -> SolverState {
                 // Check if this one is the new best state
                 if state.pressure_released() > best_state.pressure_released() {
                     if PRINT_WORK {
-                        println!("New best: [{}, {}] -> {} {:?}", state.pressure_released(), state.possible_release(), state.max_possible(), state.prev_steps);
+                        println!(
+                            "New best: [{}, {}] -> {} (tried {}, have {} more; next has {}) {:?}",
+                            state.pressure_released(),
+                            state.possible_release(),
+                            state.max_possible(),
+                            states_tried,
+                            states_to_try.len(),
+                            states_to_try.peek().map_or("N/A".to_string(), |x| x.max_possible().to_string()),
+                            state.prev_steps,
+                        );
                     }
                     best_state = state;
-                } else {
-                    if PRINT_WORK {
-                        println!("   tried: [{}, {}] -> {} {:?}", state.pressure_released(), state.possible_release(), state.max_possible(), state.prev_steps);
-                    }
                 }
             }
         }
     }
 }
+
+
+/// Used inside pretty_print_path().
+fn pretty_print_step(actor: &str, step: &Step) {
+    match step {
+        Step::OpenValve(loc) => {
+            println!("{} open valve {}.", actor, loc);
+        }
+        Step::MoveTo(loc) => {
+            println!("{} move to valve {}.", actor, loc);
+        }
+    }
+}
+
+fn released_per_turn(state: &SolverState) -> usize {
+    let open_valves = state.valve_maze.valves.iter()
+        .filter(|(_name,valve)| valve.flow_rate != 0)
+        .filter(|(name,_valve)| !state.unopened_valves.contains(*name))
+        .collect_vec();
+    let flow_rates: usize = open_valves.iter().map(|(_name, valve)| valve.flow_rate as usize).sum();
+    let open_ones = open_valves.iter().map(|(name,_valve)| name).join(", ");
+    println!("Valves {} are open, releasing {:?} pressure.", open_ones, flow_rates);
+    flow_rates
+}
+
+/// Prints out (in pretty fashion) a path.
+fn pretty_print_path(valve_maze: &ValveMaze, has_elephant: bool, path: &Vector<GroupStep>) {
+    let mut step_iter = path.iter();
+    let mut current_state = SolverState::initial(valve_maze, has_elephant);
+    let mut total_released = 0;
+    for timer in 1..MAX_STEPS {
+        println!("== Minute {} ==", (timer as i32) + if has_elephant {-4} else {1});
+        let step_opt = step_iter.next();
+        match step_opt {
+            None => {
+                println!("Nothing to do.");
+                total_released += released_per_turn(&current_state);
+            },
+            Some(step) => {
+                current_state = current_state.build_next_state(step.clone());
+                total_released += released_per_turn(&current_state);
+                match step {
+                    GroupStep::Solo(ref my_step) => {
+                        pretty_print_step("You", my_step);
+                    },
+                    GroupStep::Pair(ref my_step, ref el_step) => {
+                        pretty_print_step("You", my_step);
+                        pretty_print_step("The elephant", el_step);
+                    },
+                    GroupStep::Training => {
+                        println!("You train the elephant.");
+                    }
+                }
+            },
+        }
+        println!();
+    }
+    println!("Released a total of {}.", total_released);
+}
+
 
 
 // ======= main() =======
@@ -490,6 +502,26 @@ fn part_b(input: &Vec<ValveDesc>) {
     let solved_state = solve(&valve_maze, has_elephant);
     println!("Path {:?}", solved_state.prev_steps);
     println!("Releases {}", solved_state.pressure_released());
+    if PRINT_RESULTS {
+        println!();
+        pretty_print_path(solved_state.valve_maze, has_elephant, &solved_state.prev_steps);
+    }
+    println!("===========================");
+    let known_path: Vector<GroupStep> = vec![
+        GroupStep::Training, GroupStep::Training, GroupStep::Training, GroupStep::Training,
+        GroupStep::Pair(Step::MoveTo("II".to_string()), Step::MoveTo("DD".to_string())),
+        GroupStep::Pair(Step::MoveTo("JJ".to_string()), Step::OpenValve("DD".to_string())),
+        GroupStep::Pair(Step::OpenValve("JJ".to_string()), Step::MoveTo("EE".to_string())),
+        GroupStep::Pair(Step::MoveTo("II".to_string()), Step::MoveTo("FF".to_string())),
+        GroupStep::Pair(Step::MoveTo("AA".to_string()), Step::MoveTo("GG".to_string())),
+        GroupStep::Pair(Step::MoveTo("BB".to_string()), Step::MoveTo("HH".to_string())),
+        GroupStep::Pair(Step::OpenValve("BB".to_string()), Step::OpenValve("HH".to_string())),
+        GroupStep::Pair(Step::MoveTo("CC".to_string()), Step::MoveTo("GG".to_string())),
+        GroupStep::Pair(Step::OpenValve("CC".to_string()), Step::MoveTo("FF".to_string())),
+        GroupStep::Pair(Step::MoveTo("DD".to_string()), Step::MoveTo("EE".to_string())),
+        GroupStep::Pair(Step::MoveTo("CC".to_string()), Step::OpenValve("EE".to_string())),
+    ].into();
+    pretty_print_path(&valve_maze, has_elephant, &known_path);
 }
 
 
