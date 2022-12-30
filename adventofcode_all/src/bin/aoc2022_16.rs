@@ -5,10 +5,10 @@ extern crate anyhow;
 
 // ======= Constants =======
 
-// FIXME: Remove
-const PRINT_WORK: bool = true;
-// const PRINT_RESULTS: bool = false;
-const MAX_STEPS: usize = 30;
+const PRINT_WORK_1: bool = false;
+const PRINT_WORK_2: bool = true;
+const MAX_STEPS_PART_1: usize = 30;
+const MAX_STEPS_PART_2: usize = 26;
 
 // ======= Parsing =======
 
@@ -156,7 +156,7 @@ mod matrix {
 
 
     /// Represents the best possible path between two particular (non-zero-flow) nodes.
-    #[derive(Debug, Ord, PartialOrd, Eq, PartialEq)]
+    #[derive(Debug, Ord, PartialOrd, Eq, PartialEq, Clone)]
     pub struct BestPath {
         pub path: Vec<ValveName>, // intermediate valves NOT including start but including end node
     }
@@ -257,6 +257,26 @@ mod matrix {
             let dist = find_best_paths(valve_descs, &key_valves);
             ValveMatrix{key_valves, dist}
         }
+
+
+        /// Given this ValveMatrix, splits it up into two ValveMatrixes (one for me and one
+        /// for the elephant) which between them split up who opens which valve.
+        pub fn split(&self, valves_for_elephant: Vec<ValveName>) -> [Self; 2] {
+            let mut key_valves1: HashMap<ValveName,Num> = HashMap::with_capacity(self.key_valves.len());
+            let mut key_valves2: HashMap<ValveName,Num> = HashMap::with_capacity(self.key_valves.len());
+            for (k,v) in self.key_valves.iter() {
+                if valves_for_elephant.contains(k) {
+                    key_valves2.insert(*k, *v);
+                } else {
+                    key_valves1.insert(*k, *v);
+                }
+            }
+
+            [
+                ValveMatrix{key_valves: key_valves1, dist: self.dist.clone()},
+                ValveMatrix{key_valves: key_valves2, dist: self.dist.clone()}
+            ]
+        }
     }
 
 
@@ -281,7 +301,7 @@ mod matrix {
 mod solve {
     use crate::matrix::ValveMatrix;
     use crate::parse::{Num, ValveName};
-    use crate::{MAX_STEPS, PRINT_WORK};
+    use crate::{PRINT_WORK_1, PRINT_WORK_2};
     use std::collections::BinaryHeap;
     use std::fmt::{Display, Formatter};
     use std::cmp::Ordering;
@@ -342,29 +362,28 @@ mod solve {
 
 
     /// Solves it, returning the final state
-    pub fn solve_1(valve_matrix: &ValveMatrix) -> SolverState1 {
+    pub fn solve_1(valve_matrix: &ValveMatrix, max_steps: usize) -> SolverState1 {
         let mut states_tried = 0;
-        let mut states_to_try: BinaryHeap<SolverState1> = BinaryHeap::from([SolverState1::initial(valve_matrix)]);
-        let mut best_state: SolverState1 = SolverState1::initial(valve_matrix);
+        let mut states_to_try: BinaryHeap<SolverState1> = BinaryHeap::from([SolverState1::initial(valve_matrix, max_steps)]);
+        let mut best_state: SolverState1 = SolverState1::initial(valve_matrix, max_steps);
         loop {
             states_tried += 1;
             match states_to_try.pop() {
                 None => {
                     // Nothing left to try so we've solved it
-                    println!("Tried a total of {} states.", states_tried);
                     return best_state;
                 }
                 Some(state) => {
                     // Add the possible next states onto the list, but ONLY if it's POSSIBLE for one to beat the best
                     let best_released = best_state.pressure_released();
-                    for next_state in state.next_states(valve_matrix) {
+                    for next_state in state.next_states(valve_matrix, max_steps) {
                         if next_state.max_possible() > best_released {
                             states_to_try.push(next_state); // they get sorted as they are inserted
                         }
                     }
                     // Check if this one is the new best state
                     if state.pressure_released() > best_state.pressure_released() {
-                        if PRINT_WORK {
+                        if PRINT_WORK_1 {
                             println!(
                                 "New best: [{}, {}] -> {} (tried {}, have {} more; next has [{}]) {}",
                                 state.pressure_released(),
@@ -390,11 +409,12 @@ mod solve {
         /// release. The heuristic used may change over time, but for now it assumes 2 steps to
         /// each location.
         fn calc_score(
+            max_steps: usize,
             time_completed: usize,
             unopened_flow: &Vec<Num>, // will be sorted with biggest first
             total_pressure_released: Num,
         ) -> [Num;2] {
-            let mut remaining_steps = MAX_STEPS - time_completed;
+            let mut remaining_steps = max_steps - time_completed;
             let mut possible_release = 0;
             let mut flow_iter = unopened_flow.iter();
             while remaining_steps > 0 {
@@ -427,8 +447,8 @@ mod solve {
         }
 
         /// Returns the number of steps we can take after this one.
-        pub fn remaining_steps(&self) -> usize {
-            MAX_STEPS - self.time_completed()
+        pub fn remaining_steps(&self, max_steps: usize) -> usize {
+            max_steps - self.time_completed()
         }
 
         /// Returns the number of steps already taken in reaching this state.
@@ -442,7 +462,7 @@ mod solve {
         }
 
         /// The initial SolverState
-        fn initial(valve_matrix: &ValveMatrix) -> Self {
+        fn initial(valve_matrix: &ValveMatrix, max_steps: usize) -> Self {
             let location = ValveName::START;
             let time_completed = 0;
             let unopened_valves: Vec<ValveName> = valve_matrix.key_valves.keys()
@@ -453,25 +473,25 @@ mod solve {
                 .map(|x| *x)
                 .collect();
             let total_pressure_released = 0;
-            let score = Self::calc_score(time_completed, &unopened_flow, total_pressure_released);
+            let score = Self::calc_score(max_steps, time_completed, &unopened_flow, total_pressure_released);
             let steps = Vec::new();
             Self{location, unopened_valves, unopened_flow, score, steps}
         }
 
         /// Returns the list of possible next states from this state.
-        fn next_states(&self, valve_matrix: &ValveMatrix) -> Vec<Self> {
-            self.next_actions_from_state(valve_matrix).into_iter()
-                .map(|group_step| self.build_next_state(valve_matrix, group_step))
+        fn next_states(&self, valve_matrix: &ValveMatrix, max_steps: usize) -> Vec<Self> {
+            self.next_actions_from_state(valve_matrix, max_steps).into_iter()
+                .map(|group_step| self.build_next_state(valve_matrix, max_steps, group_step))
                 .collect_vec()
         }
 
         /// Returns the list of possible next actions that can be taken from the current state.
-        fn next_actions_from_state(&self, valve_matrix: &ValveMatrix) -> Vec<Action> {
-            self.next_actions_from_loc(valve_matrix, self.location)
+        fn next_actions_from_state(&self, valve_matrix: &ValveMatrix, max_steps: usize) -> Vec<Action> {
+            self.next_actions_from_loc(valve_matrix, max_steps, self.location)
         }
 
         /// Returns the list of possible next steps for an agent starting from the given location
-        fn next_actions_from_loc(&self, valve_matrix: &ValveMatrix, my_loc: ValveName) -> Vec<Action> {
+        fn next_actions_from_loc(&self, valve_matrix: &ValveMatrix, max_steps: usize, my_loc: ValveName) -> Vec<Action> {
             // We could move to everything there's still time to reach...
             self.unopened_valves.iter()
                 .filter_map(|x| {
@@ -480,7 +500,7 @@ mod solve {
                     } else {
                         let action = Action::new(my_loc, *x);
                         // must be LESS (not equal) so we complete the opening and gain SOME benefit from the release
-                        if action.cost(valve_matrix) < self.remaining_steps() {
+                        if action.cost(valve_matrix) < self.remaining_steps(max_steps) {
                             Some(Action::new(my_loc, *x))
                         } else {
                             None
@@ -491,7 +511,7 @@ mod solve {
         }
 
         /// Given an Action to take from here, this returns the new state that step would reach.
-        fn build_next_state(&self, valve_matrix: &ValveMatrix, action: Action) -> Self {
+        fn build_next_state(&self, valve_matrix: &ValveMatrix, max_steps: usize, action: Action) -> Self {
             let location = action.end;
 
             let mut unopened_valves = self.unopened_valves.clone();
@@ -508,10 +528,10 @@ mod solve {
             steps.extend(best_path.path.iter().map(|loc| Step::MoveTo(*loc)));
             steps.push(Step::OpenValve(location));
 
-            let new_pressure_released = *flow_to_delete * ((MAX_STEPS - steps.len()) as Num);
+            let new_pressure_released = *flow_to_delete * ((max_steps - steps.len()) as Num);
             let total_pressure_released = self.pressure_released() + new_pressure_released;
 
-            let score: [Num; 2] = Self::calc_score(steps.len(), &unopened_flow, total_pressure_released);
+            let score: [Num; 2] = Self::calc_score(max_steps, steps.len(), &unopened_flow, total_pressure_released);
 
             Self{location, unopened_valves, unopened_flow, score, steps}
         }
@@ -535,61 +555,33 @@ mod solve {
     }
 
 
+
+    /// Solves it, returning the final state
+    pub fn solve_2(valve_matrix: &ValveMatrix, max_steps: usize) -> (SolverState1,SolverState1) {
+        let mut valves: Vec<ValveName> = valve_matrix.key_valves.keys().map(|x| *x).collect();
+        let _first = valves.pop().unwrap(); // The elephant will never do the first one (so we avoid dups where we swap sets)
+
+        let mut best_pair: (SolverState1,SolverState1) = (
+            SolverState1::initial(valve_matrix,max_steps),
+            SolverState1::initial(valve_matrix,max_steps),
+        ); // start with this... it's got no steps and no pressure released
+        for elephant_valves in valves.iter().map(|x| *x).powerset() {
+            let [my_matrix, el_matrix] = valve_matrix.split(elephant_valves);
+
+            let my_solved = solve_1(&my_matrix, max_steps);
+            let el_solved = solve_1(&el_matrix, max_steps);
+            let total_release = my_solved.pressure_released() + el_solved.pressure_released();
+            if total_release > best_pair.0.pressure_released() + best_pair.1.pressure_released() {
+                if PRINT_WORK_2 {
+                    println!("New best pair: {} from ({},{})", total_release, my_solved.pressure_released(), el_solved.pressure_released());
+                }
+                best_pair = (my_solved, el_solved);
+            }
+        }
+        best_pair
+    }
+
 }
-
-
-
-
-
-// FIXME: Remove
-// #[deprecated(note = "Need better approach")]
-// fn released_per_turn(state: &SolverState) -> usize {
-//     let open_valves = state.valve_maze.valves.iter()
-//         .filter(|(_name,valve)| valve.flow_rate != 0)
-//         .filter(|(name,_valve)| !state.unopened_valves.contains(*name))
-//         .collect_vec();
-//     let flow_rates: usize = open_valves.iter().map(|(_name, valve)| valve.flow_rate as usize).sum();
-//     let open_ones = open_valves.iter().map(|(name,_valve)| name).join(", ");
-//     println!("Valves {} are open, releasing {:?} pressure.", open_ones, flow_rates);
-//     flow_rates
-// }
-//
-// #[deprecated(note = "Need better approach")]
-// /// Prints out (in pretty fashion) a path.
-// fn pretty_print_path(valve_maze: &ValveMaze, has_elephant: bool, path: &Vector<GroupStep>) {
-//     let mut step_iter = path.iter();
-//     let mut current_state = SolverState::initial(valve_maze, has_elephant);
-//     let mut total_released = 0;
-//     for timer in 1..MAX_STEPS {
-//         println!("== Minute {} ==", (timer as i32) + if has_elephant {-4} else {1});
-//         let step_opt = step_iter.next();
-//         match step_opt {
-//             None => {
-//                 println!("Nothing to do.");
-//                 total_released += released_per_turn(&current_state);
-//             },
-//             Some(step) => {
-//                 current_state = current_state.build_next_state(step.clone());
-//                 total_released += released_per_turn(&current_state);
-//                 match step {
-//                     GroupStep::Solo(ref my_step) => {
-//                         pretty_print_step("You", my_step);
-//                     },
-//                     GroupStep::Pair(ref my_step, ref el_step) => {
-//                         pretty_print_step("You", my_step);
-//                         pretty_print_step("The elephant", el_step);
-//                     },
-//                     GroupStep::Training => {
-//                         println!("You train the elephant.");
-//                     }
-//                 }
-//             },
-//         }
-//         println!();
-//     }
-//     println!("Released a total of {}.", total_released);
-// }
-
 
 
 // ======= main() =======
@@ -602,39 +594,19 @@ use crate::matrix::ValveMatrix;
 fn part_a(input: &Vec<ValveDesc>) {
     println!("\nPart a:");
     let valve_matrix = ValveMatrix::new(input);
-    let solved_state = solve::solve_1(&valve_matrix);
+    let solved_state = solve::solve_1(&valve_matrix, MAX_STEPS_PART_1);
     println!("Path {:?}", solved_state.steps());
     println!("Releases {}", solved_state.pressure_released());
 }
 
 
-fn part_b(_input: &Vec<ValveDesc>) {
+fn part_b(input: &Vec<ValveDesc>) {
     println!("\nPart b:");
-    // let valve_maze = ValveMaze::new(input);
-    // let has_elephant = true;
-    // let solved_state = solve(&valve_maze, has_elephant);
-    // println!("Path {:?}", solved_state.prev_steps);
-    // println!("Releases {}", solved_state.pressure_released());
-    // if PRINT_RESULTS {
-    //     println!();
-    //     pretty_print_path(solved_state.valve_maze, has_elephant, &solved_state.prev_steps);
-    // }
-    // println!("===========================");
-    // let known_path: Vector<GroupStep> = vec![
-    //     GroupStep::Training, GroupStep::Training, GroupStep::Training, GroupStep::Training,
-    //     GroupStep::Pair(Step::MoveTo("II".into()), Step::MoveTo("DD".into())),
-    //     GroupStep::Pair(Step::MoveTo("JJ".into()), Step::OpenValve("DD".into())),
-    //     GroupStep::Pair(Step::OpenValve("JJ".into()), Step::MoveTo("EE".into())),
-    //     GroupStep::Pair(Step::MoveTo("II".into()), Step::MoveTo("FF".into())),
-    //     GroupStep::Pair(Step::MoveTo("AA".into()), Step::MoveTo("GG".into())),
-    //     GroupStep::Pair(Step::MoveTo("BB".into()), Step::MoveTo("HH".into())),
-    //     GroupStep::Pair(Step::OpenValve("BB".into()), Step::OpenValve("HH".into())),
-    //     GroupStep::Pair(Step::MoveTo("CC".into()), Step::MoveTo("GG".into())),
-    //     GroupStep::Pair(Step::OpenValve("CC".into()), Step::MoveTo("FF".into())),
-    //     GroupStep::Pair(Step::MoveTo("DD".into()), Step::MoveTo("EE".into())),
-    //     GroupStep::Pair(Step::MoveTo("CC".into()), Step::OpenValve("EE".into())),
-    // ].into();
-    // pretty_print_path(&valve_maze, has_elephant, &known_path);
+    let valve_matrix = ValveMatrix::new(input);
+    let (my_state, el_state) = solve::solve_2(&valve_matrix, MAX_STEPS_PART_2);
+    println!("I do {:?}", my_state.steps());
+    println!("Elephant does {:?}", el_state.steps());
+    println!("Releases {}", my_state.pressure_released() + el_state.pressure_released());
 }
 
 
