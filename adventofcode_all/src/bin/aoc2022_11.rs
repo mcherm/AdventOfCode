@@ -10,7 +10,7 @@ use nom::{
     bytes::complete::tag,
     character::complete::line_ending,
     combinator::map,
-    sequence::tuple,
+    sequence::{preceded, tuple},
 };
 use nom::character::complete::u32 as nom_u32;
 use std::collections::{BTreeMap, BTreeSet};
@@ -44,7 +44,7 @@ enum Item {
     },
     ModularValue {
         initial_worry_level: WorryLevel,
-        remainders: Box<BTreeMap<WorryLevel, WorryLevel>>,
+        remainders: BTreeMap<WorryLevel, WorryLevel>,
     }
 }
 
@@ -102,7 +102,7 @@ impl Item {
     /// divided by a number. To specify it, you must provide the set of all values you will
     /// ever want to mod it by.
     fn new_modular_value(initial_worry_level: WorryLevel, divisors: &BTreeSet<WorryLevel>) -> Self {
-        let mut remainders = Box::new(BTreeMap::new());
+        let mut remainders = BTreeMap::new();
         for divisor in divisors.into_iter() {
             remainders.insert(*divisor, initial_worry_level % *divisor);
         }
@@ -189,54 +189,31 @@ impl std::ops::DivAssign<WorryLevel> for Item {
 impl Display for Item {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            Item::SimpleValue{worry_level} => {
-                write!(f, "{}", worry_level)
-            }
-            Item::ModularValue{initial_worry_level, remainders} => {
-                let mut first = true;
-                write!(f, "[{}>> ", initial_worry_level)?;
-                for (divide_by, remainder) in remainders.iter() {
-                    if first {
-                        first = false;
-                    } else {
-                        write!(f, ", ")?;
-                    }
-                    write!(f, "{}: {}", divide_by, remainder)?;
-                }
-                write!(f, "]")
-            }
+            Item::SimpleValue{worry_level} => write!(f, "{}", worry_level),
+            Item::ModularValue{initial_worry_level, remainders} => write!(f, "[{}>> {}]",
+                initial_worry_level,
+                remainders.iter().map(|(d,r)| format!("{}:{}", d, r)).join(", ")
+            )
         }
     }
 }
 
 impl Operation {
     fn parse<'a>(input: &'a str) -> IResult<&'a str, Self> {
-        nom::sequence::preceded(
+        preceded(
             tag("new = "),
             alt((
                 map(
-                    tuple((
-                        tag("old"),
-                        tag(" * "),
-                        nom_u32,
-                    )),
-                    |(_, _, val)| Operation::Mult(val)
+                    preceded(tag("old * "), nom_u32),
+                    |x| Operation::Mult(x)
                 ),
                 map(
-                    tuple((
-                        tag("old"),
-                        tag(" + "),
-                        nom_u32,
-                    )),
-                    |(_, _, val)| Operation::Add(val)
+                    preceded(tag("old + "), nom_u32),
+                    |x| Operation::Add(x)
                 ),
                 map(
-                    tuple((
-                        tag("old"),
-                        tag(" * "),
-                        tag("old"),
-                    )),
-                    |(_, _, _)| Operation::Square
+                    tag("old * old"),
+                    |_| Operation::Square
                 ),
             ))
         )(input)
@@ -492,12 +469,14 @@ fn part_a(monkey_troop_template: &MonkeyTroopTemplate) -> Result<(), anyhow::Err
     println!("\nPart a:");
     let reduce_worry = true;
     let mut monkey_troop = MonkeyTroop::new(monkey_troop_template, reduce_worry);
-    monkey_troop.show_holdings();
+    if PRINT_WORK {monkey_troop.show_holdings();}
     for round in 0..20 {
         monkey_troop.perform_round();
-        println!();
-        println!("After round {}", round + 1);
-        monkey_troop.show_holdings();
+        if PRINT_WORK {
+            println!();
+            println!("After round {}", round + 1);
+            monkey_troop.show_holdings();
+        }
     }
     println!();
     println!("The monkey business is {}", monkey_troop.monkey_business());
@@ -509,7 +488,7 @@ fn part_b(monkey_troop_template: &MonkeyTroopTemplate) -> Result<(), anyhow::Err
     println!("\nPart b:");
     let reduce_worry = false;
     let mut monkey_troop = MonkeyTroop::new(monkey_troop_template, reduce_worry);
-    monkey_troop.show_holdings();
+    if PRINT_WORK {monkey_troop.show_holdings();}
     for _ in 0..10000 {
         monkey_troop.perform_round();
     }
