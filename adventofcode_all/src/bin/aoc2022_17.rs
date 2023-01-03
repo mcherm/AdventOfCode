@@ -5,7 +5,6 @@ extern crate anyhow;
 
 // ======= Constants =======
 
-const NUM_ROCKS: usize = 2022;
 
 // ======= Parsing =======
 
@@ -59,8 +58,9 @@ mod tetris {
     use std::cmp::max;
     use std::fmt::{Display, Formatter};
     use std::ops::{Add, Sub};
+    use im::HashMap;
+    use itertools::Itertools;
     use crate::parse::Jet;
-    use crate::NUM_ROCKS;
 
 
     const WIDTH: usize = 7;
@@ -85,6 +85,7 @@ mod tetris {
     pub struct Board {
         board_height: usize,
         tower_height: usize,
+        pruned_height: usize,
         grid: Vec<bool>, // true == free
     }
 
@@ -154,7 +155,7 @@ mod tetris {
 
     impl Board {
         pub fn new() -> Self {
-            Self{board_height: 0, tower_height: 0, grid: Vec::new()}
+            Self{board_height: 0, tower_height: 0, pruned_height: 0, grid: Vec::new()}
         }
 
         /// Returns the index into grid for a given (x,y) location. This location might
@@ -204,7 +205,56 @@ mod tetris {
 
         /// Returns the current height of the tower.
         pub fn tower_height(&self) -> usize {
-            self.tower_height
+            self.pruned_height + self.tower_height
+        }
+
+
+        /// Returns the amount that's safe to prune away. It's possible that this needs more
+        /// smarts (if they carefully avoid creating full-across barriers), but I suspect it
+        /// will be good enough. It returns a (one-based) height of the last row to KEEP.
+        pub fn prune_location(&self) -> usize { // FIXME: Not pub
+            let mut prev_row_accessible = vec![true; WIDTH]; // items on previous row that can be reached
+            for yz in (0..self.board_height).rev() {
+                let this_row_open: Vec<bool> = (0..WIDTH)
+                    .map(|xz| self.get(&Coord(xz+1, yz+1)))
+                    .collect(); // FIXME: I could provide a way to get this via slice which would be more efficient.
+                // new row items are accessible if open and below an accessible item
+                let mut new_row_accessible: Vec<bool> = prev_row_accessible.iter()
+                    .enumerate()
+                    .map(|(xz,prev)| this_row_open[xz] && *prev)
+                    .collect();
+                // new row items ALSO accessible if they can go left and reach an accessible item
+                for xz in (0..(WIDTH - 1)).rev() {
+                    if this_row_open[xz] && new_row_accessible[xz + 1] {
+                        new_row_accessible[xz] = true;
+                    }
+                }
+                // new row items ALSO accessible if they can go right and reach an accessible item
+                for xz in 1..WIDTH {
+                    if this_row_open[xz] && new_row_accessible[xz - 1] {
+                        new_row_accessible[xz] = true;
+                    }
+                }
+                // If NOTHING is accessible, then we've found the prune location
+                if !new_row_accessible.iter().any(|x| *x) {
+                    return yz + 2; // +1 to switch to one-based, +1 because it's the prev row we keep
+                }
+                // Otherwise, move down a row
+                prev_row_accessible = new_row_accessible;
+            }
+            1 // got to the bottom with nothing we could prune. Return 1 to keep the lowest row
+        }
+
+        /// Hides all complexity below a certain point.
+        pub fn prune(&mut self) {
+            let prune_height = self.prune_location() - 1;
+            if prune_height > 0 {
+                println!("Will prune {}!", prune_height); // FIXME : Remove
+                self.pruned_height += prune_height;
+                self.board_height -= prune_height;
+                self.tower_height -= prune_height;
+                self.grid.drain(0..(prune_height * WIDTH));
+            }
         }
     }
 
@@ -282,39 +332,110 @@ mod tetris {
 
 
     /// Plays the entire game of Tetris, returning the Board.
-    pub fn play(known_shapes: &Vec<Shape>, jets: &Vec<Jet>, print: bool) -> Board {
+    pub fn play(known_shapes: &Vec<Shape>, jets: &Vec<Jet>, num_rocks: usize, prune: bool, print: bool) -> Board {
         let mut board = Board::new();
-        let mut shape_iter = known_shapes.iter().cycle();
+        let mut have_zoomed_to_end = false;
+        let mut shape_iter = known_shapes.iter();
         let mut shape = shape_iter.next().unwrap();
         let mut shape_counter = 0;
         let mut piece_loc = new_piece_loc(&board);
-        let mut jet_iter = jets.iter().cycle();
+        let mut jet_iter = jets.iter();
+        let mut jet_num = 0;
+        let mut prev_states: HashMap<usize,(usize,usize,Vec<bool>)>
+            = HashMap::new(); // jet_num -> (old_shape_height, old_tower_height, old_grid)
         if print {println!("Starting:\n{}\n", TetrisGame{board: &mut board, shape, piece_loc});}
         loop {
+            let jet_cycle_ended: bool;
             {
-                let jet = jet_iter.next().unwrap();
+                let jet = match jet_iter.next() {
+                    Some(jet) => {
+                        jet_cycle_ended = false;
+                        jet_num += 1;
+                        jet
+                    }
+                    None => {
+                        jet_cycle_ended = true;
+                        jet_num = 0;
+                        jet_iter = jets.iter();
+                        jet_iter.next().unwrap()
+                    }
+                };
                 let test_loc = piece_loc.apply_jet(jet);
                 if shape.fits_at(&board, test_loc) {
                     piece_loc = test_loc;
                 }
                 if print {println!("Move {:?}:\n{}\n", jet, TetrisGame{board: &mut board, shape, piece_loc});}
             }
+            let shape_cycle_ended: bool;
             {
                 let test_loc = piece_loc.apply_down();
                 if shape.fits_at(&board, test_loc) {
                     piece_loc = test_loc;
                     if print {println!("Move Down:\n{}\n", TetrisGame{board: &mut board, shape, piece_loc});}
+                    shape_cycle_ended = false;
                 } else {
                     shape.freeze(&mut piece_loc, &mut board);
                     if print {println!("Freeze:\n{}\n", board);}
                     shape_counter += 1;
-                    if shape_counter == NUM_ROCKS {
+                    if shape_counter % 1000000 == 0 {
+                        println!("Have completed {} shapes; tower height is {}", shape_counter, board.tower_height);
+                    }
+                    if shape_counter == num_rocks {
                         if print {println!("And stop now:\n{}\n", board);}
                         return board; // Here is where we exit the loop
                     }
-                    shape = shape_iter.next().unwrap();
+                    shape = match shape_iter.next() {
+                        Some(shape) => {
+                            shape_cycle_ended = false;
+                            shape
+                        },
+                        None => {
+                            shape_cycle_ended = true;
+                            shape_iter = known_shapes.iter();
+                            shape_iter.next().unwrap()
+                        }
+                    };
                     piece_loc = new_piece_loc(&board);
                     if print {println!("New Piece:\n{}\n", TetrisGame{board: &mut board, shape, piece_loc});}
+                }
+                if shape_cycle_ended & !have_zoomed_to_end {
+                    board.prune(); // prune the stack to someplace where it filled all the way across
+                    if let Some((old_shape_counter, old_tower_height, old_grid)) = prev_states.get(&jet_num) {
+                        // FIXME: Remove
+                        // println!("Old_Board\n{}\nNew_Board\n{}\n",
+                        //          old_grid.iter().rev().enumerate().map(|(i,x)| format!(
+                        //              "{}{}",
+                        //              if *x {"#"} else {"."},
+                        //              if i % WIDTH == WIDTH - 1 {"\n"} else {""}
+                        //          )).join(""),
+                        //          board.grid.iter().rev().enumerate().map(|(i,x)| format!(
+                        //              "{}{}",
+                        //              if *x {"#"} else {"."},
+                        //              if i % WIDTH == WIDTH - 1 {"\n"} else {""}
+                        //          )).join(""),
+                        // ); // FIXME: Remove this
+                        if *old_grid == board.grid {
+                            // We found a "repeat" spot!!!
+                            println!("Found a \"repeat\" spot at jet {}, shape {}!", jet_num, 0);
+                            let shapes_per_repeat = shape_counter - old_shape_counter;
+                            let height_per_repeat = board.tower_height() - old_tower_height;
+                            let shapes_left = num_rocks - shape_counter;
+                            let repeats_to_skip = shapes_left / shapes_per_repeat;
+                            let remaining_shapes = shapes_left % shapes_per_repeat;
+                            let shapes_to_skip = repeats_to_skip * shapes_per_repeat;
+                            board.pruned_height += height_per_repeat * repeats_to_skip;
+                            if remaining_shapes == 0 {
+                                return board;
+                            } else {
+                                shape_counter += shapes_to_skip;
+                                have_zoomed_to_end = true;
+                            }
+                            println!("HAVE ZOOMED TO END! skipped past {shapes_to_skip} shapes to\n{}", board);
+                        }
+                    }
+                    prev_states.insert(jet_num, (shape_counter, board.tower_height(), board.grid.clone())); // save this state
+                    println!("    Shape cycle ended; jet num = {}", jet_num);
+                    println!();
                 }
             }
         }
@@ -363,21 +484,27 @@ use crate::tetris::{Shape, play};
 fn part_a(input: &Vec<Jet>) {
     println!("\nPart a:");
     let known_shapes = Shape::known_shapes();
-    let board = play(&known_shapes, input, false);
+    let board = play(&known_shapes, input, 2022, false, false);
     println!("Ended with:\n{}\n", board);
     println!("Which has a total height of {}", board.tower_height())
 }
 
 
-fn part_b(_input: &Vec<Jet>) {
+fn part_b(input: &Vec<Jet>) {
     println!("\nPart b:");
+    let known_shapes = Shape::known_shapes();
+    const LARGE_VALUE: usize = 1000000000000;
+    let mut board = play(&known_shapes, input, LARGE_VALUE, true, false);
+    board.prune();
+    println!("After prune:\n{}\n", board);
+    println!("Which has a total height of {}", board.tower_height())
 }
 
 
 fn main() -> Result<(), anyhow::Error> {
     println!("Starting...");
     let data = input()?;
-    part_a(&data);
+    //part_a(&data);
     part_b(&data);
     Ok(())
 }
