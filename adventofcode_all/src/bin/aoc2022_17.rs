@@ -82,6 +82,9 @@ mod tetris {
     pub struct Coord(pub usize, pub usize);
 
 
+    // FIXME: don't need both board_height and also tower_height because they are (I think) always the same
+    // FIXME: I bet the Board doesn't need to support queries that hit the walls and floors. It would be simpler without them.
+    #[derive(Clone)] // FIXME: Do I NEED to be able to clone it?
     pub struct Board {
         board_height: usize,
         tower_height: usize,
@@ -247,14 +250,20 @@ mod tetris {
 
         /// Hides all complexity below a certain point.
         pub fn prune(&mut self) {
+            // println!("PRUNE -----------------"); // FIXME: Remove
+            // println!("board_height={}, tower_height={}, pruned_height={}", self.board_height, self.tower_height, self.pruned_height); // FIXME: Remove
+            // println!("{}", self); // FIXME: Remove
             let prune_height = self.prune_location() - 1;
             if prune_height > 0 {
-                println!("Will prune {}!", prune_height); // FIXME : Remove
+                // println!("    Will prune {}!", prune_height); // FIXME : Remove
                 self.pruned_height += prune_height;
                 self.board_height -= prune_height;
                 self.tower_height -= prune_height;
                 self.grid.drain(0..(prune_height * WIDTH));
             }
+            // println!("board_height={}, tower_height={}, pruned_height={}", self.board_height, self.tower_height, self.pruned_height); // FIXME: Remove
+            // println!("{}", self); // FIXME: Remove
+            // println!("END PRUNE -------------"); // FIXME: Remove
         }
     }
 
@@ -345,6 +354,10 @@ mod tetris {
             = HashMap::new(); // jet_num -> (old_shape_height, old_tower_height, old_grid)
         if print {println!("Starting:\n{}\n", TetrisGame{board: &mut board, shape, piece_loc});}
         loop {
+            // FIXME: Remove
+            // if have_zoomed_to_end {
+            //     println!("NEAR-THE-END: jet_num={jet_num}; shape_counter={shape_counter}; height={}\n{}\n", board.tower_height(),  board); // FIXME: REMOVE
+            // }
             let jet_cycle_ended: bool;
             {
                 let jet = match jet_iter.next() {
@@ -399,7 +412,11 @@ mod tetris {
                     if print {println!("New Piece:\n{}\n", TetrisGame{board: &mut board, shape, piece_loc});}
                 }
                 if shape_cycle_ended & !have_zoomed_to_end {
-                    board.prune(); // prune the stack to someplace where it filled all the way across
+                    // FIXME: Next lines are faking the prune... sort of
+                    let mut pruned_board = board.clone();
+                    pruned_board.prune();
+                    // FIXME: Restore next? Maybe?
+                    // board.prune(); // prune the stack to someplace where it filled all the way across
                     if let Some((old_shape_counter, old_tower_height, old_grid)) = prev_states.get(&jet_num) {
                         // FIXME: Remove
                         // println!("Old_Board\n{}\nNew_Board\n{}\n",
@@ -414,28 +431,36 @@ mod tetris {
                         //              if i % WIDTH == WIDTH - 1 {"\n"} else {""}
                         //          )).join(""),
                         // ); // FIXME: Remove this
-                        if *old_grid == board.grid {
+                        if *old_grid == pruned_board.grid {
                             // We found a "repeat" spot!!!
-                            println!("Found a \"repeat\" spot at jet {}, shape {}!", jet_num, 0);
+                            println!("Found a \"repeat\" spot at jet {jet_num}, shape {}, shape_counter={shape_counter}! It had old_shape_counter={old_shape_counter} and old_tower_height={old_tower_height}", 0);
                             let shapes_per_repeat = shape_counter - old_shape_counter;
                             let height_per_repeat = board.tower_height() - old_tower_height;
                             let shapes_left = num_rocks - shape_counter;
                             let repeats_to_skip = shapes_left / shapes_per_repeat;
-                            let remaining_shapes = shapes_left % shapes_per_repeat;
-                            let shapes_to_skip = repeats_to_skip * shapes_per_repeat;
-                            board.pruned_height += height_per_repeat * repeats_to_skip;
-                            if remaining_shapes == 0 {
-                                return board;
+                            const SKIP_REPEATS: bool = true; // FIXME: This is only for debugging.
+                            if SKIP_REPEATS {
+                                println!("WE CAN SKIP NOW. There are {} shapes per repeat and {} height per repeat.", shapes_per_repeat, height_per_repeat); // FIXME: Remove
+                                println!("    It also has jet_num={jet_num}; shape_counter={shape_counter}; height={}", board.tower_height()); // FIXME: Remove
+                                println!("    It has {shapes_left} shapes left which means we can skip {repeats_to_skip} repeats."); // FIXME: Remove
+                                board.pruned_height += repeats_to_skip * height_per_repeat;
+                                shape_counter += repeats_to_skip * shapes_per_repeat;
+                                if shape_counter == num_rocks { // we've just finished! Return the answer.
+                                    return board;
+                                } else {
+                                    have_zoomed_to_end = true;
+                                }
+                                println!("HAVE ZOOMED TO END! skipped past {} shapes with {} per repeat to\n{} ", repeats_to_skip * shapes_per_repeat, height_per_repeat, board);
+                                println!("There are just {} shapes to go.", num_rocks - shape_counter); // FIXME: remove
                             } else {
-                                shape_counter += shapes_to_skip;
-                                have_zoomed_to_end = true;
+                                println!("Choosing NOT to ZOOM TO END! Shapes: {shape_counter}, height: {}\n{}", board.tower_height(),  board);
+                                //prev_states.clear(); // FIXME: This will hack it into repeating on the same thing again
                             }
-                            println!("HAVE ZOOMED TO END! skipped past {shapes_to_skip} shapes to\n{}", board);
                         }
                     }
-                    prev_states.insert(jet_num, (shape_counter, board.tower_height(), board.grid.clone())); // save this state
-                    println!("    Shape cycle ended; jet num = {}", jet_num);
-                    println!();
+                    prev_states.insert(jet_num, (shape_counter, board.tower_height(), pruned_board.grid)); // save this state
+                    println!("    Shape cycle ended; jet_num={jet_num}; shape_counter={shape_counter}; height={}", board.tower_height()); // FIXME: Remove
+                    // if board.tower_height() >= 36 { panic!("Exit")} // FIXME :Remove
                 }
             }
         }
@@ -495,8 +520,9 @@ fn part_b(input: &Vec<Jet>) {
     let known_shapes = Shape::known_shapes();
     const LARGE_VALUE: usize = 1000000000000;
     let mut board = play(&known_shapes, input, LARGE_VALUE, true, false);
-    board.prune();
-    println!("After prune:\n{}\n", board);
+    // FIXME: RESTORE? MAYBE?
+    // board.prune();
+    // println!("After prune:\n{}\n", board);
     println!("Which has a total height of {}", board.tower_height())
 }
 
