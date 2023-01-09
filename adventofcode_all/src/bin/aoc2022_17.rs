@@ -81,11 +81,8 @@ mod tetris {
     pub struct Coord(pub usize, pub usize);
 
 
-    // FIXME: don't need both board_height and also tower_height because they are (I think) always the same
-    // FIXME: I bet the Board doesn't need to support queries that hit the walls and floors. It would be simpler without them.
     pub struct Board {
         board_height: usize,
-        tower_height: usize,
         pruned_height: usize,
         grid: Vec<bool>, // true == free
     }
@@ -156,7 +153,7 @@ mod tetris {
 
     impl Board {
         pub fn new() -> Self {
-            Self{board_height: 0, tower_height: 0, pruned_height: 0, grid: Vec::new()}
+            Self{board_height: 0, pruned_height: 0, grid: Vec::new()}
         }
 
         /// Returns the index into grid for a given (x,y) location. This location might
@@ -195,18 +192,24 @@ mod tetris {
             }
         }
 
-        /// Modifies the value at a given coordinate. That coordinate MUST not be a wall or
-        /// floor (this will panic if it is).
-        fn set(&mut self, c: &Coord, b: bool) {
+        /// Sets a block at the given coordinate. The coordinate MUST not be a wall or fllor
+        /// (this will panic if it is).
+        fn occupy(&mut self, c: &Coord) {
             self.grow(c.y());
             let idx = self.idx(c);
-            *self.grid.get_mut(idx).unwrap() = b;
-            self.tower_height = max(self.tower_height, c.y());
+            *self.grid.get_mut(idx).unwrap() = false;
         }
 
         /// Returns the current height of the tower.
         pub fn tower_height(&self) -> usize {
-            self.pruned_height + self.tower_height
+            self.pruned_height + self.board_height
+        }
+
+        /// For internal use, this provides a reference to the row of booleans at coord y.
+        pub fn row(&self, y: usize) -> &[bool; WIDTH] {
+            let y_idx = (y - 1) * WIDTH;
+            let y_top = y_idx + WIDTH;
+            (self.grid[y_idx..y_top]).try_into().unwrap()
         }
 
 
@@ -214,16 +217,14 @@ mod tetris {
         /// smarts (if they carefully avoid creating full-across barriers), but I suspect it
         /// will be good enough. It returns a (one-based) height of the last row to KEEP.
         fn prune_location(&self) -> usize {
-            let mut prev_row_accessible = vec![true; WIDTH]; // items on previous row that can be reached
+            let mut prev_row_accessible: [bool; WIDTH] = [true; WIDTH]; // items on previous row that can be reached
             for yz in (0..self.board_height).rev() {
-                let this_row_open: Vec<bool> = (0..WIDTH)
-                    .map(|xz| self.get(&Coord(xz+1, yz+1)))
-                    .collect(); // FIXME: I could provide a way to get this via slice which would be more efficient.
+                let this_row_open: &[bool; WIDTH] = self.row(yz+1);
+                let mut new_row_accessible: [bool; WIDTH] = [false; WIDTH];
                 // new row items are accessible if open and below an accessible item
-                let mut new_row_accessible: Vec<bool> = prev_row_accessible.iter()
-                    .enumerate()
-                    .map(|(xz,prev)| this_row_open[xz] && *prev)
-                    .collect();
+                for xz in 0..WIDTH {
+                    new_row_accessible[xz] = this_row_open[xz] && prev_row_accessible[xz];
+                }
                 // new row items ALSO accessible if they can go left and reach an accessible item
                 for xz in (0..(WIDTH - 1)).rev() {
                     if this_row_open[xz] && new_row_accessible[xz + 1] {
@@ -319,7 +320,7 @@ mod tetris {
         fn freeze(&self, piece_loc: &Coord, board: &mut Board) {
             for offset in self.offsets.iter() {
                 let c = *piece_loc + *offset;
-                board.set(&c, false);
+                board.occupy(&c);
             }
         }
     }
@@ -327,7 +328,7 @@ mod tetris {
 
     /// Returns the right location to place a new piece.
     fn new_piece_loc(board: &Board) -> Coord {
-        Coord(3, board.tower_height + 4)
+        Coord(3, board.board_height + 4)
     }
 
 
@@ -375,7 +376,7 @@ mod tetris {
                     if print {println!("Freeze:\n{}\n", board);}
                     shape_counter += 1;
                     if shape_counter % 1000000 == 0 {
-                        if print {println!("Have completed {} shapes; tower height is {}", shape_counter, board.tower_height);}
+                        if print {println!("Have completed {} shapes; tower height is {}", shape_counter, board.tower_height());}
                     }
                     if shape_counter == num_rocks {
                         if print {println!("And stop now:\n{}\n", board);}
