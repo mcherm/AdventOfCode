@@ -15,9 +15,9 @@ mod parse {
         IResult,
         branch::alt,
         bytes::complete::tag,
-        combinator::{opt, map, success},
+        combinator::{opt, map, success, peek},
         character::complete::{multispace1, line_ending},
-        sequence::{tuple, terminated},
+        sequence::{tuple, terminated, pair},
         multi::many0,
     };
     use nom::character::complete::{multispace0, u32 as nom_Num};
@@ -103,9 +103,18 @@ mod parse {
             )(input)
         }
 
-        /// Parses a newline-terminated list of LineSpecs
+        /// Parses a newline-terminated list of Blueprints
         fn parse_list<'a>(input: &'a str) -> IResult<&'a str, Vec<Self>> {
-            many0(terminated(Self::parse, line_ending))(input)
+            many0(
+                map(
+                    tuple((
+                        Self::parse,
+                        opt(tuple(( line_ending, peek(line_ending) ))),
+                        line_ending,
+                    )),
+                    |(blueprint, _, _)| blueprint
+                )
+            )(input)
         }
     }
 
