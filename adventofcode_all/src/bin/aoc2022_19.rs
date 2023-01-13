@@ -20,7 +20,7 @@ mod parse {
         sequence::{tuple, terminated},
         multi::many0,
     };
-    use nom::character::complete::u32 as nom_Num;
+    use nom::character::complete::{multispace0, u32 as nom_Num};
 
 
     pub fn input() -> Result<Vec<Blueprint>, anyhow::Error> {
@@ -54,24 +54,28 @@ mod parse {
                     tuple((
                         tag("Blueprint "),
                         nom_Num,
-                        tag(": "),
+                        tag(":"),
+                        multispace1,
                     )),
                     tuple((
                         tag("Each ore robot costs "),
                         nom_Num,
-                        tag(" ore. "),
+                        tag(" ore."),
+                        multispace1,
                     )),
                     tuple((
                         tag("Each clay robot costs "),
                         nom_Num,
-                        tag(" ore. "),
+                        tag(" ore."),
+                        multispace1,
                     )),
                     tuple((
                         tag("Each obsidian robot costs "),
                         nom_Num,
                         tag(" ore and "),
                         nom_Num,
-                        tag(" clay. "),
+                        tag(" clay."),
+                        multispace1,
                     )),
                     tuple((
                         tag("Each geode robot costs "),
@@ -82,10 +86,10 @@ mod parse {
                     )),
                 )),
                 |(
-                    (_, id, _,),
-                    (_, ore_robot_ore, _,),
-                    (_, clay_robot_ore, _,),
-                    (_, obsidian_robot_ore, _, obsidian_robot_clay, _,),
+                    (_, id, _, _,),
+                    (_, ore_robot_ore, _, _),
+                    (_, clay_robot_ore, _, _),
+                    (_, obsidian_robot_ore, _, obsidian_robot_clay, _, _),
                     (_, geode_robot_ore, _, geode_robot_obsidian, _,),
                  )| Blueprint{
                     id,
