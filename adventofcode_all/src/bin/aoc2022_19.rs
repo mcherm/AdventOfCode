@@ -127,11 +127,11 @@ mod maxbuild {
     use std::collections::BinaryHeap;
     use std::fmt::{Display, Formatter};
     use crate::parse::{Blueprint, Num};
-    use strum::IntoEnumIterator;
+    use strum::{EnumCount, IntoEnumIterator};
     use strum_macros::{Display as StrumDisplayMacro, EnumIter, EnumCount as EnumCountMacro};
 
     const MAX_MINUTES: Num = 24;
-    const PRINT_WORK: bool = true;
+    const PRINT_WORK: bool = false;
 
     #[derive(Debug, Copy, Clone, StrumDisplayMacro, EnumCountMacro, EnumIter)]
     enum Resource {Ore, Clay, Obsidian, Geode}
@@ -154,7 +154,7 @@ mod maxbuild {
     #[derive(Debug, Eq, PartialEq, Clone)]
     struct State {
         minute: Num,
-        by_resource: Vec<ResourceState>, // one for each resource; can be indexed by resource.index()
+        by_resource: [ResourceState; Resource::COUNT], // one for each resource; can be indexed by resource.index()
     }
 
 
@@ -198,16 +198,22 @@ mod maxbuild {
         /// likely value.
         fn possible_actions(&self, bp: &Blueprint) -> Vec<Action> {
             let mut actions = Vec::new();
-            if self.minute < MAX_MINUTES - 1 { // if there's time for a robot to do any good...
+            if self.minute < MAX_MINUTES - 1 { // if there's time for a Geode robot to do any good...
                 if self.stuff(Ore) >= bp.geode_robot_ore && self.stuff(Obsidian) >= bp.geode_robot_obsidian {
                     actions.push(Action::BuildRobot(Geode));
                 }
+            }
+            if self.minute < MAX_MINUTES - 2 { // if there's time for an Obsidian robot to do any good...
                 if self.stuff(Ore) >= bp.obsidian_robot_ore && self.stuff(Clay) >= bp.obsidian_robot_clay {
                     actions.push(Action::BuildRobot(Obsidian));
                 }
+            }
+            if self.minute < MAX_MINUTES - 2 { // if there's time for a Clay robot to do any good...
                 if self.stuff(Ore) >= bp.clay_robot_ore {
                     actions.push(Action::BuildRobot(Clay));
                 }
+            }
+            if self.minute < MAX_MINUTES - 2 { // if there's time for an Ore robot to do any good...
                 if self.stuff(Ore) >= bp.ore_robot_ore {
                     actions.push(Action::BuildRobot(Ore));
                 }
@@ -230,18 +236,24 @@ mod maxbuild {
                     }
                     value
                 },
-                Action::Wait1Min => Self{
-                    minute: self.minute + 1,
-                    by_resource: self.by_resource.iter()
-                        .map(|x| ResourceState{
-                            stuff: x.stuff + x.robots,
-                            robots: x.robots + x.cooking,
-                            cooking: 0,
-                        })
-                        .collect(),
+                Action::Wait1Min => {
+                    let update = |x: ResourceState| ResourceState{
+                        stuff: x.stuff + x.robots,
+                        robots: x.robots + x.cooking,
+                        cooking: 0,
+                    };
+                    Self{
+                        minute: self.minute + 1,
+                        by_resource: [
+                            update(self.by_resource[0]),
+                            update(self.by_resource[1]),
+                            update(self.by_resource[2]),
+                            update(self.by_resource[3]),
+                        ],
+                    }
                 },
             };
-            println!("        From {} if I {} we get {}", self, action, answer);
+            if PRINT_WORK {println!("        From {} if I {} we get {}", self, action, answer);}
             answer
         }
 
@@ -286,7 +298,7 @@ mod maxbuild {
         fn default() -> Self {
             State{
                 minute: 0,
-                by_resource: vec![
+                by_resource: [
                     ResourceState{stuff: 0, robots: 1, cooking: 0},
                     ResourceState{stuff: 0, robots: 0, cooking: 0},
                     ResourceState{stuff: 0, robots: 0, cooking: 0},
@@ -348,7 +360,7 @@ mod maxbuild {
         let mut states_to_try: BinaryHeap<State> = BinaryHeap::from([State::default()]);
         let mut best_state: State = State::default();
         loop {
-            if states_tried % 1 == 0 {
+            if states_tried % 100000 == 0 {
                 print!("    {states_tried} states tried and {} in the queue. ", states_to_try.len());
                 if states_to_try.is_empty() {
                     println!("ALL DONE");
@@ -373,9 +385,7 @@ mod maxbuild {
                         }
                         // Check if this one is the new best state
                         if state.stuff(Geode) > best_state.stuff(Geode) {
-                            if PRINT_WORK {
-                                println!("New best: {state} after trying {states_tried} states.");
-                            }
+                            println!("New best: {state} after trying {states_tried} states.");
                             best_state = state;
                         }
                     }
