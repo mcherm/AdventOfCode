@@ -127,47 +127,69 @@ mod maxbuild {
     use std::collections::BinaryHeap;
     use std::fmt::{Display, Formatter};
     use crate::parse::{Blueprint, Num};
+    use strum::IntoEnumIterator;
+    use strum_macros::{Display as StrumDisplayMacro, EnumIter, EnumCount as EnumCountMacro};
 
     const MAX_MINUTES: Num = 24;
     const PRINT_WORK: bool = true;
 
+    #[derive(Debug, Copy, Clone, StrumDisplayMacro, EnumCountMacro, EnumIter)]
+    enum Resource {Ore, Clay, Obsidian, Geode}
+    use Resource::{Ore, Clay, Obsidian, Geode};
+
 
     #[derive(Debug, Copy, Clone)]
     enum Action {
-        BuildOreRobot,
-        BuildClayRobot,
-        BuildObsidianRobot,
-        BuildGeodeRobot,
+        BuildRobot(Resource),
         Wait1Min,
     }
 
-    #[derive(Debug, Eq, PartialEq)]
+    #[derive(Debug, Copy, Clone, Eq, PartialEq)]
+    struct ResourceState {
+        stuff: Num,
+        robots: Num,
+        cooking: Num,
+    }
+
+    #[derive(Debug, Eq, PartialEq, Clone)]
     struct State {
         minute: Num,
-        ore: Num,
-        clay: Num,
-        obsidian: Num,
-        geodes: Num,
-        ore_robots: Num,
-        clay_robots: Num,
-        obsidian_robots: Num,
-        geode_robots: Num,
-        ore_robots_cooking: Num,
-        clay_robots_cooking: Num,
-        obsidian_robots_cooking: Num,
-        geode_robots_cooking: Num,
+        by_resource: Vec<ResourceState>, // one for each resource; can be indexed by resource.index()
+    }
+
+
+    /// Looks at the blueprint and returns the cost in to_spend to build a robot for
+    /// harvesting to_build.
+    fn build_cost(bp: &Blueprint, to_build: Resource, to_spend: Resource) -> Num {
+        match (to_build, to_spend) {
+            (Ore, Ore) => bp.ore_robot_ore,
+            (Clay, Ore) => bp.clay_robot_ore,
+            (Obsidian, Ore) => bp.obsidian_robot_ore,
+            (Obsidian, Clay) => bp.obsidian_robot_clay,
+            (Geode, Ore) => bp.geode_robot_ore,
+            (Geode, Obsidian) => bp.geode_robot_obsidian,
+            (_, _) => 0,
+        }
+    }
+
+    impl Resource {
+        fn index(&self) -> usize {
+            match self {
+                Ore => 0,
+                Clay => 1,
+                Obsidian => 2,
+                Geode => 3,
+            }
+        }
     }
 
 
     impl Display for Action {
         fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-            write!(f, "{}", match self {
-                Action::BuildOreRobot => "BuildOreRobot",
-                Action::BuildClayRobot => "BuildClayRobot",
-                Action::BuildObsidianRobot => "BuildObsidianRobot",
-                Action::BuildGeodeRobot => "BuildGeodeRobot",
-                Action::Wait1Min => "Wait1Min",
-            })
+            match self {
+                Action::BuildRobot(resource) => write!(f, "Build{resource}Robot"),
+                Action::Wait1Min => write!(f, "Wait1Min"),
+            }
         }
     }
 
@@ -176,17 +198,19 @@ mod maxbuild {
         /// likely value.
         fn possible_actions(&self, bp: &Blueprint) -> Vec<Action> {
             let mut actions = Vec::new();
-            if self.ore >= bp.geode_robot_ore && self.obsidian >= bp.geode_robot_obsidian {
-                actions.push(Action::BuildGeodeRobot);
-            }
-            if self.ore >= bp.obsidian_robot_ore && self.clay >= bp.obsidian_robot_clay {
-                actions.push(Action::BuildObsidianRobot);
-            }
-            if self.ore >= bp.clay_robot_ore {
-                actions.push(Action::BuildClayRobot);
-            }
-            if self.ore >= bp.ore_robot_ore {
-                actions.push(Action::BuildOreRobot);
+            if self.minute < MAX_MINUTES - 1 { // if there's time for a robot to do any good...
+                if self.stuff(Ore) >= bp.geode_robot_ore && self.stuff(Obsidian) >= bp.geode_robot_obsidian {
+                    actions.push(Action::BuildRobot(Geode));
+                }
+                if self.stuff(Ore) >= bp.obsidian_robot_ore && self.stuff(Clay) >= bp.obsidian_robot_clay {
+                    actions.push(Action::BuildRobot(Obsidian));
+                }
+                if self.stuff(Ore) >= bp.clay_robot_ore {
+                    actions.push(Action::BuildRobot(Clay));
+                }
+                if self.stuff(Ore) >= bp.ore_robot_ore {
+                    actions.push(Action::BuildRobot(Ore));
+                }
             }
             if self.minute < MAX_MINUTES { // FIXME: is this an off-by-one error?
                 actions.push(Action::Wait1Min);
@@ -197,42 +221,24 @@ mod maxbuild {
         /// Returns the State reached by applying the given action.
         fn apply(&self, bp: &Blueprint, action: Action) -> Self {
             let answer = match action {
-                Action::BuildOreRobot => Self{
-                    ore_robots_cooking: self.ore_robots_cooking + 1,
-                    ore: self.ore - bp.ore_robot_ore,
-                    ..*self
-                },
-                Action::BuildClayRobot => Self{
-                    clay_robots_cooking: self.clay_robots_cooking + 1,
-                    ore: self.ore - bp.clay_robot_ore,
-                    ..*self
-                },
-                Action::BuildObsidianRobot => Self{
-                    obsidian_robots_cooking: self.obsidian_robots_cooking + 1,
-                    ore: self.ore - bp.obsidian_robot_ore,
-                    clay: self.clay - bp.obsidian_robot_clay,
-                    ..*self
-                },
-                Action::BuildGeodeRobot => Self{
-                    geode_robots_cooking: self.geode_robots_cooking + 1,
-                    ore: self.ore - bp.geode_robot_ore,
-                    obsidian: self.obsidian - bp.geode_robot_obsidian,
-                    ..*self
+                Action::BuildRobot(build_resource) => {
+                    let mut value: Self = self.clone();
+                    value.by_resource[build_resource.index()].cooking += 1;
+                    for cost_resource in Resource::iter() {
+                        value.by_resource[cost_resource.index()].stuff -=
+                            build_cost(bp, build_resource, cost_resource);
+                    }
+                    value
                 },
                 Action::Wait1Min => Self{
                     minute: self.minute + 1,
-                    ore: self.ore + self.ore_robots,
-                    clay: self.clay + self.clay_robots,
-                    obsidian: self.obsidian + self.obsidian_robots,
-                    geodes: self.geodes + self.geode_robots,
-                    ore_robots: self.ore_robots + self.ore_robots_cooking,
-                    clay_robots: self.clay_robots + self.clay_robots_cooking,
-                    obsidian_robots: self.obsidian_robots + self.obsidian_robots_cooking,
-                    geode_robots: self.geode_robots + self.geode_robots_cooking,
-                    ore_robots_cooking: 0,
-                    clay_robots_cooking: 0,
-                    obsidian_robots_cooking: 0,
-                    geode_robots_cooking: 0,
+                    by_resource: self.by_resource.iter()
+                        .map(|x| ResourceState{
+                            stuff: x.stuff + x.robots,
+                            robots: x.robots + x.cooking,
+                            cooking: 0,
+                        })
+                        .collect(),
                 },
             };
             println!("        From {} if I {} we get {}", self, action, answer);
@@ -246,25 +252,27 @@ mod maxbuild {
                 .collect()
         }
 
-        /// Returns the minimum number of geodes at the end we are guaranteed to have.
-        fn geodes_by_end(&self) -> Num {
-            self.geodes + (MAX_MINUTES - self.minute) * (self.geode_robots + self.geode_robots_cooking)
+        /// Returns the amount of the resource we have in storage
+        fn stuff(&self, r: Resource) -> Num {
+            self.by_resource[r.index()].stuff
         }
 
-        /// Returns the minimum number of geodes at the end we are guaranteed to have.
-        fn obsidian_by_end(&self) -> Num {
-            self.obsidian + (MAX_MINUTES - self.minute) * (self.obsidian_robots + self.obsidian_robots_cooking)
+        /// Returns the amount of robots we have for this resource
+        fn robots(&self, r: Resource) -> Num {
+            self.by_resource[r.index()].robots
         }
 
-        /// Returns the minimum number of geodes at the end we are guaranteed to have.
-        fn clay_by_end(&self) -> Num {
-            self.clay + (MAX_MINUTES - self.minute) * (self.clay_robots + self.clay_robots_cooking)
+        /// Returns the amount of robots cooking we have for this resource
+        fn cooking(&self, r: Resource) -> Num {
+            self.by_resource[r.index()].cooking
         }
 
-        /// Returns the minimum number of geodes at the end we are guaranteed to have.
-        fn ore_by_end(&self) -> Num {
-            self.ore + (MAX_MINUTES - self.ore) * (self.ore_robots + self.ore_robots_cooking)
+        /// Returns the minimum number of that resource we are guaranteed to have at the end.
+        fn min_by_end(&self, r: Resource) -> Num {
+            let time_left = MAX_MINUTES - self.minute;
+            self.stuff(r) + time_left * self.robots(r) + time_left.saturating_sub(1) * self.cooking(r)
         }
+
 
         // FIXME: If I am do do pruning, I will need this.
         // /// Returns the maximum possible number of geodes at the end we could
@@ -278,18 +286,12 @@ mod maxbuild {
         fn default() -> Self {
             State{
                 minute: 0,
-                ore: 0,
-                clay: 0,
-                obsidian: 0,
-                geodes: 0,
-                ore_robots: 1,
-                clay_robots: 0,
-                obsidian_robots: 0,
-                geode_robots: 0,
-                ore_robots_cooking: 0,
-                clay_robots_cooking: 0,
-                obsidian_robots_cooking: 0,
-                geode_robots_cooking: 0,
+                by_resource: vec![
+                    ResourceState{stuff: 0, robots: 1, cooking: 0},
+                    ResourceState{stuff: 0, robots: 0, cooking: 0},
+                    ResourceState{stuff: 0, robots: 0, cooking: 0},
+                    ResourceState{stuff: 0, robots: 0, cooking: 0},
+                ],
             }
         }
     }
@@ -304,16 +306,16 @@ mod maxbuild {
         fn cmp(&self, other: &Self) -> Ordering {
             let mut answer = Ordering::Equal;
             if answer == Ordering::Equal {
-                answer = self.geodes_by_end().cmp(&other.geodes_by_end()); // sort by geodes_at_end
+                answer = self.min_by_end(Geode).cmp(&other.min_by_end(Geode)); // sort by geodes_at_end
             }
             if answer == Ordering::Equal {
-                answer = self.obsidian_by_end().cmp(&other.obsidian_by_end()); // sort by obsidian_by_end
+                answer = self.min_by_end(Obsidian).cmp(&other.min_by_end(Obsidian)); // sort by obsidian_by_end
             }
             if answer == Ordering::Equal {
-                answer = self.clay_by_end().cmp(&other.clay_by_end()); // sort by obsidian_by_end
+                answer = self.min_by_end(Clay).cmp(&other.min_by_end(Clay)); // sort by clay_by_end
             }
             if answer == Ordering::Equal {
-                answer = self.ore_by_end().cmp(&other.ore_by_end()); // sort by obsidian_by_end
+                answer = self.min_by_end(Ore).cmp(&other.min_by_end(Ore)); // sort by ore_by_end
             }
             if answer == Ordering::Equal {
                 answer = other.minute.cmp(&self.minute); // reverse sort by minute
@@ -328,9 +330,9 @@ mod maxbuild {
                 f,
                 "State({}: {},{},{},{} / {},{},{},{} min {},{},{},{})",
                 self.minute,
-                self.ore, self.clay, self.obsidian, self.geodes,
-                self.ore_robots, self.clay_robots, self.obsidian_robots, self.geodes,
-                self.ore_by_end(), self.clay_by_end(), self.obsidian_by_end(), self.geodes_by_end(),
+                self.stuff(Ore), self.stuff(Clay), self.stuff(Obsidian), self.stuff(Geode),
+                self.robots(Ore), self.robots(Clay), self.robots(Obsidian), self.robots(Geode),
+                self.min_by_end(Ore), self.min_by_end(Clay), self.min_by_end(Obsidian), self.min_by_end(Geode),
             )
         }
     }
@@ -358,11 +360,10 @@ mod maxbuild {
             match states_to_try.pop() {
                 None => {
                     // Nothing left to try so we've solved it
-                    return best_state.geodes_by_end();
+                    return best_state.stuff(Geode);
                 }
                 Some(state) => {
                     // Make sure it's still POSSIBLE for this one to beat the best
-                    let best_geodes_by_end = best_state.geodes_by_end();
                     if true /*state.max_geodes_by_end() > best_geodes_by_end*/ { // FIXME: I've disabled pruning
                         // Add the possible next states onto the list
                         for next_state in state.next_states(bp) {
@@ -371,7 +372,7 @@ mod maxbuild {
                             }
                         }
                         // Check if this one is the new best state
-                        if state.geodes_by_end() > best_geodes_by_end {
+                        if state.stuff(Geode) > best_state.stuff(Geode) {
                             if PRINT_WORK {
                                 println!("New best: {state} after trying {states_tried} states.");
                             }
