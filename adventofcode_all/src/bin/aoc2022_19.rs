@@ -131,7 +131,7 @@ mod maxbuild {
     use strum_macros::{Display as StrumDisplayMacro, EnumIter, EnumCount as EnumCountMacro};
 
     const MAX_MINUTES: Num = 24;
-    const PRINT_WORK: bool = true;
+    const PRINT_WORK: bool = false;
 
     #[derive(Debug, Copy, Clone, StrumDisplayMacro, EnumCountMacro, EnumIter)]
     enum Resource {Ore, Clay, Obsidian, Geode}
@@ -430,9 +430,14 @@ use crate::maxbuild::max_build;
 
 fn part_a(input: &Vec<Blueprint>) {
     println!("\nPart a:");
-    let bp = input[1];
-    let geodes = max_build(&bp);
-    println!("We produced {geodes} geodes.")
+    let mut quality_level_sum = 0;
+    for bp in input {
+        let geodes = max_build(&bp);
+        let quality_level = bp.id * geodes;
+        println!("Blueprint {} produced {geodes} geodes.", bp.id);
+        quality_level_sum += quality_level
+    }
+    println!("The final sum of quality_levels is {}", quality_level_sum);
 }
 
 
