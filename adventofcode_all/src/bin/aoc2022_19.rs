@@ -138,17 +138,11 @@ mod maxbuild {
     use Resource::{Ore, Clay, Obsidian, Geode};
 
 
-    #[derive(Debug, Copy, Clone)]
-    enum Action {
-        BuildRobot(Resource),
-        Wait1Min,
-    }
-
     #[derive(Debug, Copy, Clone, Eq, PartialEq)]
     struct ResourceState {
         stuff: Num,
         robots: Num,
-        cooking: Num,
+        cooking: Num, // FIXME: Probably remove this
     }
 
     #[derive(Debug, Eq, PartialEq, Clone)]
@@ -184,50 +178,42 @@ mod maxbuild {
     }
 
 
-    impl Display for Action {
-        fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-            match self {
-                Action::BuildRobot(resource) => write!(f, "Build{resource}Robot"),
-                Action::Wait1Min => write!(f, "Wait1Min"),
-            }
-        }
-    }
-
     impl State {
-        /// Returns the list of possible actions to take from this state. They are in order by their
-        /// likely value.
-        fn possible_actions(&self, bp: &Blueprint) -> Vec<Action> {
+
+        /// Returns the list of possible robots to build next from this state. They are in order by
+        /// their likely value.
+        fn possible_builds(&self, bp: &Blueprint) -> impl Iterator<Item = Option<Resource>> {
             let mut actions = Vec::new();
             if self.minute < MAX_MINUTES - 1 { // if there's time for a Geode robot to do any good...
                 if self.stuff(Ore) >= bp.geode_robot_ore && self.stuff(Obsidian) >= bp.geode_robot_obsidian {
-                    actions.push(Action::BuildRobot(Geode));
+                    actions.push(Some(Geode));
                 }
             }
             if self.minute < MAX_MINUTES - 2 { // if there's time for an Obsidian robot to do any good...
                 if self.stuff(Ore) >= bp.obsidian_robot_ore && self.stuff(Clay) >= bp.obsidian_robot_clay {
-                    actions.push(Action::BuildRobot(Obsidian));
+                    actions.push(Some(Obsidian));
                 }
             }
             if self.minute < MAX_MINUTES - 2 { // if there's time for a Clay robot to do any good...
                 if self.stuff(Ore) >= bp.clay_robot_ore {
-                    actions.push(Action::BuildRobot(Clay));
+                    actions.push(Some(Clay));
                 }
             }
             if self.minute < MAX_MINUTES - 2 { // if there's time for an Ore robot to do any good...
                 if self.stuff(Ore) >= bp.ore_robot_ore {
-                    actions.push(Action::BuildRobot(Ore));
+                    actions.push(Some(Ore));
                 }
             }
             if self.minute < MAX_MINUTES { // FIXME: is this an off-by-one error?
-                actions.push(Action::Wait1Min);
+                actions.push(None);
             }
-            actions
+            actions.into_iter()
         }
 
         /// Returns the State reached by applying the given action.
-        fn apply(&self, bp: &Blueprint, action: Action) -> Self {
-            let answer = match action {
-                Action::BuildRobot(build_resource) => {
+        fn apply(&self, bp: &Blueprint, build: Option<Resource>) -> Self {
+            let answer = match build {
+                Some(build_resource) => {
                     let mut value: Self = self.clone();
                     value.by_resource[build_resource.index()].cooking += 1;
                     for cost_resource in Resource::iter() {
@@ -236,7 +222,7 @@ mod maxbuild {
                     }
                     value
                 },
-                Action::Wait1Min => {
+                None => {
                     let update = |x: ResourceState| ResourceState{
                         stuff: x.stuff + x.robots,
                         robots: x.robots + x.cooking,
@@ -253,14 +239,14 @@ mod maxbuild {
                     }
                 },
             };
-            if PRINT_WORK {println!("        From {} if I {} we get {}", self, action, answer);}
+            if PRINT_WORK {println!("        From {} if build {:?} we get {}", self, build, answer);}
             answer
         }
 
         /// Returns a vector of the possible next states from here.
         fn next_states(&self, bp: &Blueprint) -> Vec<State> {
-            self.possible_actions(bp).iter()
-                .map(|a| self.apply(bp, *a))
+            self.possible_builds(bp)
+                .map(|build| self.apply(bp, build))
                 .collect()
         }
 
@@ -274,6 +260,7 @@ mod maxbuild {
             self.by_resource[r.index()].robots
         }
 
+        // FIXME: Probably remove this
         /// Returns the amount of robots cooking we have for this resource
         fn cooking(&self, r: Resource) -> Num {
             self.by_resource[r.index()].cooking
@@ -286,12 +273,42 @@ mod maxbuild {
         }
 
 
-        // FIXME: If I am do do pruning, I will need this.
-        // /// Returns the maximum possible number of geodes at the end we could
-        // /// possibly have. This is a heuristic.
-        // fn max_geodes_by_end(&self) -> Num {
-        //     todo!()
-        // }
+        /// Returns the maximum possible number of geodes at the end we could possibly have. This
+        /// is a heuristic, so it doesn't have to be perfect, just some kind of overestimate.
+        fn max_geodes_by_end(&self, bp: &Blueprint) -> Num {
+            let mut time_left = MAX_MINUTES - self.minute;
+
+            // Let's walk forward in time, gathering Ore and Obsidian (perfectly normal) AND
+            // building a new Ore Robot and a new Obsidian Robot each turn (wild overestimate).
+            // We will go until there's enough to build a Geode robot.
+            let ore_need = build_cost(bp, Geode, Ore);
+            let mut ore_avail = self.stuff(Ore);
+            let mut ore_growth = self.robots(Ore);
+            let obsidian_need = build_cost(bp, Geode, Obsidian);
+            let mut obsidian_avail = self.stuff(Obsidian);
+            let mut obsidian_growth = self.robots(Obsidian);
+            loop {
+                if ore_avail >= ore_need && obsidian_avail >= obsidian_need {
+                    break; // have enough to build our next Geode Robot
+                }
+                if time_left == 0 {
+                    break;
+                }
+                time_left -= 1;
+                ore_avail += ore_growth;
+                ore_growth += 1; // assume (wildly inaccurate) we build a new Ore Robot each turn
+                obsidian_avail += obsidian_growth;
+                obsidian_growth += 1;  // assume (wildly inaccurate) we build a new Obsidian Robot each turn
+            }
+
+            // NOW, assume we build a new geode robot each turn starting from time_left
+            let max_geodes_from_future_robots = time_left * (time_left + 1) / 2;
+
+            // now find the amount of geodes we can have
+            let answer = self.min_by_end(Geode) + max_geodes_from_future_robots;
+            println!("        max_geodes_by_end: minute={} time_left={} -> {time_left}, max_from_future={max_geodes_from_future_robots}, answer={answer}", self.minute, MAX_MINUTES - self.minute); // FIXME: Remove
+            answer
+        }
     }
 
     impl Default for State {
@@ -360,12 +377,13 @@ mod maxbuild {
         let mut states_to_try: BinaryHeap<State> = BinaryHeap::from([State::default()]);
         let mut best_state: State = State::default();
         loop {
-            if states_tried % 100000 == 0 {
+            if states_tried % 1000000 == 0 {
                 print!("    {states_tried} states tried and {} in the queue. ", states_to_try.len());
                 if states_to_try.is_empty() {
                     println!("ALL DONE");
                 } else {
-                    println!("Next: {}", states_to_try.peek().unwrap());
+                    let next_state = states_to_try.peek().unwrap();
+                    println!("Next: {} with max {}", next_state, next_state.max_geodes_by_end(bp));
                 }
             }
             states_tried += 1;
@@ -376,18 +394,17 @@ mod maxbuild {
                 }
                 Some(state) => {
                     // Make sure it's still POSSIBLE for this one to beat the best
-                    if true /*state.max_geodes_by_end() > best_geodes_by_end*/ { // FIXME: I've disabled pruning
-                        // Add the possible next states onto the list
-                        for next_state in state.next_states(bp) {
-                            if true /*next_state.max_geodes_by_end() > best_geodes_by_end*/ { // FIXME: I've disabled pruning
-                                states_to_try.push(next_state); // they get sorted as they are inserted
-                            }
+                    let best_state_min_geodes_by_end = best_state.stuff(Geode);
+                    // Add the possible next states onto the list
+                    for next_state in state.next_states(bp) {
+                        if next_state.max_geodes_by_end(bp) > best_state_min_geodes_by_end {
+                            states_to_try.push(next_state); // they get sorted as they are inserted
                         }
-                        // Check if this one is the new best state
-                        if state.stuff(Geode) > best_state.stuff(Geode) {
-                            println!("New best: {state} after trying {states_tried} states.");
-                            best_state = state;
-                        }
+                    }
+                    // Check if this one is the new best state
+                    if state.stuff(Geode) > best_state_min_geodes_by_end {
+                        println!("New best: {state} after trying {states_tried} states.");
+                        best_state = state;
                     }
                 }
             }
