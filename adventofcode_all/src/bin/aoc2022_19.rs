@@ -131,7 +131,7 @@ mod maxbuild {
     use strum_macros::{Display as StrumDisplayMacro, EnumIter, EnumCount as EnumCountMacro};
 
     const MAX_MINUTES: Num = 24;
-    const PRINT_WORK: bool = false;
+    const PRINT_WORK: bool = true;
 
     #[derive(Debug, Copy, Clone, StrumDisplayMacro, EnumCountMacro, EnumIter)]
     enum Resource {Ore, Clay, Obsidian, Geode}
@@ -142,7 +142,6 @@ mod maxbuild {
     struct ResourceState {
         stuff: Num,
         robots: Num,
-        cooking: Num, // FIXME: Probably remove this
     }
 
     #[derive(Debug, Eq, PartialEq, Clone)]
@@ -204,7 +203,7 @@ mod maxbuild {
                     actions.push(Some(Ore));
                 }
             }
-            if self.minute < MAX_MINUTES { // FIXME: is this an off-by-one error?
+            if self.minute < MAX_MINUTES {
                 actions.push(None);
             }
             actions.into_iter()
@@ -212,34 +211,28 @@ mod maxbuild {
 
         /// Returns the State reached by applying the given action.
         fn apply(&self, bp: &Blueprint, build: Option<Resource>) -> Self {
-            let answer = match build {
-                Some(build_resource) => {
-                    let mut value: Self = self.clone();
-                    value.by_resource[build_resource.index()].cooking += 1;
-                    for cost_resource in Resource::iter() {
-                        value.by_resource[cost_resource.index()].stuff -=
-                            build_cost(bp, build_resource, cost_resource);
-                    }
-                    value
-                },
-                None => {
-                    let update = |x: ResourceState| ResourceState{
-                        stuff: x.stuff + x.robots,
-                        robots: x.robots + x.cooking,
-                        cooking: 0,
-                    };
-                    Self{
-                        minute: self.minute + 1,
-                        by_resource: [
-                            update(self.by_resource[0]),
-                            update(self.by_resource[1]),
-                            update(self.by_resource[2]),
-                            update(self.by_resource[3]),
-                        ],
-                    }
-                },
-            };
-            if PRINT_WORK {println!("        From {} if build {:?} we get {}", self, build, answer);}
+            let mut answer = self.clone();
+
+            // Advance time
+            answer.minute += 1;
+
+            // Spend resources to build
+            if let Some(build_r) = build {
+                for cost_r in Resource::iter() {
+                    answer.by_resource[cost_r.index()].stuff -= build_cost(bp, build_r, cost_r);
+                }
+            }
+
+            // Robots that already exist harvest resources
+            for r in Resource::iter() {
+                answer.by_resource[r.index()].stuff += self.by_resource[r.index()].robots;
+            }
+
+            // Create new robots
+            if let Some(build_r) = build {
+                answer.by_resource[build_r.index()].robots += 1;
+            }
+
             answer
         }
 
@@ -260,16 +253,10 @@ mod maxbuild {
             self.by_resource[r.index()].robots
         }
 
-        // FIXME: Probably remove this
-        /// Returns the amount of robots cooking we have for this resource
-        fn cooking(&self, r: Resource) -> Num {
-            self.by_resource[r.index()].cooking
-        }
-
         /// Returns the minimum number of that resource we are guaranteed to have at the end.
         fn min_by_end(&self, r: Resource) -> Num {
             let time_left = MAX_MINUTES - self.minute;
-            self.stuff(r) + time_left * self.robots(r) + time_left.saturating_sub(1) * self.cooking(r)
+            self.stuff(r) + time_left * self.robots(r)
         }
 
 
@@ -278,35 +265,49 @@ mod maxbuild {
         fn max_geodes_by_end(&self, bp: &Blueprint) -> Num {
             let mut time_left = MAX_MINUTES - self.minute;
 
-            // Let's walk forward in time, gathering Ore and Obsidian (perfectly normal) AND
-            // building a new Ore Robot and a new Obsidian Robot each turn (wild overestimate).
-            // We will go until there's enough to build a Geode robot.
-            let ore_need = build_cost(bp, Geode, Ore);
-            let mut ore_avail = self.stuff(Ore);
-            let mut ore_growth = self.robots(Ore);
-            let obsidian_need = build_cost(bp, Geode, Obsidian);
-            let mut obsidian_avail = self.stuff(Obsidian);
-            let mut obsidian_growth = self.robots(Obsidian);
-            loop {
-                if ore_avail >= ore_need && obsidian_avail >= obsidian_need {
-                    break; // have enough to build our next Geode Robot
-                }
-                if time_left == 0 {
-                    break;
-                }
+            // Let's walk forward in time, building a robot every time it's possible to do so, but
+            // not spending those points. against what's available for other resources.
+            let mut stuff = [self.stuff(Ore), self.stuff(Clay), self.stuff(Obsidian), self.stuff(Geode)];
+            let mut robots = [self.robots(Ore), self.robots(Clay), self.robots(Obsidian), self.robots(Geode)];
+            let mut spent = [
+                [0,0,0,0],
+                [0,0,0,0],
+                [0,0,0,0],
+                [0,0,0,0],
+            ]; // spent[thing_built][resource_used] is the amount spent on building that so far
+
+            while time_left > 0 {
                 time_left -= 1;
-                ore_avail += ore_growth;
-                ore_growth += 1; // assume (wildly inaccurate) we build a new Ore Robot each turn
-                obsidian_avail += obsidian_growth;
-                obsidian_growth += 1;  // assume (wildly inaccurate) we build a new Obsidian Robot each turn
+
+                // robots harvest stuff
+                for r in Resource::iter() {
+                    stuff[r.index()] += robots[r.index()];
+                }
+
+                // try building new robots
+                for build_r in Resource::iter() {
+                    let mut avail_for_this_build = [0,0,0,0];
+                    let mut need_to_spend = [0,0,0,0];
+                    for spend_r in Resource::iter() {
+                        avail_for_this_build[spend_r.index()] = stuff[spend_r.index()] - spent[build_r.index()][spend_r.index()];
+                        need_to_spend[spend_r.index()] = build_cost(bp, build_r, spend_r);
+                    }
+                    let can_afford_now = Resource::iter().all(|r| avail_for_this_build[r.index()] >= need_to_spend[r.index()]);
+                    if can_afford_now {
+                        robots[build_r.index()] += 1; // add a robot
+                        for spend_r in Resource::iter() {
+                            spent[build_r.index()][spend_r.index()] += need_to_spend[spend_r.index()]; // mark it spent (but just for THIS kind of robot)
+                        }
+                    }
+                }
+
+                // FIXME: REMOVE
+                // println!("    max_geodes_by_end, time_left={time_left} stuff={stuff:?} robots={robots:?}");
+                // print!("");
             }
 
-            // NOW, assume we build a new geode robot each turn starting from time_left
-            let max_geodes_from_future_robots = time_left * (time_left + 1) / 2;
-
-            // now find the amount of geodes we can have
-            let answer = self.min_by_end(Geode) + max_geodes_from_future_robots;
-            println!("        max_geodes_by_end: minute={} time_left={} -> {time_left}, max_from_future={max_geodes_from_future_robots}, answer={answer}", self.minute, MAX_MINUTES - self.minute); // FIXME: Remove
+            let answer = stuff[Geode.index()];
+            // println!("        max_geodes_by_end: minute={} answer={answer}", self.minute); // FIXME: Remove
             answer
         }
     }
@@ -316,10 +317,10 @@ mod maxbuild {
             State{
                 minute: 0,
                 by_resource: [
-                    ResourceState{stuff: 0, robots: 1, cooking: 0},
-                    ResourceState{stuff: 0, robots: 0, cooking: 0},
-                    ResourceState{stuff: 0, robots: 0, cooking: 0},
-                    ResourceState{stuff: 0, robots: 0, cooking: 0},
+                    ResourceState{stuff: 0, robots: 1},
+                    ResourceState{stuff: 0, robots: 0},
+                    ResourceState{stuff: 0, robots: 0},
+                    ResourceState{stuff: 0, robots: 0},
                 ],
             }
         }
@@ -370,26 +371,31 @@ mod maxbuild {
     /// Finds the maximum number of geodes that can be built and returns it.
     pub fn max_build(bp: &Blueprint) -> Num {
         let state = State::default();
-        println!("Start state: {state}");
-        println!("Blueprint: {:?}", bp);
+        if PRINT_WORK {
+            println!("Start state: {state}");
+            println!("Blueprint: {:?}", bp);
+        }
 
         let mut states_tried = 0;
         let mut states_to_try: BinaryHeap<State> = BinaryHeap::from([State::default()]);
         let mut best_state: State = State::default();
         loop {
-            if states_tried % 1000000 == 0 {
-                print!("    {states_tried} states tried and {} in the queue. ", states_to_try.len());
-                if states_to_try.is_empty() {
-                    println!("ALL DONE");
-                } else {
-                    let next_state = states_to_try.peek().unwrap();
-                    println!("Next: {} with max {}", next_state, next_state.max_geodes_by_end(bp));
+            if PRINT_WORK {
+                if states_tried % 1000000 == 0 {
+                    print!("    {states_tried} states tried and {} in the queue. ", states_to_try.len());
+                    if states_to_try.is_empty() {
+                        println!("ALL DONE");
+                    } else {
+                        let next_state = states_to_try.peek().unwrap();
+                        println!("Next: {} with max {}", next_state, next_state.max_geodes_by_end(bp));
+                    }
                 }
             }
             states_tried += 1;
             match states_to_try.pop() {
                 None => {
                     // Nothing left to try so we've solved it
+                    if PRINT_WORK {println!("Done searching - examined {states_tried} states to find the answer of {}", best_state.stuff(Geode));}
                     return best_state.stuff(Geode);
                 }
                 Some(state) => {
@@ -403,7 +409,7 @@ mod maxbuild {
                     }
                     // Check if this one is the new best state
                     if state.stuff(Geode) > best_state_min_geodes_by_end {
-                        println!("New best: {state} after trying {states_tried} states.");
+                        if PRINT_WORK {println!("New best: {state} after trying {states_tried} states.");}
                         best_state = state;
                     }
                 }
@@ -424,7 +430,7 @@ use crate::maxbuild::max_build;
 
 fn part_a(input: &Vec<Blueprint>) {
     println!("\nPart a:");
-    let bp = input[0];
+    let bp = input[1];
     let geodes = max_build(&bp);
     println!("We produced {geodes} geodes.")
 }
