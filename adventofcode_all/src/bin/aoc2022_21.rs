@@ -182,7 +182,7 @@ mod parse {
 
 // ======= Part 1 Compute =======
 
-mod compute {
+mod compute_1 {
     use crate::parse::{Num, Name, Job, Monkey};
     use std::collections::HashMap;
 
@@ -219,11 +219,159 @@ mod compute {
 }
 
 
+// ======= Part 2 Compute =======
+
+mod compute_2 {
+    use crate::parse::{Num, Name, Job, Monkey};
+    use std::collections::HashMap;
+
+    // from eval
+    enum Outcome {
+        WillShout(Num),
+        HasHuman,
+    }
+    use Outcome::WillShout;
+    use Outcome::HasHuman;
+
+
+    /// A participant in the cooperation of monkeys that answer part 2
+    #[derive(Debug)]
+    pub enum RequestMonkey {
+        Root(Name, Name),
+        Human,
+        NiceMonkey(Monkey),
+    }
+
+    /// A group of monkeys
+    #[derive(Debug)]
+    pub struct RequestMonkeyTroop {
+        request_monkeys: HashMap<Name, RequestMonkey>,
+    }
+
+
+    impl RequestMonkey {
+        /// Create an entry into the HashMap of RequestMonkeys.
+        fn make_entry(monkey: &Monkey) -> (Name, RequestMonkey) {
+            if monkey.name == Name::new("root") {
+                let (n1, n2) = match monkey.job {
+                    Job::Const(_) => panic!("Root must not be a constant!"),
+                    Job::Plus(n1, n2) => (n1, n2),
+                    Job::Minus(n1, n2) => (n1, n2),
+                    Job::Times(n1, n2) => (n1, n2),
+                    Job::Divide(n1, n2) => (n1, n2),
+                };
+                (monkey.name, RequestMonkey::Root(n1, n2))
+            } else if monkey.name == Name::new("humn") {
+                (monkey.name, RequestMonkey::Human)
+            } else {
+                (monkey.name, RequestMonkey::NiceMonkey(monkey.clone()))
+            }
+        }
+    }
+
+    impl RequestMonkeyTroop {
+        pub fn new(input: &Vec<Monkey>) -> Self {
+            let request_monkeys = input.iter().map(RequestMonkey::make_entry).collect();
+            Self{request_monkeys}
+        }
+
+        /// Finds out the answer to part 2.
+        pub fn what_to_yell(&self) -> Num {
+            if let RequestMonkey::Root(n1, n2) = self.request_monkeys.get(&Name::new("root")).unwrap() {
+                if let WillShout(v1) = self.outcome(*n1) {
+                    self.request(*n2, v1)
+                } else if let WillShout(v2) = self.outcome(*n1) {
+                    self.request(*n1, v2)
+                } else {
+                    panic!("Both sides have a human");
+                }
+            } else {
+                panic!("Root monkey wasn't a Root.");
+            }
+        }
+
+        /// Finds the outcome for the monkey with the given name.
+        fn outcome(&self, name: Name) -> Outcome {
+            match self.request_monkeys.get(&name).unwrap() {
+                RequestMonkey::Root(_, _) => {
+                    panic!("Should never ask for outcome from the root monkey.");
+                }
+                RequestMonkey::Human => HasHuman,
+                RequestMonkey::NiceMonkey(monkey) => {
+                    match monkey.job {
+                        Job::Const(x) => WillShout(x),
+                        Job::Plus(n1, n2) => match (self.outcome(n1), self.outcome(n2)) {
+                            (WillShout(v1), WillShout(v2)) => WillShout(v1 + v2),
+                            (_, _) => HasHuman
+                        }
+                        Job::Minus(n1, n2) => match (self.outcome(n1), self.outcome(n2)) {
+                            (WillShout(v1), WillShout(v2)) => WillShout(v1 - v2),
+                            (_, _) => HasHuman
+                        }
+                        Job::Times(n1, n2) => match (self.outcome(n1), self.outcome(n2)) {
+                            (WillShout(v1), WillShout(v2)) => WillShout(v1 * v2),
+                            (_, _) => HasHuman
+                        }
+                        Job::Divide(n1, n2) => match (self.outcome(n1), self.outcome(n2)) {
+                            (WillShout(v1), WillShout(v2)) => WillShout(v1 / v2),
+                            (_, _) => HasHuman
+                        }
+                    }
+                }
+            }
+        }
+
+        /// Requests the monkey with the given name to tell us what the human must should out for
+        /// it to return the value v. Panics if called on a monkey that doesn't depend on a
+        /// human.
+        fn request(&self, name: Name, v: Num) -> Num {
+            match self.request_monkeys.get(&name).unwrap() {
+                RequestMonkey::Root(_, _) => {
+                    panic!("Should never request a value from the root monkey.");
+                },
+                RequestMonkey::Human => v,
+                RequestMonkey::NiceMonkey(monkey) => {
+                    match monkey.job {
+                        Job::Const(_) => {
+                            panic!("Should never request a value from a const monkey.")
+                        }
+                        Job::Plus(n1, n2) => match (self.outcome(n1), self.outcome(n2)) {
+                            (WillShout(_), WillShout(_)) => panic!("Should never request a value from a monkey not dependent on a human."),
+                            (WillShout(v1), HasHuman) => self.request(n2, v - v1),
+                            (HasHuman, WillShout(v2)) => self.request(n1, v - v2),
+                            (HasHuman, HasHuman) => panic!("Darn - it's hard."),
+                        }
+                        Job::Minus(n1, n2) => match (self.outcome(n1), self.outcome(n2)) {
+                            (WillShout(_), WillShout(_)) => panic!("Should never request a value from a monkey not dependent on a human."),
+                            (WillShout(v1), HasHuman) => self.request(n2, v1 - v),
+                            (HasHuman, WillShout(v2)) => self.request(n1, v + v2),
+                            (HasHuman, HasHuman) => panic!("Darn - it's hard."),
+                        }
+                        Job::Times(n1, n2) => match (self.outcome(n1), self.outcome(n2)) {
+                            (WillShout(_), WillShout(_)) => panic!("Should never request a value from a monkey not dependent on a human."),
+                            (WillShout(v1), HasHuman) => self.request(n2, v / v1),
+                            (HasHuman, WillShout(v2)) => self.request(n1, v / v2),
+                            (HasHuman, HasHuman) => panic!("Darn - it's hard."),
+                        }
+                        Job::Divide(n1, n2) => match (self.outcome(n1), self.outcome(n2)) {
+                            (WillShout(_), WillShout(_)) => panic!("Should never request a value from a monkey not dependent on a human."),
+                            (WillShout(v1), HasHuman) => self.request(n2, v1 / v),
+                            (HasHuman, WillShout(v2)) => self.request(n1, v * v2),
+                            (HasHuman, HasHuman) => panic!("Darn - it's hard."),
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+
 // ======= main() =======
 
 use crate::parse::{input, Monkey, Name};
-use crate::compute::MonkeyTroop;
-
+use crate::compute_1::MonkeyTroop;
+use crate::compute_2::RequestMonkeyTroop;
 
 
 fn part_a(input: &Vec<Monkey>) -> Result<(), anyhow::Error> {
@@ -234,8 +382,10 @@ fn part_a(input: &Vec<Monkey>) -> Result<(), anyhow::Error> {
 }
 
 
-fn part_b(_input: &Vec<Monkey>) -> Result<(), anyhow::Error> {
+fn part_b(input: &Vec<Monkey>) -> Result<(), anyhow::Error> {
     println!("\nPart b:");
+    let troop = RequestMonkeyTroop::new(input);
+    println!("The human must yell out {}", troop.what_to_yell());
     Ok(())
 }
 
