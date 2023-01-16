@@ -11,10 +11,10 @@ extern crate anyhow;
 mod parse {
     use std::fs;
 
-    pub fn input() -> Result<Vec<i32>, anyhow::Error> {
+    pub fn input() -> Result<Vec<i64>, anyhow::Error> {
         let s = fs::read_to_string("input/2022/input_20.txt")?;
         Ok(s.lines()
-            .map(|line| line.parse::<i32>())
+            .map(|line| line.parse::<i64>())
             .collect::<Result<_, _>>()?)
     }
 
@@ -31,7 +31,7 @@ mod solve_1 {
     #[derive(Debug)]
     pub struct Item {
         pub orig_pos: usize,
-        pub value: i32,
+        pub value: i64,
     }
 
     #[derive(Debug)]
@@ -42,7 +42,7 @@ mod solve_1 {
 
     impl NumList {
         /// Creates a new NumList.
-        pub fn new(input: &Vec<i32>) -> Self {
+        pub fn new(input: &Vec<i64>) -> Self {
             let items = input.iter()
                 .enumerate()
                 .map(|(orig_pos, &value)| Item{orig_pos, value})
@@ -53,7 +53,7 @@ mod solve_1 {
         /// Moves the item at position from_pos by a total of move_by.
         fn move_item(&mut self, from_pos: usize) {
             let item = self.items.remove(from_pos);
-            let new_pos = (item.value + (from_pos as i32)).rem_euclid(self.items.len() as i32);
+            let new_pos = (item.value + (from_pos as i64)).rem_euclid(self.items.len() as i64);
             let new_pos = if new_pos == 0 { self.items.len() } else { new_pos as usize };
             self.items.insert(new_pos, item);
         }
@@ -67,7 +67,7 @@ mod solve_1 {
         }
 
         /// Performs "grove coordinate" calculation
-        pub fn grove_coord_sum(&self) -> i32 {
+        pub fn grove_coord_sum(&self) -> i64 {
             let zero_pos = self.items.iter().position(|x| x.value == 0).unwrap();
             [1000, 2000, 3000].iter()
                 .map(|offset| self.items[(zero_pos + offset) % self.items.len()].value)
@@ -89,7 +89,7 @@ use crate::parse::input;
 use crate::solve_1::NumList;
 
 
-fn part_a(input: &Vec<i32>) {
+fn part_a(input: &Vec<i64>) {
     println!("\nPart a:");
     let mut nums = NumList::new(input);
     nums.mix();
@@ -98,8 +98,16 @@ fn part_a(input: &Vec<i32>) {
 }
 
 
-fn part_b(_input: &Vec<i32>) {
+fn part_b(input: &Vec<i64>) {
     println!("\nPart b:");
+    let decryption_key = 811589153;
+    let bigger_vals = input.iter().map(|x| x * decryption_key).collect();
+    let mut nums = NumList::new(&bigger_vals);
+    for _ in 0..10 {
+        nums.mix();
+    }
+    let sum = nums.grove_coord_sum();
+    println!("The grove coordinate sum is {}", sum);
 }
 
 
