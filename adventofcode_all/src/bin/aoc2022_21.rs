@@ -35,7 +35,6 @@ mod parse {
     }
 
 
-    // FIXME: Verify that division is legal
     pub type Num = i64;
 
     /// Stores 4-character (lowercase letter) names efficiently.
@@ -280,7 +279,7 @@ mod compute_2 {
             if let RequestMonkey::Root(n1, n2) = self.request_monkeys.get(&Name::new("root")).unwrap() {
                 if let WillShout(v1) = self.outcome(*n1) {
                     self.request(*n2, v1)
-                } else if let WillShout(v2) = self.outcome(*n1) {
+                } else if let WillShout(v2) = self.outcome(*n2) {
                     self.request(*n1, v2)
                 } else {
                     panic!("Both sides have a human");
