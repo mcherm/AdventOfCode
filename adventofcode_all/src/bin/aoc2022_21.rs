@@ -18,7 +18,7 @@ mod parse {
         branch::alt,
         bytes::complete::tag,
         combinator::map,
-        character::complete::{line_ending, satisfy, i32 as nom_Num},
+        character::complete::{line_ending, satisfy, i64 as nom_Num},
         sequence::tuple,
         multi::{count, many0},
     };
@@ -35,7 +35,8 @@ mod parse {
     }
 
 
-    pub type Num = i32;
+    // FIXME: Verify that division is legal
+    pub type Num = i64;
 
     /// Stores 4-character (lowercase letter) names efficiently.
     #[derive(Copy, Clone, Eq, PartialEq, Hash)]
@@ -54,8 +55,8 @@ mod parse {
 
     #[derive(Debug, Copy, Clone)]
     pub struct Monkey {
-        name: Name,
-        job: Job,
+        pub name: Name,
+        pub job: Job,
     }
 
 
@@ -71,8 +72,17 @@ mod parse {
 
 
     impl Name {
+        /// Create a new Name from a string. Panics if the string isn't perfectly valid.
+        pub fn new(s: &str) -> Name {
+            let (extra, name) = Name::parse(s).unwrap();
+            if extra != "" {
+                panic!("Extra characters in name string");
+            }
+            name
+        }
+
         /// Construct Self or panic if given bad data.
-        pub fn new(chars: Vec<char>) -> Self {
+        pub fn from_vec(chars: Vec<char>) -> Self {
             assert!(chars.len() == 4);
             assert!(chars.iter().all(|c| c.is_ascii_lowercase()));
             let mut code = 0;
@@ -86,7 +96,7 @@ mod parse {
         fn parse(input: &str) -> IResult<&str, Self> {
             map(
                 count( satisfy(|c| c >= 'a' && c <= 'z'), 4 ),
-                Name::new
+                Name::from_vec
             )(input)
         }
 
@@ -114,6 +124,7 @@ mod parse {
             write!(f, "{}", self.to_chars().iter().join(""))
         }
     }
+
 
     impl Job {
         fn parse(input: &str) -> IResult<&str, Self> {
@@ -172,40 +183,97 @@ mod parse {
 // ======= Part 1 Compute =======
 
 mod compute {
-    // use crate::parse::{Num, Name, Job, Monkey};
+    use std::cell::RefCell;
+    use crate::parse::{Num, Name, Job, Monkey};
+    use std::collections::HashMap;
 
-    // #[derive(Debug)]
-    // pub struct MonkeyTroop {
-    //     monkeys: HashMap<Name, Monkey>,
-    // }
 
+    #[derive(Debug)]
+    struct LiveMonkey {
+        monkey: Monkey,
+        value: RefCell<Option<Num>>
+    }
+
+    /// A group of monkeys
+    #[derive(Debug)]
+    pub struct MonkeyTroop {
+        monkeys: HashMap<Name, LiveMonkey>,
+    }
+
+
+    impl LiveMonkey {
+        fn new(monkey: &Monkey) -> Self {
+            let monkey = monkey.clone();
+            let value = RefCell::new(None);
+            LiveMonkey{monkey, value}
+        }
+
+        /// Evaluate this monkey, given its troop.
+        fn eval(&self, troop: &MonkeyTroop) -> Num {
+            {
+                let cache = self.value.borrow();
+                if cache.is_some() {
+                    println!("used cache");
+                    return cache.unwrap()
+                }
+            }
+            let answer = match self.monkey.job {
+                Job::Const(x) => x,
+                Job::Plus(n1, n2) => troop.eval(n1) + troop.eval(n2),
+                Job::Minus(n1, n2) => troop.eval(n1) - troop.eval(n2),
+                Job::Times(n1, n2) => troop.eval(n1) * troop.eval(n2),
+                Job::Divide(n1, n2) => {
+                    let n1 = troop.eval(n1);
+                    let n2 = troop.eval(n2);
+                    assert!(n1 % n2 == 0); // make sure divisions are exact
+                    n1 / n2
+                },
+            };
+            self.value.replace(Some(answer));
+            answer
+        }
+    }
+
+    impl MonkeyTroop {
+        pub fn new(input: &Vec<Monkey>) -> Self {
+            let monkeys = input.iter().map(|m| (m.name, LiveMonkey::new(m))).collect();
+            Self{monkeys}
+        }
+
+        /// Evaluates the LiveMonkey with the given name.
+        pub fn eval(&self, name: Name) -> Num {
+            self.monkeys.get(&name).unwrap().eval(self)
+        }
+    }
 }
 
 
 // ======= main() =======
 
-use crate::parse::{input, Monkey};
+use crate::parse::{input, Monkey, Name};
+use crate::compute::MonkeyTroop;
 
 
 
-fn part_a(input: &Vec<Monkey>) {
+fn part_a(input: &Vec<Monkey>) -> Result<(), anyhow::Error> {
     println!("\nPart a:");
-    for monkey in input {
-        println!("{:?}", monkey);
-    }
+    let troop = MonkeyTroop::new(input);
+    println!("The root monkey yells out {}", troop.eval(Name::new("root")));
+    Ok(())
 }
 
 
-fn part_b(_input: &Vec<Monkey>) {
+fn part_b(_input: &Vec<Monkey>) -> Result<(), anyhow::Error> {
     println!("\nPart b:");
+    Ok(())
 }
 
 
 fn main() -> Result<(), anyhow::Error> {
     println!("Starting...");
     let data = input()?;
-    part_a(&data);
-    part_b(&data);
+    part_a(&data)?;
+    part_b(&data)?;
     Ok(())
 }
 
