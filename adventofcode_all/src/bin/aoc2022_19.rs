@@ -455,7 +455,7 @@ fn part_b(input: &Vec<Blueprint>) {
 fn main() -> Result<(), anyhow::Error> {
     println!("Starting...");
     let data = input()?;
-    // part_a(&data);
+    part_a(&data);
     part_b(&data);
     Ok(())
 }
