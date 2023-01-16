@@ -183,66 +183,37 @@ mod parse {
 // ======= Part 1 Compute =======
 
 mod compute {
-    use std::cell::RefCell;
     use crate::parse::{Num, Name, Job, Monkey};
     use std::collections::HashMap;
 
 
-    #[derive(Debug)]
-    struct LiveMonkey {
-        monkey: Monkey,
-        value: RefCell<Option<Num>>
-    }
-
     /// A group of monkeys
     #[derive(Debug)]
     pub struct MonkeyTroop {
-        monkeys: HashMap<Name, LiveMonkey>,
+        monkeys: HashMap<Name, Monkey>,
     }
 
-
-    impl LiveMonkey {
-        fn new(monkey: &Monkey) -> Self {
-            let monkey = monkey.clone();
-            let value = RefCell::new(None);
-            LiveMonkey{monkey, value}
-        }
-
-        /// Evaluate this monkey, given its troop.
-        fn eval(&self, troop: &MonkeyTroop) -> Num {
-            {
-                let cache = self.value.borrow();
-                if cache.is_some() {
-                    println!("used cache");
-                    return cache.unwrap()
-                }
-            }
-            let answer = match self.monkey.job {
-                Job::Const(x) => x,
-                Job::Plus(n1, n2) => troop.eval(n1) + troop.eval(n2),
-                Job::Minus(n1, n2) => troop.eval(n1) - troop.eval(n2),
-                Job::Times(n1, n2) => troop.eval(n1) * troop.eval(n2),
-                Job::Divide(n1, n2) => {
-                    let n1 = troop.eval(n1);
-                    let n2 = troop.eval(n2);
-                    assert!(n1 % n2 == 0); // make sure divisions are exact
-                    n1 / n2
-                },
-            };
-            self.value.replace(Some(answer));
-            answer
-        }
-    }
 
     impl MonkeyTroop {
         pub fn new(input: &Vec<Monkey>) -> Self {
-            let monkeys = input.iter().map(|m| (m.name, LiveMonkey::new(m))).collect();
+            let monkeys = input.iter().map(|m| (m.name, *m)).collect();
             Self{monkeys}
         }
 
-        /// Evaluates the LiveMonkey with the given name.
+        /// Evaluates the Monkey with the given name.
         pub fn eval(&self, name: Name) -> Num {
-            self.monkeys.get(&name).unwrap().eval(self)
+            match self.monkeys.get(&name).unwrap().job {
+                Job::Const(x) => x,
+                Job::Plus(n1, n2) => self.eval(n1) + self.eval(n2),
+                Job::Minus(n1, n2) => self.eval(n1) - self.eval(n2),
+                Job::Times(n1, n2) => self.eval(n1) * self.eval(n2),
+                Job::Divide(n1, n2) => {
+                    let n1 = self.eval(n1);
+                    let n2 = self.eval(n2);
+                    assert!(n1 % n2 == 0); // make sure divisions are exact
+                    n1 / n2
+                },
+            }
         }
     }
 }
