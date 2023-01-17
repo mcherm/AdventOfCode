@@ -66,8 +66,8 @@ mod parse {
 
     #[derive(Debug)]
     pub struct InputData {
-        map: MapOfBoard,
-        steps: Vec<Step>,
+        pub map: MapOfBoard,
+        pub steps: Vec<Step>,
     }
 
 
@@ -99,8 +99,18 @@ mod parse {
             MapOfBoard{width, height, data}
         }
 
+        /// Accessor for width
+        pub fn width(&self) -> usize {
+            self.width
+        }
+
+        /// Accessor for height
+        pub fn height(&self) -> usize {
+            self.height
+        }
+
         /// Retrieve from an (x,y) location
-        fn get_at(&self, x: usize, y: usize) -> GridElem {
+        pub fn get_at(&self, x: usize, y: usize) -> GridElem {
             assert!(x < self.width);
             assert!(y < self.height);
             self.data[y * self.width + x]
@@ -163,6 +173,172 @@ mod parse {
 
 // ======= Part 1 Compute =======
 
+mod compute {
+    use crate::parse::{GridElem, MapOfBoard, Step, TurnDir};
+
+
+    /// An (x,y) coordinate in the grid
+    #[derive(Debug, Copy, Clone)]
+    pub struct Coord(usize, usize);
+
+    /// A facing
+    #[derive(Debug, Copy, Clone)]
+    pub enum Facing {
+        Right = 0,
+        Down = 1,
+        Left = 2,
+        Up = 3,
+    }
+
+    /// The grid on the map
+    #[derive(Debug)]
+    pub struct Grid<'a> {
+        map: &'a MapOfBoard,
+        pos: Coord,
+        facing: Facing,
+    }
+
+
+
+
+    impl Coord {
+        /// Modifies this coord by 1 in the direction of Facing, wrapping according to
+        /// width and height.
+        fn increment(&self, facing: Facing, width: usize, height: usize) -> Coord {
+            let (mut x, mut y) = (self.0, self.1);
+            match facing {
+                Facing::Right => {
+                    x += 1;
+                    if x == width {
+                        x = 0;
+                    }
+                },
+                Facing::Down => {
+                    y += 1;
+                    if y == height {
+                        y = 0;
+                    }
+                },
+                Facing::Left => {
+                    if x == 0 {
+                        x = width - 1;
+                    } else {
+                        x -= 1;
+                    }
+                },
+                Facing::Up => {
+                    if y == 0 {
+                        y = height - 1;
+                    } else {
+                        y -= 1;
+                    }
+                },
+            }
+            Coord(x,y)
+        }
+    }
+
+    impl Facing {
+        /// Convert a u8 (wrapping around) to a Facing
+        fn from_u8(x: u8) -> Self {
+            match x % 4 {
+                0 => Facing::Right,
+                1 => Facing::Down,
+                2 => Facing::Left,
+                3 => Facing::Up,
+                _ => panic!("Mod failed us!"),
+            }
+        }
+
+        /// Return the facing you get by rotating this one step in turn_dir.
+        fn turn(&self, turn_dir: TurnDir) -> Facing {
+            match turn_dir {
+                TurnDir::Right => Facing::from_u8((*self as u8) + 1),
+                TurnDir::Left => Facing::from_u8((*self as u8) + 3),
+            }
+        }
+    }
+
+    /// Finds the correct starting place on a given map.
+    fn start_pos(map: &MapOfBoard) -> Coord {
+        let y = 0;
+        for x in 0..map.width() {
+            match map.get_at(x, y) {
+                GridElem::Open => return Coord(x,y),
+                _ => {},
+            }
+        }
+        panic!("No blanks in the first row.");
+    }
+
+    impl<'a> Grid<'a> {
+        /// Construct a new Grid.
+        pub fn new(map: &'a MapOfBoard) -> Self {
+            let pos = start_pos(map);
+            let facing = Facing::Right;
+            Grid{map, pos, facing}
+        }
+
+        /// Given a coordinate, returns the GridElem at that spot.
+        fn grid_elem(&self, coord: Coord) -> GridElem {
+            self.map.get_at(coord.0, coord.1)
+        }
+
+
+        /// This executes a single step (moving or turning).
+        fn apply(&mut self, step: Step) {
+            match step {
+                Step::Move(dist) => {
+                    let mut steps_taken = 0;
+                    let mut valid_pos = self.pos;
+                    let mut probe_pos = valid_pos;
+                    loop {
+                        probe_pos = probe_pos.increment(self.facing, self.map.width(), self.map.height());
+                        match self.grid_elem(probe_pos) {
+                            GridElem::Wall => {
+                                // we've been blocked; the move is over
+                                break;
+                            },
+                            GridElem::Open => {
+                                // OK, we've done one more step
+                                valid_pos = probe_pos;
+                                steps_taken += 1;
+                                if steps_taken == dist {
+                                    // We've done ALL the steps
+                                    break;
+                                }
+                            }
+                            GridElem::Blank => {
+                                // Need to keep going through the loop until we find open space or a wall
+                            }
+                        }
+                    }
+                    // We finished moving
+                    self.pos = valid_pos;
+                }
+                Step::Turn(turn_dir) => {
+                    self.facing = self.facing.turn(turn_dir);
+                }
+            }
+        }
+
+        /// This executes a list of steps.
+        pub fn apply_steps(&mut self, steps: &Vec<Step>) {
+            for step in steps {
+                self.apply(*step);
+            }
+        }
+
+        /// Calculate the password.
+        pub fn password(&self) -> usize {
+            let col = self.pos.0 + 1;
+            let row = self.pos.1 + 1;
+            let facing = self.facing as usize;
+            1000 * row + col * 4 + facing
+        }
+    }
+
+}
 
 
 // ======= Part 2 Compute =======
@@ -172,11 +348,14 @@ mod parse {
 // ======= main() =======
 
 use crate::parse::{input, InputData};
+use crate::compute::Grid;
 
 
 fn part_a(input: &InputData) {
     println!("\nPart a:");
-    println!("Input: {:?}", input);
+    let mut grid = Grid::new(&input.map);
+    grid.apply_steps(&input.steps);
+    println!("Password = {}", grid.password());
 }
 
 
