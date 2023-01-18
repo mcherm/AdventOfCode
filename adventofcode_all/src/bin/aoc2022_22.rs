@@ -179,7 +179,7 @@ mod compute {
 
     /// An (x,y) coordinate in the grid
     #[derive(Debug, Copy, Clone)]
-    pub struct Coord(usize, usize);
+    pub struct Coord(pub usize, pub usize);
 
     /// A facing
     #[derive(Debug, Copy, Clone)]
@@ -343,6 +343,151 @@ mod compute {
 
 // ======= Part 2 Compute =======
 
+/// A module for identifying an unfolded cube and dealing with it.
+mod cubefold {
+    use std::collections::HashSet;
+    use itertools::Itertools;
+    use crate::compute::{Facing, Coord};
+    use once_cell::sync::Lazy;
+
+
+    struct CubeLayout {
+        bounds: Coord,
+        filled: Vec<Vec<bool>>,
+    }
+
+
+
+    impl CubeLayout {
+        fn new(width: usize, height: usize, visual: &'static str) -> Self {
+            let bounds = Coord(width, height);
+            assert_eq!(
+                visual.chars().collect::<HashSet<char>>(),
+                HashSet::from(['0','1','2','3','4','5','.','\n'])
+            );
+            let filled = visual.lines()
+                .map(|line| {
+                    line.chars()
+                        .map(|c| match c {'0'..='5'=>true, '.'=>false, _=>panic!()})
+                        .collect()
+                })
+                .collect();
+            CubeLayout {bounds, filled }
+        }
+
+        /// This is given a rectangular grid of booleans, where true means "filled in" and
+        /// false means "blank". It returns true if that grid matches this Fold and false
+        /// if it doesn't.
+        fn matches(&self, fill: Vec<Vec<bool>>) -> bool {
+            assert!(fill.len() > 0);
+            assert!(fill[0].len() > 0);
+            assert!(fill.iter().map(|x| x.len()).all_equal());
+            self.filled == fill
+        }
+    }
+
+    static FOLDS_4_BY_3: Lazy<[CubeLayout; 10]> = Lazy::new(|| [
+        CubeLayout::new(3, 4, "\
+            0...\n\
+            1234\n\
+            5...\n\
+        "),
+        CubeLayout::new(3, 4, "\
+            .0..\n\
+            1234\n\
+            5...\n\
+        "),
+        CubeLayout::new(3, 4, "\
+            ..0.\n\
+            1234\n\
+            5...\n\
+        "),
+        CubeLayout::new(3, 4, "\
+            ...0\n\
+            1234\n\
+            5...\n\
+        "),
+        CubeLayout::new(3, 4, "\
+            .0..\n\
+            1234\n\
+            .5..\n\
+        "),
+        CubeLayout::new(3, 4, "\
+            ..0.\n\
+            1234\n\
+            .5..\n\
+        "),
+        CubeLayout::new(3, 4, "\
+            .0..\n\
+            .123\n\
+            45..\n\
+        "),
+        CubeLayout::new(3, 4, "\
+            ..0.\n\
+            .123\n\
+            45..\n\
+        "),
+        CubeLayout::new(3, 4, "\
+            ...0\n\
+            .123\n\
+            45..\n\
+        "),
+        CubeLayout::new(3, 4, "\
+            ..01\n\
+            .23.\n\
+            45..\n\
+        "),
+    ]);
+
+    static FOLDS_5_BY_2: Lazy<[CubeLayout; 1]> = Lazy::new(|| [
+        CubeLayout::new(3, 4, "\
+            ..012\n\
+            345..\n\
+        "),
+    ]);
+
+
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn test_indent_strings() {
+            assert_eq!(FOLDS_4_BY_3[0].filled, vec![
+                vec![true , false, false, false],
+                vec![true , true , true , true ],
+                vec![true , false, false, false],
+            ]);
+        }
+
+        #[test]
+        fn test_matches() {
+            let fold = &FOLDS_4_BY_3[0];
+            assert_eq!(true, fold.matches(vec![
+                vec![true , false, false, false],
+                vec![true , true , true , true ],
+                vec![true , false, false, false],
+            ]));
+            assert_eq!(false, fold.matches(vec![
+                vec![true , true, false, false],
+                vec![true , true , true , true ],
+                vec![true , false, false, false],
+            ]));
+            assert_eq!(false, fold.matches(vec![
+                vec![true , false, false, false],
+                vec![true , true , false, true ],
+                vec![true , false, false, false],
+            ]));
+            assert_eq!(false, fold.matches(vec![
+                vec![true , false, false, false],
+                vec![true , true , true , true ],
+                vec![true , false, false, false],
+                vec![false, false, false, false],
+            ]));
+        }
+    }
+}
 
 
 // ======= main() =======
