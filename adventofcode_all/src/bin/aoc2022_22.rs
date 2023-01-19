@@ -257,6 +257,15 @@ mod compute {
                 TurnDir::Left => Facing::from_u8((*self as u8) + 3),
             }
         }
+
+        pub fn parse(input: &str) -> nom::IResult<&str, Self> {
+            nom::branch::alt((
+                nom::combinator::value(Facing::Right, nom::bytes::complete::tag("R")),
+                nom::combinator::value(Facing::Down, nom::bytes::complete::tag("D")),
+                nom::combinator::value(Facing::Left, nom::bytes::complete::tag("L")),
+                nom::combinator::value(Facing::Up, nom::bytes::complete::tag("U")),
+            ))(input)
+        }
     }
 
     /// Finds the correct starting place on a given map.
@@ -345,36 +354,140 @@ mod compute {
 
 /// A module for identifying an unfolded cube and dealing with it.
 mod cubefold {
-    use std::collections::HashSet;
     use itertools::Itertools;
-    use crate::compute::Coord;
+    use nom::character::complete::line_ending;
+    use crate::compute::{Coord, Facing};
     use once_cell::sync::Lazy;
 
+
+
+    #[derive(Debug, Copy, Clone, Eq, PartialEq)]
+    enum FaceNum {F0, F1, F2, F3, F4, F5}
+
+    /// Defines the connection between two particular sides.
+    #[derive(Debug, Clone)]
+    struct Wrap {
+        edges: [(FaceNum, Facing); 2],
+        reverse: bool, // if true, then we map reverse the sense of the indexes
+    }
 
     #[derive(Debug, Clone)]
     struct CubeLayout {
         bounds: Coord,
-        filled: Vec<Vec<bool>>,
+        filled: Vec<Vec<Option<FaceNum>>>,
+        wraps: Vec<Wrap>, // NOTE: Will always have length 7
     }
 
 
 
-    impl CubeLayout {
-        fn from_visual(visual: &'static str) -> Self {
-            assert_eq!(
-                visual.chars().collect::<HashSet<char>>(),
-                HashSet::from(['0','1','2','3','4','5','.','\n'])
-            );
-            let filled: Vec<Vec<bool>> = visual.lines()
-                .map(|line| {
-                    line.chars()
-                        .map(|c| match c {'0'..='5'=>true, '.'=>false, _=>panic!()})
-                        .collect()
-                })
-                .collect();
-            let bounds = Coord(filled[0].len(), filled.len());
-            CubeLayout{bounds, filled}
+    impl FaceNum {
+        // FIXME: Remove if not used
+        #[allow(dead_code)]
+        fn from_num(n: u8) -> Self {
+            match n {
+                0 => FaceNum::F0,
+                1 => FaceNum::F1,
+                2 => FaceNum::F2,
+                3 => FaceNum::F3,
+                4 => FaceNum::F4,
+                5 => FaceNum::F5,
+                _ => panic!()
+            }
         }
+
+        // FIXME: Remove if not used
+        #[allow(dead_code)]
+        fn to_num(&self) -> u8 {
+            match self {
+                FaceNum::F0 => 0,
+                FaceNum::F1 => 1,
+                FaceNum::F2 => 2,
+                FaceNum::F3 => 3,
+                FaceNum::F4 => 4,
+                FaceNum::F5 => 5,
+            }
+        }
+
+        fn parse(input: &str) -> nom::IResult<&str, Self> {
+            nom::branch::alt((
+                nom::combinator::value(FaceNum::F0, nom::bytes::complete::tag("0")),
+                nom::combinator::value(FaceNum::F1, nom::bytes::complete::tag("1")),
+                nom::combinator::value(FaceNum::F2, nom::bytes::complete::tag("2")),
+                nom::combinator::value(FaceNum::F3, nom::bytes::complete::tag("3")),
+                nom::combinator::value(FaceNum::F4, nom::bytes::complete::tag("4")),
+                nom::combinator::value(FaceNum::F5, nom::bytes::complete::tag("5")),
+            ))(input)
+        }
+    }
+
+    impl Wrap {
+        /// Construct a Wrap from a string like "0R=2U"
+        fn parse(input: &str) -> nom::IResult<&str, Self> {
+            nom::combinator::map(
+                nom::sequence::tuple((
+                    FaceNum::parse,
+                    Facing::parse,
+                    nom::branch::alt((
+                        nom::bytes::complete::tag("=="),
+                        nom::bytes::complete::tag("=!"),
+                    )),
+                    FaceNum::parse,
+                    Facing::parse,
+                )),
+                |(fc1, fng1, rev, fc2, fng2)| Wrap{edges: [(fc1, fng1), (fc2, fng2)], reverse: rev == "=!"}
+            )(input)
+        }
+
+        /// Parses a list of Wraps.
+        fn parse_list(input: &str) -> nom::IResult<&str, Vec<Self>> {
+            nom::multi::separated_list1(
+                nom::bytes::complete::tag(" "),
+                Wrap::parse,
+            )(input)
+        }
+    }
+
+    impl CubeLayout {
+        /// Creates a CubeLayout from input. Since we intend to use this on hard-coded
+        /// inputs, it panics if there is any syntax issue.
+        fn from_visual(visual: &str, wrap_instructions: &str) -> Self {
+            assert_eq!(48, wrap_instructions.len());
+            if let Ok((leftover, filled)) = Self::parse_filled(visual) {
+                assert_eq!(leftover, "");
+                let bounds = Coord(filled[0].len(), filled.len());
+                if let Ok((leftover, wraps)) = Wrap::parse_list(wrap_instructions) {
+                    assert_eq!(wraps.len(), 7);
+                    assert_eq!(leftover, "");
+                    CubeLayout{bounds, filled, wraps}
+                } else {
+                    panic!("failed to parse wrap instructions")
+                }
+            } else {
+                panic!("the 'filled' visual input is invalid.");
+            }
+        }
+
+        /// Nom parser for the string that populates the "filled" field.
+        fn parse_filled(input: &str) -> nom::IResult<&str, Vec<Vec<Option<FaceNum>>>> {
+            nom::multi::many1( // multiple rows...
+                nom::sequence::terminated(
+                    nom::multi::many1( // each row has items
+                        nom::branch::alt(( // each item is either...
+                            nom::combinator::map( // (1) a FaceNum (treated as Some(face_num))
+                                FaceNum::parse,
+                                |face_num| Some(face_num)
+                            ),
+                            nom::combinator::value( // or (2) "." treated as None
+                                None,
+                                nom::bytes::complete::tag(".")
+                            ),
+                        )),
+                    ),
+                    line_ending // and each row is followed by a newline.
+                )
+            )(input)
+        }
+
 
         /// This is given a rectangular grid of booleans, where true means "filled in" and
         /// false means "blank". It returns true if that grid matches this Fold and false
@@ -383,7 +496,12 @@ mod cubefold {
             assert!(fill.len() > 0);
             assert!(fill[0].len() > 0);
             assert!(fill.iter().map(|x| x.len()).all_equal());
-            self.filled == fill
+            let is_filled_grid: Vec<Vec<bool>> = self.filled.iter()
+                .map(|row| {
+                    row.iter().map(|x| x.is_some()).collect()
+                })
+                .collect();
+            is_filled_grid == fill
         }
 
         /// Returns a CubeLayout which is this one but flipped in the x direction.
@@ -394,14 +512,16 @@ mod cubefold {
                     row.iter().rev().copied().collect()
                 })
                 .collect();
-            CubeLayout{bounds, filled}
+            let wraps = self.wraps.clone(); // FIXME: Must transform this
+            CubeLayout{bounds, filled, wraps}
         }
 
         /// Returns a CubeLayout which is this one but flipped in the y direction.
         fn flip_y(&self) -> Self {
             let bounds = self.bounds;
             let filled = self.filled.iter().rev().cloned().collect();
-            CubeLayout{bounds, filled}
+            let wraps = self.wraps.clone(); // FIXME: Must transform this
+            CubeLayout{bounds, filled, wraps}
         }
 
         /// Returns a CubeLayout which is this one but transposed (swapping x and y).
@@ -415,7 +535,8 @@ mod cubefold {
                 }
                 filled.push(row);
             }
-            CubeLayout{bounds, filled}
+            let wraps = self.wraps.clone(); // FIXME: Must transform this
+            CubeLayout{bounds, filled, wraps}
         }
 
     }
@@ -425,59 +546,60 @@ mod cubefold {
             0...\n\
             1234\n\
             5...\n\
-        "),
+        ", "0R==2U 0L==4U 0U=!3U 1L==4R 2D==5R 3D=!5D 4D=!5L"),
         CubeLayout::from_visual("\
             .0..\n\
             1234\n\
             5...\n\
-        "),
+        ", "0L=!1U 0U=!4U 0R=!3U 1L==4R 2D==5R 3D=!5D 4D=!5L"),
         CubeLayout::from_visual("\
             ..0.\n\
             1234\n\
             5...\n\
-        "),
+        ", "0U=!1U 0R=!4U 0L==2U 1L==4R 2D==5R 3D=!5D 4D=!5L"),
+        // rules:
         CubeLayout::from_visual("\
             ...0\n\
             1234\n\
             5...\n\
-        "),
+        ", "0R=!1U 0L==3U 0U=!2U 1L==4R 2D==5R 3D=!5D 4D=!5L"),
         CubeLayout::from_visual("\
             .0..\n\
             1234\n\
             .5..\n\
-        "),
+        ", "0L=!1U 0U=!4U 0R=!3U 1L==4R 1D=!5L 3D==5R 4D=!5D"),
         CubeLayout::from_visual("\
             ..0.\n\
             1234\n\
             .5..\n\
-        "),
+        ", "0U=!1U 0R=!4U 0L=!2U 1L==4R 1D=!5L 3D==5R 4D=!5D"),
         CubeLayout::from_visual("\
             .0..\n\
             .123\n\
             45..\n\
-        "),
+        ", "0R=!2U 0L=!4L 0U=!3U 1L==4U 2D==5R 3R==4D 3D=!5D"),
         CubeLayout::from_visual("\
             ..0.\n\
             .123\n\
             45..\n\
-        "),
+        ", "0R=!3U 0L==1U 0U==4L 1L==4U 2D==5R 3R==4D 3D=!5D"),
         CubeLayout::from_visual("\
             ...0\n\
             .123\n\
             45..\n\
-        "),
+        ", "0U=!1U 0R==4L 0L==2U 1L==4U 2D==5R 3R==4D 3D=!5D"),
         CubeLayout::from_visual("\
             ..01\n\
             .23.\n\
             45..\n\
-        "),
+        ", "0L==2U 0U==4L 1R==5D 1D==3R 1U==4D 2L==4U 3D==5R"),
     ]);
 
     static LAYOUTS_5_BY_2: Lazy<[CubeLayout; 1]> = Lazy::new(|| [
         CubeLayout::from_visual("\
             ..012\n\
             345..\n\
-        "),
+        ", "0L==4U 0U=!3U 1D==5R 1U==3L 2R==4D 2D=!5D 2U==3D"),
     ]);
 
     /// This contains every possible CubeLayout. Some of these are actually duplicates, because
@@ -496,13 +618,14 @@ mod cubefold {
     #[cfg(test)]
     mod tests {
         use super::*;
+        use FaceNum::*;
 
         #[test]
         fn test_indent_strings() {
             assert_eq!(LAYOUTS_4_BY_3[0].filled, vec![
-                vec![true , false, false, false],
-                vec![true , true , true , true ],
-                vec![true , false, false, false],
+                vec![Some(F0), None,     None,     None    ],
+                vec![Some(F1), Some(F2), Some(F3), Some(F4)],
+                vec![Some(F5), None,     None,     None    ],
             ]);
         }
 
