@@ -178,7 +178,7 @@ mod compute {
 
 
     /// An (x,y) coordinate in the grid
-    #[derive(Debug, Copy, Clone)]
+    #[derive(Debug, Copy, Clone, Eq, PartialEq)]
     pub struct Coord(pub usize, pub usize);
 
     /// A facing
@@ -347,10 +347,11 @@ mod compute {
 mod cubefold {
     use std::collections::HashSet;
     use itertools::Itertools;
-    use crate::compute::{Facing, Coord};
+    use crate::compute::Coord;
     use once_cell::sync::Lazy;
 
 
+    #[derive(Debug, Clone)]
     struct CubeLayout {
         bounds: Coord,
         filled: Vec<Vec<bool>>,
@@ -359,20 +360,20 @@ mod cubefold {
 
 
     impl CubeLayout {
-        fn new(width: usize, height: usize, visual: &'static str) -> Self {
-            let bounds = Coord(width, height);
+        fn from_visual(visual: &'static str) -> Self {
             assert_eq!(
                 visual.chars().collect::<HashSet<char>>(),
                 HashSet::from(['0','1','2','3','4','5','.','\n'])
             );
-            let filled = visual.lines()
+            let filled: Vec<Vec<bool>> = visual.lines()
                 .map(|line| {
                     line.chars()
                         .map(|c| match c {'0'..='5'=>true, '.'=>false, _=>panic!()})
                         .collect()
                 })
                 .collect();
-            CubeLayout {bounds, filled }
+            let bounds = Coord(filled[0].len(), filled.len());
+            CubeLayout{bounds, filled}
         }
 
         /// This is given a rectangular grid of booleans, where true means "filled in" and
@@ -384,68 +385,112 @@ mod cubefold {
             assert!(fill.iter().map(|x| x.len()).all_equal());
             self.filled == fill
         }
+
+        /// Returns a CubeLayout which is this one but flipped in the x direction.
+        fn flip_x(&self) -> Self {
+            let bounds = self.bounds;
+            let filled = self.filled.iter()
+                .map(|row| {
+                    row.iter().rev().copied().collect()
+                })
+                .collect();
+            CubeLayout{bounds, filled}
+        }
+
+        /// Returns a CubeLayout which is this one but flipped in the y direction.
+        fn flip_y(&self) -> Self {
+            let bounds = self.bounds;
+            let filled = self.filled.iter().rev().cloned().collect();
+            CubeLayout{bounds, filled}
+        }
+
+        /// Returns a CubeLayout which is this one but transposed (swapping x and y).
+        fn transpose(&self) -> Self {
+            let bounds = Coord(self.bounds.1, self.bounds.0);
+            let mut filled = Vec::new();
+            for y in 0..self.bounds.0 {
+                let mut row = Vec::new();
+                for x in 0..self.bounds.1 {
+                    row.push(self.filled[x][y]);
+                }
+                filled.push(row);
+            }
+            CubeLayout{bounds, filled}
+        }
+
     }
 
-    static FOLDS_4_BY_3: Lazy<[CubeLayout; 10]> = Lazy::new(|| [
-        CubeLayout::new(3, 4, "\
+    static LAYOUTS_4_BY_3: Lazy<[CubeLayout; 10]> = Lazy::new(|| [
+        CubeLayout::from_visual("\
             0...\n\
             1234\n\
             5...\n\
         "),
-        CubeLayout::new(3, 4, "\
+        CubeLayout::from_visual("\
             .0..\n\
             1234\n\
             5...\n\
         "),
-        CubeLayout::new(3, 4, "\
+        CubeLayout::from_visual("\
             ..0.\n\
             1234\n\
             5...\n\
         "),
-        CubeLayout::new(3, 4, "\
+        CubeLayout::from_visual("\
             ...0\n\
             1234\n\
             5...\n\
         "),
-        CubeLayout::new(3, 4, "\
+        CubeLayout::from_visual("\
             .0..\n\
             1234\n\
             .5..\n\
         "),
-        CubeLayout::new(3, 4, "\
+        CubeLayout::from_visual("\
             ..0.\n\
             1234\n\
             .5..\n\
         "),
-        CubeLayout::new(3, 4, "\
+        CubeLayout::from_visual("\
             .0..\n\
             .123\n\
             45..\n\
         "),
-        CubeLayout::new(3, 4, "\
+        CubeLayout::from_visual("\
             ..0.\n\
             .123\n\
             45..\n\
         "),
-        CubeLayout::new(3, 4, "\
+        CubeLayout::from_visual("\
             ...0\n\
             .123\n\
             45..\n\
         "),
-        CubeLayout::new(3, 4, "\
+        CubeLayout::from_visual("\
             ..01\n\
             .23.\n\
             45..\n\
         "),
     ]);
 
-    static FOLDS_5_BY_2: Lazy<[CubeLayout; 1]> = Lazy::new(|| [
-        CubeLayout::new(3, 4, "\
+    static LAYOUTS_5_BY_2: Lazy<[CubeLayout; 1]> = Lazy::new(|| [
+        CubeLayout::from_visual("\
             ..012\n\
             345..\n\
         "),
     ]);
 
+    /// This contains every possible CubeLayout. Some of these are actually duplicates, because
+    /// of symmetry. But that's OK, it still at least has every one of them.
+    static ALL_POSSIBLE_LAYOUTS: Lazy<Vec<CubeLayout>> = Lazy::new(|| {
+        let answer: Vec<CubeLayout> = LAYOUTS_4_BY_3.iter().chain(LAYOUTS_5_BY_2.iter())
+            .flat_map(|layout| [layout.clone(), layout.flip_x()].into_iter()) // flip each in the x direction
+            .flat_map(|layout| [layout.clone(), layout.flip_y()].into_iter()) // flip each in the y direction
+            .flat_map(|layout| [layout.clone(), layout.transpose()].into_iter()) // transpose each one
+            .collect();
+        assert_eq!(answer.len(), 88);
+        answer
+    });
 
 
     #[cfg(test)]
@@ -454,7 +499,7 @@ mod cubefold {
 
         #[test]
         fn test_indent_strings() {
-            assert_eq!(FOLDS_4_BY_3[0].filled, vec![
+            assert_eq!(LAYOUTS_4_BY_3[0].filled, vec![
                 vec![true , false, false, false],
                 vec![true , true , true , true ],
                 vec![true , false, false, false],
@@ -462,8 +507,9 @@ mod cubefold {
         }
 
         #[test]
-        fn test_matches() {
-            let fold = &FOLDS_4_BY_3[0];
+        fn test_fold_matches() {
+            let fold = &LAYOUTS_4_BY_3[0];
+            assert_eq!(Coord(4,3), fold.bounds);
             assert_eq!(true, fold.matches(vec![
                 vec![true , false, false, false],
                 vec![true , true , true , true ],
@@ -484,6 +530,46 @@ mod cubefold {
                 vec![true , true , true , true ],
                 vec![true , false, false, false],
                 vec![false, false, false, false],
+            ]));
+            let fold = &LAYOUTS_5_BY_2[0];
+            assert_eq!(Coord(5,2), fold.bounds);
+            assert_eq!(true, fold.matches(vec![
+                vec![false, false, true , true , true ],
+                vec![true , true , true , false, false],
+            ]));
+        }
+
+        #[test]
+        fn test_fold_flip_x() {
+            let fold = &LAYOUTS_4_BY_3[0].flip_x();
+            assert_eq!(Coord(4,3), fold.bounds);
+            assert_eq!(true, fold.matches(vec![
+                vec![false, false, false, true ],
+                vec![true , true , true , true ],
+                vec![false, false, false, true ],
+            ]));
+        }
+
+        #[test]
+        fn test_fold_flip_y() {
+            let fold = &LAYOUTS_4_BY_3[1].flip_y();
+            assert_eq!(Coord(4,3), fold.bounds);
+            assert_eq!(true, fold.matches(vec![
+                vec![true , false, false, false],
+                vec![true , true , true , true ],
+                vec![false, true, false, false ],
+            ]));
+        }
+
+        #[test]
+        fn test_fold_transpose() {
+            let fold = &LAYOUTS_4_BY_3[0].transpose();
+            assert_eq!(Coord(3,4), fold.bounds);
+            assert_eq!(true, fold.matches(vec![
+                vec![true , true , true ],
+                vec![false, true , false],
+                vec![false, true , false],
+                vec![false, true , false],
             ]));
         }
     }
