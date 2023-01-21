@@ -466,6 +466,18 @@ mod cubefold {
             };
             Edge(self.0, new_facing)
         }
+
+        /// If this Edge is in a Wrap in a CubeLayout which is transposed (x and y swapped),
+        /// this returns the new Edge to use. Because of the way we transpose, transposing
+        /// never requires a change in the reversal.
+        fn transpose(&self) -> Self {
+            match self {
+                Edge(face_num, Facing::Right) => Edge(*face_num, Facing::Down ),
+                Edge(face_num, Facing::Down)  => Edge(*face_num, Facing::Right),
+                Edge(face_num, Facing::Left)  => Edge(*face_num, Facing::Up   ),
+                Edge(face_num, Facing::Up)    => Edge(*face_num, Facing::Left ),
+            }
+        }
     }
 
     impl Wrap {
@@ -494,7 +506,7 @@ mod cubefold {
 
         /// Transforms this Wrap if we've flipped over the x axis.
         fn flip_x(&self) -> Self {
-            let edges = [self.edges[0].flip_x(), self.edges[1].flip_x()];
+            let edges = self.edges.map(|x| x.flip_x());
             let mut reverse = self.reverse;
             if !self.edges[0].1.goes_sideways() {
                 reverse = ! reverse;
@@ -507,7 +519,7 @@ mod cubefold {
 
         /// Transforms this Wrap if we've flipped over the y axis.
         fn flip_y(&self) -> Self {
-            let edges = [self.edges[0].flip_y(), self.edges[1].flip_y()];
+            let edges = self.edges.map(|x| x.flip_y());
             let mut reverse = self.reverse;
             if self.edges[0].1.goes_sideways() {
                 reverse = ! reverse;
@@ -518,6 +530,12 @@ mod cubefold {
             Wrap{edges, reverse}
         }
 
+        /// Transposes this Wrap, returning the new Wrap.
+        fn transpose(&self) -> Self {
+            let edges = self.edges.map(|x| x.transpose());
+            let reverse = self.reverse;
+            Wrap{edges, reverse}
+        }
     }
 
     impl PartialEq for Wrap {
@@ -627,11 +645,31 @@ mod cubefold {
                 }
                 filled.push(row);
             }
-            let wraps = self.wraps.clone(); // FIXME: Must transform this
+            let wraps = self.wraps.iter().map(|x| x.transpose()).collect();
             CubeLayout{bounds, filled, wraps}
         }
 
     }
+
+    impl PartialEq for CubeLayout {
+        fn eq(&self, other: &Self) -> bool {
+            if self.bounds != other.bounds {
+                false
+            } else if self.filled != other.filled {
+                false
+            } else {
+                // compare wraps without order mattering
+                if self.wraps.len() != other.wraps.len() {
+                    false
+                } else {
+                    // assuming here that all of self.wraps are unique
+                    self.wraps.iter().all(|wrap| other.wraps.contains(wrap))
+                }
+            }
+        }
+    }
+
+    impl Eq for CubeLayout {}
 
     static LAYOUTS_4_BY_3: Lazy<[CubeLayout; 10]> = Lazy::new(|| [
         CubeLayout::from_visual("\
@@ -649,7 +687,6 @@ mod cubefold {
             1234\n\
             5...\n\
         ", "0U=!1U 0R=!4U 0L==2U 1L==4R 2D==5R 3D=!5D 4D=!5L"),
-        // rules:
         CubeLayout::from_visual("\
             ...0\n\
             1234\n\
@@ -799,34 +836,34 @@ mod cubefold {
             for (i, layout) in ALL_POSSIBLE_LAYOUTS.iter().enumerate() {
                 if layout.matches(&target) {
                     assert_eq!(i, 22);
-                    assert_eq!(layout.bounds, Coord(4,3));
-                    assert_eq!(layout.filled, vec![
-                        vec![None,     None,     None,     Some(F5)],
-                        vec![Some(F4), Some(F3), Some(F2), Some(F1)],
-                        vec![None,     Some(F0), None,     None    ],
-                    ]);
-                    let expected_wraps = vec![
-                        Wrap { edges: [Edge(F0, Facing::Down),  Edge(F1, Facing::Down) ], reverse: true  },
-                        Wrap { edges: [Edge(F0, Facing::Left),  Edge(F4, Facing::Down) ], reverse: true  },
-                        Wrap { edges: [Edge(F0, Facing::Right), Edge(F2, Facing::Down) ], reverse: false },
-                        Wrap { edges: [Edge(F1, Facing::Right), Edge(F4, Facing::Left) ], reverse: false },
-                        Wrap { edges: [Edge(F2, Facing::Up),    Edge(F5, Facing::Left) ], reverse: false },
-                        Wrap { edges: [Edge(F3, Facing::Up),    Edge(F5, Facing::Up)   ], reverse: true  },
-                        Wrap { edges: [Edge(F4, Facing::Up),    Edge(F5, Facing::Right)], reverse: true  },
-                    ];
-                    // check that layout.wraps == expected_wraps, but WITHOUT caring about order
-                    assert_eq!(layout.wraps.len(), expected_wraps.len());
-                    for w in expected_wraps.iter() {
-                        assert!(layout.wraps.contains(w))
-                    }
+                    let expect_layout = CubeLayout::from_visual("\
+                        ...5\n\
+                        4321\n\
+                        .0..\n\
+                    ", "0D=!1D 0L=!4D 0R==2D 1R==4L 2U==5L 3U=!5U 4U=!5R");
+                    assert_eq!(*layout, expect_layout);
                     return;
                 }
             }
             panic!("didn't find a match");
         }
 
-        // FIXME: The test below is a GOOD one, but I've shown in a comment the output we get which is WRONG.
-        //    the problem is likely that I don't handle transpose properly yet.
+        #[test]
+        fn test_transpose() {
+            let layout = CubeLayout::from_visual("\
+                .0..\n\
+                .123\n\
+                45..\n\
+            ", "0R=!2U 0L=!4L 0U=!3U 1L==4U 2D==5R 3R==4D 3D=!5D");
+            let expect_layout = CubeLayout::from_visual("\
+                ..4\n\
+                015\n\
+                .2.\n\
+                .3.\n\
+            ", "0D=!2L 0U=!4U 0L=!3L 1U==4L 2R==5D 3D==4R 3R=!5R");
+            assert_eq!(layout.transpose(), expect_layout);
+        }
+
         #[test]
         fn test_find_in_list() {
             let target = vec![
@@ -838,25 +875,13 @@ mod cubefold {
             for (i, layout) in ALL_POSSIBLE_LAYOUTS.iter().enumerate() {
                 if layout.matches(&target) {
                     assert_eq!(49, i); // should find as the 49th pattern in the list
-                    println!("The matching layout is {:?}", layout);
-                    // The matching layout is CubeLayout {
-                    // bounds: Coord(3, 4),
-                    //     filled: [
-                    //         [None,     None,     Some(F4)],
-                    //         [Some(F0), Some(F1), Some(F5)],
-                    //         [None,     Some(F2), None    ],
-                    //         [None,     Some(F3), None    ]
-                    //     ],
-                    //     wraps: [
-                    //         Wrap { edges: [Edge(F0, Right), Edge(F2, Up)], reverse: true },
-                    //         Wrap { edges: [Edge(F0, Left), Edge(F4, Left)], reverse: true },
-                    //         Wrap { edges: [Edge(F0, Up), Edge(F3, Up)], reverse: true },
-                    //         Wrap { edges: [Edge(F1, Left), Edge(F4, Up)], reverse: false },
-                    //         Wrap { edges: [Edge(F2, Down), Edge(F5, Right)], reverse: false },
-                    //         Wrap { edges: [Edge(F3, Right), Edge(F4, Down)], reverse: false },
-                    //         Wrap { edges: [Edge(F3, Down), Edge(F5, Down)], reverse: true }
-                    //     ]
-                    // }
+                    let expect_layout = CubeLayout::from_visual("\
+                        ..4\n\
+                        015\n\
+                        .2.\n\
+                        .3.\n\
+                    ", "0D=!2L 0U=!4U 0L=!3L 1U==4L 2R==5D 3D==4R 3R=!5R");
+                    assert_eq!(*layout, expect_layout);
                     return;
                 }
             }
