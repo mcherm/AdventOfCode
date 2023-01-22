@@ -27,3 +27,4 @@ elsa = "1.7.0"
 im = "15.1.0" # immutable data structures
 strum = "0.24.1" # enums you can iterate, convert to strings, numbers, etc
 strum_macros = "0.24.3"
+gcd = "2.3.0"

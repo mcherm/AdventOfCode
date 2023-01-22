@@ -1,6 +1,6 @@
 
 extern crate anyhow;
-
+extern crate core;
 
 
 // ======= Constants =======
@@ -117,7 +117,7 @@ mod parse {
         }
 
         /// Parses the whole MapOfBoard
-        fn parse(input: &str) -> IResult<&str, Self> {
+        pub fn parse(input: &str) -> IResult<&str, Self> {
             map(
                 many1(
                     terminated(
@@ -362,12 +362,13 @@ mod compute {
 
 // ======= Part 2 Compute =======
 
-/// A module for identifying an unfolded cube and dealing with it.
-mod cubefold {
+/// A module for the CubeLayout object that represents a specific way a cube can be unfolded.
+mod cubelayout {
+    use std::collections::HashMap;
     use itertools::Itertools;
-    use nom::character::complete::line_ending;
-    use crate::compute::{Coord, Facing};
     use once_cell::sync::Lazy;
+    use gcd::Gcd;
+    use crate::compute::{Coord, Facing};
 
 
 
@@ -386,12 +387,20 @@ mod cubefold {
     }
 
     #[derive(Debug, Clone)]
-    struct CubeLayout {
+    pub struct CubeLayout {
         bounds: Coord,
         filled: Vec<Vec<Option<FaceNum>>>,
         wraps: Vec<Wrap>, // NOTE: Will always have length 7
     }
 
+    /// These are the aspect ratios that unfolded cubes can take on. (Names represent x by y.)
+    #[derive(Debug, Eq, PartialEq, Hash)]
+    pub enum Ratio {
+        Ratio3By4,
+        Ratio4By3,
+        Ratio2By5,
+        Ratio5By2,
+    }
 
 
     impl FaceNum {
@@ -560,7 +569,7 @@ mod cubefold {
     impl CubeLayout {
         /// Creates a CubeLayout from input. Since we intend to use this on hard-coded
         /// inputs, it panics if there is any syntax issue.
-        fn from_visual(visual: &str, wrap_instructions: &str) -> Self {
+        pub fn from_visual(visual: &str, wrap_instructions: &str) -> Self {
             assert_eq!(48, wrap_instructions.len());
             if let Ok((leftover, filled)) = Self::parse_filled(visual) {
                 assert_eq!(leftover, "");
@@ -593,7 +602,7 @@ mod cubefold {
                             ),
                         )),
                     ),
-                    line_ending // and each row is followed by a newline.
+                    nom::character::complete::line_ending // and each row is followed by a newline.
                 )
             )(input)
         }
@@ -602,7 +611,7 @@ mod cubefold {
         /// This is given a rectangular grid of booleans, where true means "filled in" and
         /// false means "blank". It returns true if that grid matches this Fold and false
         /// if it doesn't.
-        fn matches(&self, fill: &Vec<Vec<bool>>) -> bool {
+       pub fn matches(&self, fill: &Vec<Vec<bool>>) -> bool {
             assert!(fill.len() > 0);
             assert!(fill[0].len() > 0);
             assert!(fill.iter().map(|x| x.len()).all_equal());
@@ -671,6 +680,36 @@ mod cubefold {
 
     impl Eq for CubeLayout {}
 
+    impl Ratio {
+        /// Returns the (x,y) size of this Ratio.
+        pub fn extent(&self) -> Coord {
+            match self {
+                Ratio::Ratio3By4 => Coord(3,4),
+                Ratio::Ratio4By3 => Coord(4,3),
+                Ratio::Ratio2By5 => Coord(2,5),
+                Ratio::Ratio5By2 => Coord(5,2),
+            }
+        }
+
+        /// Given an (x,y) size, this returns the greatest common divisor for the numbers.
+        pub fn find_divisor(coord: Coord) -> usize {
+            coord.0.gcd(coord.1)
+        }
+
+        /// Returns the SupportedRatio for a given (x,y) size (not necessarily reduced to
+        /// least common terms), or returns None is this does not reduce to a supported ratio.
+        pub fn find_ratio(coord: Coord) -> Option<Ratio> {
+            let divisor = Ratio::find_divisor(coord);
+            match (coord.0 / divisor, coord.1 / divisor) {
+                (3,4) => Some(Ratio::Ratio3By4),
+                (4,3) => Some(Ratio::Ratio4By3),
+                (2,5) => Some(Ratio::Ratio2By5),
+                (5,2) => Some(Ratio::Ratio5By2),
+                _ => None
+            }
+        }
+    }
+
     static LAYOUTS_4_BY_3: Lazy<[CubeLayout; 10]> = Lazy::new(|| [
         CubeLayout::from_visual("\
             0...\n\
@@ -731,16 +770,22 @@ mod cubefold {
         ", "0L==4U 0U=!3U 1D==5R 1U==3L 2R==4D 2D=!5D 2U==3D"),
     ]);
 
-    /// This contains every possible CubeLayout. Some of these are actually duplicates, because
-    /// of symmetry. But that's OK, it still at least has every one of them.
-    static ALL_POSSIBLE_LAYOUTS: Lazy<Vec<CubeLayout>> = Lazy::new(|| {
-        let answer: Vec<CubeLayout> = LAYOUTS_4_BY_3.iter().chain(LAYOUTS_5_BY_2.iter())
-            .flat_map(|layout| [layout.clone(), layout.flip_x()].into_iter()) // flip each in the x direction
-            .flat_map(|layout| [layout.clone(), layout.flip_y()].into_iter()) // flip each in the y direction
-            .flat_map(|layout| [layout.clone(), layout.transpose()].into_iter()) // transpose each one
-            .collect();
-        assert_eq!(answer.len(), 88);
-        answer
+    pub static ALL_LAYOUTS: Lazy<HashMap<Ratio, Vec<CubeLayout>>> = Lazy::new(|| {
+        fn all_flips_of<T>(layouts: T) -> Vec<CubeLayout>
+            where T: IntoIterator<Item=CubeLayout>
+        {
+            layouts.into_iter()
+                .flat_map(|layout| [layout.clone(), layout.flip_x()].into_iter()) // flip each in the x direction
+                .flat_map(|layout| [layout.clone(), layout.flip_y()].into_iter()) // flip each in the y direction
+                .collect()
+        }
+
+        HashMap::from([
+            (Ratio::Ratio4By3, all_flips_of(LAYOUTS_4_BY_3.iter().cloned())),
+            (Ratio::Ratio3By4, all_flips_of(LAYOUTS_4_BY_3.iter().map(|x| x.transpose()))),
+            (Ratio::Ratio5By2, all_flips_of(LAYOUTS_5_BY_2.iter().cloned())),
+            (Ratio::Ratio2By5, all_flips_of(LAYOUTS_5_BY_2.iter().map(|x| x.transpose()))),
+        ])
     });
 
 
@@ -833,9 +878,9 @@ mod cubefold {
                 vec![true , true , true , true ],
                 vec![false, true , false, false],
             ];
-            for (i, layout) in ALL_POSSIBLE_LAYOUTS.iter().enumerate() {
+            for (i, layout) in ALL_LAYOUTS.get(&Ratio::Ratio4By3).unwrap().iter().enumerate() {
                 if layout.matches(&target) {
-                    assert_eq!(i, 22);
+                    assert_eq!(i, 11); // should be the 11th pattern in the list
                     let expect_layout = CubeLayout::from_visual("\
                         ...5\n\
                         4321\n\
@@ -872,9 +917,9 @@ mod cubefold {
                 vec![false, true , false],
                 vec![false, true , false],
             ];
-            for (i, layout) in ALL_POSSIBLE_LAYOUTS.iter().enumerate() {
+            for (i, layout) in ALL_LAYOUTS.get(&Ratio::Ratio3By4).unwrap().iter().enumerate() {
                 if layout.matches(&target) {
-                    assert_eq!(49, i); // should find as the 49th pattern in the list
+                    assert_eq!(24, i); // should find as the 24th pattern in the list
                     let expect_layout = CubeLayout::from_visual("\
                         ..4\n\
                         015\n\
@@ -891,10 +936,118 @@ mod cubefold {
 }
 
 
+
+/// A module for taking a Grid and supporting movement on it according to a CubeLayout.
+mod cubewrap {
+    use anyhow::anyhow;
+    use crate::compute::Coord;
+    use crate::parse::{GridElem, MapOfBoard};
+    use crate::cubelayout::{CubeLayout, Ratio, ALL_LAYOUTS};
+
+
+    /// Given a MapOfBoard, this finds the CubeLayout that matches it, or returns
+    /// an Error.
+    pub fn find_layout(map_of_board: &MapOfBoard) -> Result<&'static CubeLayout, anyhow::Error> {
+        let dims = Coord(map_of_board.width(), map_of_board.height());
+        let ratio: Ratio = Ratio::find_ratio(dims).ok_or(anyhow!("Not a valid ratio"))?; // error if we don't find one
+        let divisor = Ratio::find_divisor(dims);
+        let extent = ratio.extent();
+        let fills: Vec<Vec<bool>> = (0..extent.1).map(|y| {
+            (0..extent.0).map(|x| {
+                !matches!(map_of_board.get_at(divisor * x, divisor * y), GridElem::Blank)
+            }).collect()
+        }).collect();
+        for layout in ALL_LAYOUTS.get(&ratio).unwrap() {
+            if layout.matches(&fills) {
+                return Ok(layout)
+            }
+        }
+        Err(anyhow!("Did not match any layout"))
+    }
+
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use itertools::Itertools;
+
+
+        /// Takes as input a literal from the code where the start of each line is marked with
+        /// "|" and the end of each line is marked with "\n\", and cleans it up. Needed because
+        /// we want to write indented literal blocks where leading space is significant. Is
+        /// intended to be used on source code literals, so it panics if it encounters
+        /// invalid stuff.
+        fn read_block_indent(input: &str) -> String {
+            input.lines()
+                .map(|x| x.trim_start().strip_prefix("|").unwrap())
+                .join("\n")
+        }
+
+
+        #[test]
+        fn test_read_block_indent() {
+            let literal = "\
+                |ABC
+                |DEF
+                |   GHI
+                |
+                |JKL
+                |";
+            let expect = "ABC\nDEF\n   GHI\n\nJKL\n";
+            assert_eq!(read_block_indent(literal), expect);
+        }
+
+        #[test]
+        fn test_error_for_bad_map() {
+            let map_data = read_block_indent("\
+                |    .#
+                |    .#
+                |.#...#
+                |..#...
+                |    .#..
+                |");
+            let (rest, map_of_board) = MapOfBoard::parse(&map_data).unwrap();
+            assert_eq!(rest, "");
+            let layout_or_err = find_layout(&map_of_board);
+            assert!(matches!(layout_or_err, Err(_)));
+        }
+
+        #[test]
+        fn test_with_sample_map() -> Result<(), anyhow::Error>{
+            let map_data = read_block_indent("\
+                |        ...#
+                |        .#..
+                |        #...
+                |        ....
+                |...#.......#
+                |........#...
+                |..#....#....
+                |..........#.
+                |        ...#....
+                |        .....#..
+                |        .#......
+                |        ......#.
+                |");
+            let (rest, map_of_board) = MapOfBoard::parse(&map_data).unwrap();
+            assert_eq!(rest, "");
+            let layout = find_layout(&map_of_board)?;
+            let expect_layout = CubeLayout::from_visual("\
+                ..0.\n\
+                321.\n\
+                ..54\n\
+            ", "0L==2U 0R=!4R 0U=!3U 1R=!4U 2D=!5L 3L=!4D 3D=!5D");
+            assert_eq!(*layout, expect_layout);
+            Ok(())
+        }
+
+    }
+}
+
 // ======= main() =======
 
 use crate::parse::{input, InputData};
 use crate::compute::Grid;
+use crate::cubewrap::find_layout;
 
 
 fn part_a(input: &InputData) {
@@ -905,8 +1058,11 @@ fn part_a(input: &InputData) {
 }
 
 
-fn part_b(_input: &InputData) {
+fn part_b(input: &InputData) -> Result<(), anyhow::Error> {
     println!("\nPart b:");
+    let layout = find_layout(&input.map)?;
+    println!("layout: {:?}", layout);
+    Ok(())
 }
 
 
@@ -914,7 +1070,7 @@ fn main() -> Result<(), anyhow::Error> {
     println!("Starting...");
     let data = input()?;
     part_a(&data);
-    part_b(&data);
+    part_b(&data)?;
     Ok(())
 }
 
