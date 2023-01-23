@@ -174,6 +174,7 @@ mod parse {
 // ======= Part 1 Compute =======
 
 mod compute {
+    use std::fmt::Debug;
     use crate::parse::{GridElem, MapOfBoard, Step, TurnDir};
 
 
@@ -190,12 +191,24 @@ mod compute {
         Up = 3,
     }
 
+    /// This implements the TemplateMethod pattern for a Grid -- it consists of the code
+    /// to run when following the instructions takes one onto a blank location.
+    pub trait WrapAroundBehavior: Debug {
+        /// This is called when we are on a specific start_pos and are attempting
+        /// to take a single-space move (not a whole "step") in the direction of
+        /// facing. It will ONLY be called if attempting to do so leads to a
+        /// location that is off the map. The method should return a location
+        /// which IS on the map.
+        fn wrap_around(&self, start_pos: Coord, facing: Facing) -> Coord;
+    }
+
     /// The grid on the map
     #[derive(Debug)]
     pub struct Grid<'a> {
         map: &'a MapOfBoard,
         pos: Coord,
         facing: Facing,
+        wrap_around_behavior: &'a dyn WrapAroundBehavior,
     }
 
 
@@ -239,7 +252,7 @@ mod compute {
     }
 
     impl Facing {
-        /// Every facing is either sideways (left or right) or non-sidewise (up or down).
+        /// Every facing is either sideways (left or right) or non-sideways (up or down).
         pub fn goes_sideways(&self) -> bool {
             match self {
                 Facing::Right => true,
@@ -290,12 +303,35 @@ mod compute {
         panic!("No blanks in the first row.");
     }
 
+
+    #[derive(Debug)]
+    pub struct KeepGoingBehavior<'a> {
+        pub map: &'a MapOfBoard,
+    }
+
+    impl<'a> WrapAroundBehavior for KeepGoingBehavior<'a> {
+        /// Our strategy will be to keep going in the direction of Facing, wrapping
+        /// around at the outer bounds of the Map until we find open space or a wall
+        /// (anything that isn't Blank).
+        fn wrap_around(&self, start_pos: Coord, facing: Facing) -> Coord {
+            let mut pos = start_pos;
+            // Design note: the loop is guaranteed to exit because we must eventually
+            //   wrap around back to start_pos, and we know THAT at least is non-blank.
+            loop {
+                pos = pos.increment(facing, self.map.width(), self.map.height());
+                if ! matches!(self.map.get_at(pos.0, pos.1), GridElem::Blank) {
+                    return pos;
+                }
+            }
+        }
+    }
+
     impl<'a> Grid<'a> {
         /// Construct a new Grid.
-        pub fn new(map: &'a MapOfBoard) -> Self {
+        pub fn new(map: &'a MapOfBoard, wrap_around_behavior: &'a dyn WrapAroundBehavior) -> Self {
             let pos = start_pos(map);
             let facing = Facing::Right;
-            Grid{map, pos, facing}
+            Grid{map, pos, facing, wrap_around_behavior}
         }
 
         /// Given a coordinate, returns the GridElem at that spot.
@@ -314,6 +350,12 @@ mod compute {
                     loop {
                         probe_pos = probe_pos.increment(self.facing, self.map.width(), self.map.height());
                         match self.grid_elem(probe_pos) {
+                            GridElem::Blank => {
+                                probe_pos = self.wrap_around_behavior.wrap_around(valid_pos, self.facing);
+                            }
+                            _ => {} // otherwise, do nothing
+                        }
+                        match self.grid_elem(probe_pos) {
                             GridElem::Wall => {
                                 // we've been blocked; the move is over
                                 break;
@@ -328,7 +370,7 @@ mod compute {
                                 }
                             }
                             GridElem::Blank => {
-                                // Need to keep going through the loop until we find open space or a wall
+                                panic!("The wrap_around_behavior should have ensured this was NOT blank.");
                             }
                         }
                     }
@@ -1046,13 +1088,14 @@ mod cubewrap {
 // ======= main() =======
 
 use crate::parse::{input, InputData};
-use crate::compute::Grid;
+use crate::compute::{Grid, KeepGoingBehavior};
 use crate::cubewrap::find_layout;
 
 
 fn part_a(input: &InputData) {
     println!("\nPart a:");
-    let mut grid = Grid::new(&input.map);
+    let wrap_around_behavior = KeepGoingBehavior{map: &input.map};
+    let mut grid = Grid::new(&input.map, &wrap_around_behavior);
     grid.apply_steps(&input.steps);
     println!("Password = {}", grid.password());
 }
