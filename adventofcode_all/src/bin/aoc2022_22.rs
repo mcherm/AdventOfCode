@@ -198,8 +198,8 @@ mod compute {
         /// to take a single-space move (not a whole "step") in the direction of
         /// facing. It will ONLY be called if attempting to do so leads to a
         /// location that is off the map. The method should return a location
-        /// which IS on the map.
-        fn wrap_around(&self, start_pos: Coord, facing: Facing) -> Coord;
+        /// which IS on the map and the new facing.
+        fn wrap_around(&self, start_pos: Coord, facing: Facing) -> (Coord, Facing);
     }
 
     /// The grid on the map
@@ -215,39 +215,52 @@ mod compute {
 
 
     impl Coord {
-        /// Modifies this coord by 1 in the direction of Facing, wrapping according to
-        /// width and height.
-        fn increment(&self, facing: Facing, width: usize, height: usize) -> Coord {
+        /// Modifies this coord by 1 in the direction of Facing, returning the new position
+        /// if it is within (0..width, 0..height) and None if is outside that.
+        fn increment(&self, facing: Facing, width: usize, height: usize) -> Option<Coord> {
             let (mut x, mut y) = (self.0, self.1);
             match facing {
                 Facing::Right => {
                     x += 1;
                     if x == width {
-                        x = 0;
+                        return None;
                     }
                 },
                 Facing::Down => {
                     y += 1;
                     if y == height {
-                        y = 0;
+                        return None;
                     }
                 },
                 Facing::Left => {
                     if x == 0 {
-                        x = width - 1;
+                        return None;
                     } else {
                         x -= 1;
                     }
                 },
                 Facing::Up => {
                     if y == 0 {
-                        y = height - 1;
+                        return None;
                     } else {
                         y -= 1;
                     }
                 },
             }
-            Coord(x,y)
+            Some(Coord(x,y))
+        }
+
+        /// This performs something equivalent to the div_mod operation -- it returns
+        /// two Coords, the first one giving the position of the original in a grid
+        /// of size divisor and the second giving the position within a cell of that
+        /// grid. All coordinates measured from zero.
+        pub fn div_mod(&self, divisor: usize) -> (Coord, Coord) {
+            (Coord(self.0 / divisor, self.1 / divisor), Coord(self.0 % divisor, self.1 % divisor))
+        }
+
+        /// Given a divisor and the output of a div_mod(), this returns the original coordinate.
+        pub fn from_div_mod(divisor: usize, div: Coord, mod_: Coord) -> Self {
+            Coord(div.0 * divisor + mod_.0, div.1 * divisor + mod_.1)
         }
     }
 
@@ -281,6 +294,11 @@ mod compute {
             }
         }
 
+        /// Points in the opposite direction
+        pub fn invert(&self) -> Facing {
+            Facing::from_u8((*self as u8) + 2)
+        }
+
         pub fn parse(input: &str) -> nom::IResult<&str, Self> {
             nom::branch::alt((
                 nom::combinator::value(Facing::Right, nom::bytes::complete::tag("R")),
@@ -306,21 +324,40 @@ mod compute {
 
     #[derive(Debug)]
     pub struct KeepGoingBehavior<'a> {
-        pub map: &'a MapOfBoard,
+        map: &'a MapOfBoard,
+    }
+
+
+    impl<'a> KeepGoingBehavior<'a> {
+        pub fn new(map: &'a MapOfBoard) -> Self {
+            KeepGoingBehavior{map}
+        }
     }
 
     impl<'a> WrapAroundBehavior for KeepGoingBehavior<'a> {
         /// Our strategy will be to keep going in the direction of Facing, wrapping
         /// around at the outer bounds of the Map until we find open space or a wall
         /// (anything that isn't Blank).
-        fn wrap_around(&self, start_pos: Coord, facing: Facing) -> Coord {
+        fn wrap_around(&self, start_pos: Coord, facing: Facing) -> (Coord, Facing) {
             let mut pos = start_pos;
             // Design note: the loop is guaranteed to exit because we must eventually
             //   wrap around back to start_pos, and we know THAT at least is non-blank.
             loop {
-                pos = pos.increment(facing, self.map.width(), self.map.height());
+                let width = self.map.width();
+                let height = self.map.height();
+                match pos.increment(facing, width, height) {
+                    Some(p) => pos = p,
+                    None => {
+                        pos = match facing {
+                            Facing::Right => Coord(0, pos.1),
+                            Facing::Down => Coord(pos.0, 0),
+                            Facing::Left => Coord(width - 1, pos.1),
+                            Facing::Up => Coord(pos.0, height - 1),
+                        }
+                    }
+                }
                 if ! matches!(self.map.get_at(pos.0, pos.1), GridElem::Blank) {
-                    return pos;
+                    return (pos, facing);
                 }
             }
         }
@@ -345,16 +382,22 @@ mod compute {
             match step {
                 Step::Move(dist) => {
                     let mut steps_taken = 0;
-                    let mut valid_pos = self.pos;
-                    let mut probe_pos = valid_pos;
+                    let mut valid_pos = self.pos; // most recent position that was Open
+                    let mut valid_facing = self.facing; // most recent facing
+                    let mut probe_pos = valid_pos; // position we are now probing
+                    let mut probe_facing = valid_facing; // facing we are now probing
                     loop {
-                        probe_pos = probe_pos.increment(self.facing, self.map.width(), self.map.height());
-                        match self.grid_elem(probe_pos) {
-                            GridElem::Blank => {
-                                probe_pos = self.wrap_around_behavior.wrap_around(valid_pos, self.facing);
-                            }
-                            _ => {} // otherwise, do nothing
+                        // try incrementing
+                        let probe_pos_opt = probe_pos.increment(valid_facing, self.map.width(), self.map.height());
+
+                        // see if we wrapped, either way update probe_pos
+                        if probe_pos_opt.is_none() || matches!(self.grid_elem(probe_pos_opt.unwrap()), GridElem::Blank) {
+                            (probe_pos, probe_facing) = self.wrap_around_behavior.wrap_around(valid_pos, self.facing);
+                        } else {
+                            probe_pos = probe_pos_opt.unwrap()
                         }
+
+                        // find out what's at that probe_pos
                         match self.grid_elem(probe_pos) {
                             GridElem::Wall => {
                                 // we've been blocked; the move is over
@@ -363,6 +406,7 @@ mod compute {
                             GridElem::Open => {
                                 // OK, we've done one more step
                                 valid_pos = probe_pos;
+                                valid_facing = probe_facing;
                                 steps_taken += 1;
                                 if steps_taken == dist {
                                     // We've done ALL the steps
@@ -376,6 +420,7 @@ mod compute {
                     }
                     // We finished moving
                     self.pos = valid_pos;
+                    self.facing = valid_facing;
                 }
                 Step::Turn(turn_dir) => {
                     self.facing = self.facing.turn(turn_dir);
@@ -446,33 +491,6 @@ mod cubelayout {
 
 
     impl FaceNum {
-        // FIXME: Remove if not used
-        #[allow(dead_code)]
-        fn from_num(n: u8) -> Self {
-            match n {
-                0 => FaceNum::F0,
-                1 => FaceNum::F1,
-                2 => FaceNum::F2,
-                3 => FaceNum::F3,
-                4 => FaceNum::F4,
-                5 => FaceNum::F5,
-                _ => panic!()
-            }
-        }
-
-        // FIXME: Remove if not used
-        #[allow(dead_code)]
-        fn to_num(&self) -> u8 {
-            match self {
-                FaceNum::F0 => 0,
-                FaceNum::F1 => 1,
-                FaceNum::F2 => 2,
-                FaceNum::F3 => 3,
-                FaceNum::F4 => 4,
-                FaceNum::F5 => 5,
-            }
-        }
-
         fn parse(input: &str) -> nom::IResult<&str, Self> {
             nom::branch::alt((
                 nom::combinator::value(FaceNum::F0, nom::bytes::complete::tag("0")),
@@ -653,7 +671,7 @@ mod cubelayout {
         /// This is given a rectangular grid of booleans, where true means "filled in" and
         /// false means "blank". It returns true if that grid matches this Fold and false
         /// if it doesn't.
-       pub fn matches(&self, fill: &Vec<Vec<bool>>) -> bool {
+        pub fn matches(&self, fill: &Vec<Vec<bool>>) -> bool {
             assert!(fill.len() > 0);
             assert!(fill[0].len() > 0);
             assert!(fill.iter().map(|x| x.len()).all_equal());
@@ -700,6 +718,83 @@ mod cubelayout {
             CubeLayout{bounds, filled, wraps}
         }
 
+        /// This is given a Coord (an (x,y) pair) where the numbers count from zero
+        /// and have 1 for each face. It returns the face number that represents
+        /// (or panics if it isn't a valid face).
+        fn coord_to_face(&self, coord: Coord) -> FaceNum {
+            self.filled[coord.1][coord.0].unwrap()
+        }
+
+        /// This is given a FaceNum and it returns a Coord (an (x,y) pair) where the numbers
+        /// count from zero and have 1 for each face.
+        fn face_to_coord(&self, face_num: FaceNum) -> Coord {
+            for y in 0..self.bounds.1 {
+                for x in 0..self.bounds.0 {
+                    if self.filled[y][x] == Some(face_num) {
+                        return Coord(x,y)
+                    }
+                }
+            }
+            panic!("The face {:?} wasn't in the mapping.", face_num);
+        }
+
+
+
+        /// This is given an edge we are exiting over and returns the edge we are entering
+        /// on, along with a bool telling whether the direction is reversed. It panics if
+        /// the edge it is given isn't a valid one.
+        fn matching_edge(&self, from_edge: Edge) -> (Edge, bool) {
+            for wrap in self.wraps.iter() {
+                if wrap.edges[0] == from_edge {
+                    return (wrap.edges[1], wrap.reverse)
+                }
+                if wrap.edges[1] == from_edge {
+                    return (wrap.edges[0], wrap.reverse)
+                }
+            }
+            panic!("No such edge found");
+        }
+
+        // FIXME: Document this.
+        // FIXME: There are steps here that break down and reassemble. I should break them out. Make it work first.
+        pub fn wrap_around(&self, divisor: usize, start_pos: Coord, facing: Facing) -> (Coord, Facing) {
+            println!("    wrapping around divisor={}, start {:?}, face {:?}", divisor, start_pos, facing); // FIXME: Remove
+            let (pos_of_face, pos_in_face) = start_pos.div_mod(divisor);
+            let face_num = self.coord_to_face(pos_of_face);
+            let dist_along_face = match facing {
+                Facing::Right => {
+                    assert_eq!(pos_in_face.0, divisor - 1);
+                    pos_in_face.1
+                },
+                Facing::Down => {
+                    assert_eq!(pos_in_face.1, divisor - 1);
+                    pos_in_face.0
+                },
+                Facing::Left => {
+                    assert_eq!(pos_in_face.0, 0);
+                    pos_in_face.1
+                },
+                Facing::Up => {
+                    assert_eq!(pos_in_face.1, 0);
+                    pos_in_face.0
+                },
+            };
+            let (Edge(new_face_num, new_edge_facing), reverse) = self.matching_edge(Edge(face_num, facing));
+            let new_facing = new_edge_facing.invert();
+            let new_dist_along_face = match reverse {
+                true => divisor - dist_along_face - 1,
+                false => dist_along_face
+            };
+            let new_pos_in_face = match new_facing {
+                Facing::Right => Coord(0, new_dist_along_face),
+                Facing::Down => Coord(new_dist_along_face, 0),
+                Facing::Left => Coord(divisor - 1, new_dist_along_face),
+                Facing::Up => Coord(new_dist_along_face, divisor - 1),
+            };
+            let new_pos_of_face = self.face_to_coord(new_face_num);
+            let new_pos = Coord::from_div_mod(divisor, new_pos_of_face, new_pos_in_face);
+            (new_pos, new_facing)
+        }
     }
 
     impl PartialEq for CubeLayout {
@@ -982,14 +1077,30 @@ mod cubelayout {
 /// A module for taking a Grid and supporting movement on it according to a CubeLayout.
 mod cubewrap {
     use anyhow::anyhow;
-    use crate::compute::Coord;
+    use crate::compute::{Coord, WrapAroundBehavior, Facing};
     use crate::parse::{GridElem, MapOfBoard};
     use crate::cubelayout::{CubeLayout, Ratio, ALL_LAYOUTS};
 
 
-    /// Given a MapOfBoard, this finds the CubeLayout that matches it, or returns
-    /// an Error.
-    pub fn find_layout(map_of_board: &MapOfBoard) -> Result<&'static CubeLayout, anyhow::Error> {
+    // FIXME: Remove this -- move the fields into WrapAroundCubeBehavior and return a tuple.
+    /// This contains the CubeLayout along with the sizing that fits a specific
+    /// MapOfBoard.
+    #[derive(Debug)]
+    struct LayoutFit {
+        layout: &'static CubeLayout,
+        divisor: usize,
+    }
+
+    #[derive(Debug)]
+    pub struct WrapAroundCubeBehavior {
+        layout_fit: LayoutFit,
+    }
+
+
+
+    /// Given a MapOfBoard, this finds the CubeLayout that matches it along with the
+    /// scaling (a LayoutFit), or returns an Error.
+    fn find_layout_fit(map_of_board: &MapOfBoard) -> Result<LayoutFit, anyhow::Error> {
         let dims = Coord(map_of_board.width(), map_of_board.height());
         let ratio: Ratio = Ratio::find_ratio(dims).ok_or(anyhow!("Not a valid ratio"))?; // error if we don't find one
         let divisor = Ratio::find_divisor(dims);
@@ -1001,11 +1112,27 @@ mod cubewrap {
         }).collect();
         for layout in ALL_LAYOUTS.get(&ratio).unwrap() {
             if layout.matches(&fills) {
-                return Ok(layout)
+                return Ok(LayoutFit{layout, divisor})
             }
         }
         Err(anyhow!("Did not match any layout"))
     }
+
+
+    impl<'a> WrapAroundCubeBehavior {
+        pub fn new(map: &'a MapOfBoard) -> Result<Self, anyhow::Error> {
+            let layout_fit = find_layout_fit(map)?;
+            Ok(WrapAroundCubeBehavior{layout_fit})
+        }
+    }
+
+
+    impl<'a> WrapAroundBehavior for WrapAroundCubeBehavior {
+        fn wrap_around(&self, start_pos: Coord, facing: Facing) -> (Coord, Facing) {
+            self.layout_fit.layout.wrap_around(self.layout_fit.divisor, start_pos, facing)
+        }
+    }
+
 
 
     #[cfg(test)]
@@ -1089,12 +1216,12 @@ mod cubewrap {
 
 use crate::parse::{input, InputData};
 use crate::compute::{Grid, KeepGoingBehavior};
-use crate::cubewrap::find_layout;
+use crate::cubewrap::WrapAroundCubeBehavior;
 
 
 fn part_a(input: &InputData) {
     println!("\nPart a:");
-    let wrap_around_behavior = KeepGoingBehavior{map: &input.map};
+    let wrap_around_behavior = KeepGoingBehavior::new(&input.map);
     let mut grid = Grid::new(&input.map, &wrap_around_behavior);
     grid.apply_steps(&input.steps);
     println!("Password = {}", grid.password());
@@ -1103,8 +1230,10 @@ fn part_a(input: &InputData) {
 
 fn part_b(input: &InputData) -> Result<(), anyhow::Error> {
     println!("\nPart b:");
-    let layout = find_layout(&input.map)?;
-    println!("layout: {:?}", layout);
+    let wrap_around_behavior = WrapAroundCubeBehavior::new(&input.map)?;
+    let mut grid = Grid::new(&input.map, &wrap_around_behavior);
+    grid.apply_steps(&input.steps);
+    println!("Password = {}", grid.password());
     Ok(())
 }
 
