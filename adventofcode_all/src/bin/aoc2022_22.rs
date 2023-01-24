@@ -755,10 +755,11 @@ mod cubelayout {
             panic!("No such edge found");
         }
 
-        // FIXME: Document this.
-        // FIXME: There are steps here that break down and reassemble. I should break them out. Make it work first.
+        /// This is called with a divisor (the side length for the cube), and a position and facing
+        /// (which MUST be at the edge of a cut and will wrap around to some other face). It
+        /// returns the position of the destination and the new facing there.
         pub fn wrap_around(&self, divisor: usize, start_pos: Coord, facing: Facing) -> (Coord, Facing) {
-            println!("    wrapping around divisor={}, start {:?}, face {:?}", divisor, start_pos, facing); // FIXME: Remove
+            // --- Convert to the coordinates that CubeLayouts work in ---
             let (pos_of_face, pos_in_face) = start_pos.div_mod(divisor);
             let face_num = self.coord_to_face(pos_of_face);
             let dist_along_face = match facing {
@@ -779,8 +780,10 @@ mod cubelayout {
                     pos_in_face.0
                 },
             };
+            // --- Use the CubeLayout to wrap around ---
             let (Edge(new_face_num, new_edge_facing), reverse) = self.matching_edge(Edge(face_num, facing));
             let new_facing = new_edge_facing.invert();
+            // --- Convert back to the units that the map uses ---
             let new_dist_along_face = match reverse {
                 true => divisor - dist_along_face - 1,
                 false => dist_along_face
@@ -793,6 +796,7 @@ mod cubelayout {
             };
             let new_pos_of_face = self.face_to_coord(new_face_num);
             let new_pos = Coord::from_div_mod(divisor, new_pos_of_face, new_pos_in_face);
+            // --- Return the answer ---
             (new_pos, new_facing)
         }
     }
@@ -1082,25 +1086,17 @@ mod cubewrap {
     use crate::cubelayout::{CubeLayout, Ratio, ALL_LAYOUTS};
 
 
-    // FIXME: Remove this -- move the fields into WrapAroundCubeBehavior and return a tuple.
-    /// This contains the CubeLayout along with the sizing that fits a specific
-    /// MapOfBoard.
-    #[derive(Debug)]
-    struct LayoutFit {
-        layout: &'static CubeLayout,
-        divisor: usize,
-    }
-
     #[derive(Debug)]
     pub struct WrapAroundCubeBehavior {
-        layout_fit: LayoutFit,
+        layout: &'static CubeLayout,
+        divisor: usize,
     }
 
 
 
     /// Given a MapOfBoard, this finds the CubeLayout that matches it along with the
-    /// scaling (a LayoutFit), or returns an Error.
-    fn find_layout_fit(map_of_board: &MapOfBoard) -> Result<LayoutFit, anyhow::Error> {
+    /// divisor (length of a side) OR returns an Error.
+    fn find_layout_fit(map_of_board: &MapOfBoard) -> Result<(&'static CubeLayout, usize), anyhow::Error> {
         let dims = Coord(map_of_board.width(), map_of_board.height());
         let ratio: Ratio = Ratio::find_ratio(dims).ok_or(anyhow!("Not a valid ratio"))?; // error if we don't find one
         let divisor = Ratio::find_divisor(dims);
@@ -1112,7 +1108,7 @@ mod cubewrap {
         }).collect();
         for layout in ALL_LAYOUTS.get(&ratio).unwrap() {
             if layout.matches(&fills) {
-                return Ok(LayoutFit{layout, divisor})
+                return Ok((layout, divisor))
             }
         }
         Err(anyhow!("Did not match any layout"))
@@ -1121,15 +1117,15 @@ mod cubewrap {
 
     impl<'a> WrapAroundCubeBehavior {
         pub fn new(map: &'a MapOfBoard) -> Result<Self, anyhow::Error> {
-            let layout_fit = find_layout_fit(map)?;
-            Ok(WrapAroundCubeBehavior{layout_fit})
+            let (layout, divisor) = find_layout_fit(map)?;
+            Ok(WrapAroundCubeBehavior{layout, divisor})
         }
     }
 
 
     impl<'a> WrapAroundBehavior for WrapAroundCubeBehavior {
         fn wrap_around(&self, start_pos: Coord, facing: Facing) -> (Coord, Facing) {
-            self.layout_fit.layout.wrap_around(self.layout_fit.divisor, start_pos, facing)
+            self.layout.wrap_around(self.divisor, start_pos, facing)
         }
     }
 
