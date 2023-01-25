@@ -226,9 +226,20 @@ mod compute {
             false
         }
 
+        /// Returns the bounding rectangle: [min_x, max_x, min_y, max_y]
+        fn get_bounds(&self) -> [i16; 4] {
+            assert!(! self.elves.is_empty());
+            [
+                self.elves.iter().map(|elf| elf.pos.0).min().unwrap(),
+                self.elves.iter().map(|elf| elf.pos.0).max().unwrap(),
+                self.elves.iter().map(|elf| elf.pos.1).min().unwrap(),
+                self.elves.iter().map(|elf| elf.pos.1).max().unwrap(),
+            ]
+        }
+
         fn proposal(&self, elf: &Elf) -> Option<Coord> {
             // --- consider all neighbors ---
-            if Direction::all().all(|dir| self.has_elf(elf.pos.step(dir))) {
+            if Direction::all().all(|dir| ! self.has_elf(elf.pos.step(dir))) {
                 // --- if there are no neighbors, go nowhere ---
                 None
             } else {
@@ -242,8 +253,8 @@ mod compute {
                     pdir = pdir.next();
                 }
                 // NOTE: The problem didn't say what to do if it had neighbors, but no direction
-                //   was proposed. I'm assuming it should propose to stay put.
-                println!("Assumption made about ({},{})", elf.pos.0, elf.pos.1); // FIXME: What to do?
+                //   was proposed. I'm assuming it should propose to stay put. That seems to
+                //   match the examples.
                 return None;
             }
         }
@@ -262,26 +273,6 @@ mod compute {
                 }
             }
 
-            for (elf, proposal) in zip(self.elves.iter(), proposals.iter()) {
-                fn find_pdir(elf: &Elf, proposal: &Option<Coord>) -> Option<PrimaryDirection> {
-                    if let Some(proposed_coord) = proposal {
-                        let mut dir = PrimaryDirection::N;
-                        loop {
-                            if *proposed_coord == elf.pos.step(dir.into()) {
-                                return Some(dir);
-                            }
-                            dir = dir.next();
-                            if dir == PrimaryDirection::N {
-                                panic!("Proposal wasn't a primary direction.");
-                            }
-                        }
-                    } else {
-                        return None;
-                    }
-                }
-                println!("Elf at ({},{}) proposes to move {:?}", elf.pos.0, elf.pos.1, find_pdir(elf, proposal));
-            }
-
             // --- second half: make moves ---
             for (elf, proposal) in zip(self.elves.iter_mut(), proposals) {
                 if let Some(coord) = proposal {
@@ -294,15 +285,18 @@ mod compute {
             // --- third step: rotate preferred_pdir ---
             self.preferred_pdir = self.preferred_pdir.next();
         }
+
+        /// Returns the number of empty ground spaces within the bounding rectangle.
+        pub fn empty_ground(&self) -> usize {
+            let [min_x, max_x, min_y, max_y] = self.get_bounds();
+            let area: usize = ((1 + max_x - min_x) as usize) * ((1 + max_y - min_y) as usize);
+            area - self.elves.len()
+        }
     }
 
     impl Display for ElfGrid {
         fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-            assert!(!self.elves.is_empty());
-            let min_x = self.elves.iter().map(|elf| elf.pos.0).min().unwrap();
-            let max_x = self.elves.iter().map(|elf| elf.pos.0).max().unwrap();
-            let min_y = self.elves.iter().map(|elf| elf.pos.1).min().unwrap();
-            let max_y = self.elves.iter().map(|elf| elf.pos.1).max().unwrap();
+            let [min_x, max_x, min_y, max_y] = self.get_bounds();
             for y in min_y..=max_y {
                 for x in min_x..=max_x {
                     let c = if self.has_elf(Coord(x,y)) {'#'} else {'.'};
@@ -324,17 +318,18 @@ mod compute {
 use parse::{input, ElfPlaces};
 use compute::ElfGrid;
 
+const PRINT_GRID: bool = false;
+
 
 fn part_a(input: &ElfPlaces) {
     println!("\nPart a:");
     let mut elf_grid = ElfGrid::new(input);
-    println!("elf_grid:\n{}", elf_grid);
-    elf_grid.perform_round();
-    println!("after round 1, elf_grid:\n{}", elf_grid);
-    elf_grid.perform_round();
-    println!("after round 2, elf_grid:\n{}", elf_grid);
-    elf_grid.perform_round();
-    println!("after round 3, elf_grid:\n{}", elf_grid);
+    if PRINT_GRID { println!("elf_grid:\n{}", elf_grid); }
+    for i in 1..=10 {
+        elf_grid.perform_round();
+        if PRINT_GRID { println!("{elf_grid}"); }
+        println!("after round {i} there are {} open spaces", elf_grid.empty_ground());
+    }
 }
 
 
