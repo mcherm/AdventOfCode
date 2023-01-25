@@ -133,6 +133,7 @@ mod compute {
     pub struct ElfGrid {
         elves: Vec<Elf>,
         preferred_pdir: PrimaryDirection,
+        prev_moves: usize,
     }
 
 
@@ -212,7 +213,8 @@ mod compute {
                 }
             }
             let preferred_pdir = PrimaryDirection::N;
-            ElfGrid{elves, preferred_pdir}
+            let prev_moves = elves.len();
+            ElfGrid{elves, preferred_pdir, prev_moves}
         }
 
         /// Returns true if there's an elf at this location; false if not.
@@ -274,16 +276,33 @@ mod compute {
             }
 
             // --- second half: make moves ---
+            let mut move_count = 0;
             for (elf, proposal) in zip(self.elves.iter_mut(), proposals) {
                 if let Some(coord) = proposal {
                     if *proposal_count.get(&coord).unwrap() == 1 {
                         elf.pos = coord;
+                        move_count += 1;
                     }
                 }
             }
 
             // --- third step: rotate preferred_pdir ---
             self.preferred_pdir = self.preferred_pdir.next();
+            self.prev_moves = move_count;
+        }
+
+        /// Performs rounds until a round where no on moves. Returns the number of rounds.
+        pub fn perform_until_no_moves(&mut self) -> usize {
+            let mut count = 0;
+            println!("at round {count} there are {} open spaces and {} moved", self.empty_ground(), self.prev_moves); // FIXME: Keep this?
+            loop {
+                self.perform_round();
+                count += 1;
+                println!("after round {count} there are {} open spaces and {} moved", self.empty_ground(), self.prev_moves); // FIXME: Keep this?
+                if self.prev_moves == 0 {
+                    return count;
+                }
+            }
         }
 
         /// Returns the number of empty ground spaces within the bounding rectangle.
@@ -333,8 +352,12 @@ fn part_a(input: &ElfPlaces) {
 }
 
 
-fn part_b(_input: &ElfPlaces) {
+fn part_b(input: &ElfPlaces) {
     println!("\nPart b:");
+    let mut elf_grid = ElfGrid::new(input);
+    if PRINT_GRID { println!("elf_grid:\n{}", elf_grid); }
+    let round_num = elf_grid.perform_until_no_moves();
+    println!("It took until the {} round before no one moved.", round_num);
 }
 
 
