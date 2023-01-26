@@ -103,9 +103,10 @@ mod parse {
 // ======= Part 1 Compute =======
 
 mod compute {
-    use std::collections::HashMap;
+    use itertools;
+    use std::collections::{HashMap, HashSet};
     use std::fmt::{Display, Formatter};
-    use std::iter::zip;
+    use itertools::iproduct;
     use crate::parse::ElfPlaces;
 
     #[derive(Debug, Eq, PartialEq, Hash, Copy, Clone)]
@@ -123,17 +124,20 @@ mod compute {
     #[derive(Debug, Eq, PartialEq, Hash, Copy, Clone)]
     struct Coord(i16, i16);
 
-    // FIXME: This could probably go away since it's just wrapping one thing.
-    #[derive(Debug, Copy, Clone)]
-    struct Elf {
-        pos: Coord,
-    }
-
     #[derive(Debug)]
     pub struct ElfGrid {
-        elves: Vec<Elf>,
+        all_elves: HashSet<Coord>,
+        active_elves: HashSet<Coord>,
         preferred_pdir: PrimaryDirection,
         prev_moves: usize,
+    }
+
+    /// The values that can be returned for an elf deciding what to do.
+    #[derive(Debug, Clone)]
+    enum MovementChoice {
+        Alone,
+        TooCrowded,
+        Propose{dest: Coord, activates: [Coord; 3]},
     }
 
 
@@ -204,89 +208,107 @@ mod compute {
     impl ElfGrid {
         /// Creates an ElfGrid from an ElfPlaces.
         pub fn new(elf_places: &ElfPlaces) -> Self {
-            let mut elves = Vec::new();
-            for y in 0..elf_places.height() {
-                for x in 0..elf_places.width() {
-                    if elf_places.get_at(x,y) {
-                        elves.push(Elf{ pos: Coord(x as i16, y as i16)});
-                    }
+            let xs = 0..elf_places.width();
+            let ys = 0..elf_places.height();
+            let all_elves: HashSet<Coord> = iproduct!(xs, ys).filter_map(|(x,y)| {
+                if elf_places.get_at(x,y) {
+                    Some(Coord(x as i16, y as i16))
+                } else {
+                    None
                 }
-            }
+            }).collect();
+            let active_elves = all_elves.clone();
             let preferred_pdir = PrimaryDirection::N;
-            let prev_moves = elves.len();
-            ElfGrid{elves, preferred_pdir, prev_moves}
+            let prev_moves = all_elves.len();
+            ElfGrid{all_elves, active_elves, preferred_pdir, prev_moves}
         }
 
         /// Returns true if there's an elf at this location; false if not.
         fn has_elf(&self, coord: Coord) -> bool {
-            // FIXME: If we have a lot of elves, it might be wise to change data structures so this is more efficient
-            for elf in self.elves.iter() {
-                if elf.pos == coord {
-                    return true;
-                }
-            }
-            false
+            self.all_elves.contains(&coord)
         }
 
         /// Returns the bounding rectangle: [min_x, max_x, min_y, max_y]
         fn get_bounds(&self) -> [i16; 4] {
-            assert!(! self.elves.is_empty());
+            assert!(! self.all_elves.is_empty());
             [
-                self.elves.iter().map(|elf| elf.pos.0).min().unwrap(),
-                self.elves.iter().map(|elf| elf.pos.0).max().unwrap(),
-                self.elves.iter().map(|elf| elf.pos.1).min().unwrap(),
-                self.elves.iter().map(|elf| elf.pos.1).max().unwrap(),
+                self.all_elves.iter().map(|x| x.0).min().unwrap(),
+                self.all_elves.iter().map(|x| x.0).max().unwrap(),
+                self.all_elves.iter().map(|x| x.1).min().unwrap(),
+                self.all_elves.iter().map(|x| x.1).max().unwrap(),
             ]
         }
 
-        fn proposal(&self, elf: &Elf) -> Option<Coord> {
+        fn proposal(&self, elf: Coord) -> MovementChoice {
             // --- consider all neighbors ---
-            if Direction::all().all(|dir| ! self.has_elf(elf.pos.step(dir))) {
+            if Direction::all().all(|dir| ! self.has_elf(elf.step(dir))) {
                 // --- if there are no neighbors, go nowhere ---
-                None
+                MovementChoice::Alone
             } else {
                 // --- if there are no neighbors, consider each primary direction in order ---
                 let mut pdir = self.preferred_pdir;
                 for _ in 0..4 {
-                    if pdir.leaning().iter().all(|dir| ! self.has_elf(elf.pos.step(*dir))) {
+                    if pdir.leaning().iter().all(|dir| ! self.has_elf(elf.step(*dir))) {
                         // --- if all of them are empty, go that way ---
-                        return Some(elf.pos.step(pdir.into()));
+                        let dest = elf.step(pdir.into());
+                        // it could affect things one more step in that general direction
+                        let activates = pdir.leaning().map(|dir| dest.step(dir));
+                        return MovementChoice::Propose{dest, activates};
                     }
                     pdir = pdir.next();
                 }
-                // NOTE: The problem didn't say what to do if it had neighbors, but no direction
-                //   was proposed. I'm assuming it should propose to stay put. That seems to
-                //   match the examples.
-                return None;
+                MovementChoice::TooCrowded
             }
         }
 
         /// Performs one round of position updates.
         pub fn perform_round(&mut self) {
-            let mut proposals: Vec<Option<Coord>> = Vec::with_capacity(self.elves.len());
+            let mut proposals: HashMap<Coord, MovementChoice> = HashMap::with_capacity(self.active_elves.len());
             let mut proposal_count: HashMap<Coord, usize> = HashMap::new();
 
             // --- first half: get proposals ---
-            for elf in self.elves.iter() {
-                let proposal = self.proposal(elf);
-                proposals.push(proposal);
-                if let Some(coord) = proposal {
-                    *proposal_count.entry(coord).or_insert(0) += 1;
+            for elf in self.active_elves.iter() {
+                let proposal = self.proposal(*elf);
+                if let MovementChoice::Propose{dest, ..} = proposal {
+                    *proposal_count.entry(dest).or_insert(0) += 1;
                 }
+                proposals.insert(*elf, proposal);
             }
 
             // --- second half: make moves ---
+            let mut activated: HashSet<Coord> = HashSet::new();
             let mut move_count = 0;
-            for (elf, proposal) in zip(self.elves.iter_mut(), proposals) {
-                if let Some(coord) = proposal {
-                    if *proposal_count.get(&coord).unwrap() == 1 {
-                        elf.pos = coord;
-                        move_count += 1;
+            for (elf, movement_choice) in proposals.iter() {
+                match movement_choice {
+                    MovementChoice::Alone => {
+                        self.active_elves.remove(elf); // it's no longer active
+                    }
+                    MovementChoice::TooCrowded => {
+                        // NOTE: The problem didn't say what to do if it had neighbors, but no direction
+                        //   was proposed. I'm assuming it should propose to stay put. That seems to
+                        //   match the examples.
+                        // it's not going anywhere this time, but maybe from another direction, so it stays active
+                    }
+                    MovementChoice::Propose{dest, activates} => {
+                        if *proposal_count.get(&dest).unwrap() == 1 {
+                            // it actually moved
+                            self.all_elves.remove(elf); // remove from old location
+                            self.all_elves.insert(*dest); // add at new location
+                            self.active_elves.remove(elf); // remove from old location
+                            self.active_elves.insert(*dest); // its new location is active
+                            activated.extend(activates.into_iter());
+                            move_count += 1;
+                        } else {
+                            // multiple elves want to go to the same place; they don't move
+                        }
                     }
                 }
             }
 
-            // --- third step: rotate preferred_pdir ---
+            // --- activate the activated ones ---
+            self.active_elves.extend(activated.into_iter().filter(|elf| self.all_elves.contains(elf)));
+
+            // --- third step: update other fields of self ---
             self.preferred_pdir = self.preferred_pdir.next();
             self.prev_moves = move_count;
         }
@@ -294,11 +316,9 @@ mod compute {
         /// Performs rounds until a round where no on moves. Returns the number of rounds.
         pub fn perform_until_no_moves(&mut self) -> usize {
             let mut count = 0;
-            println!("at round {count} there are {} open spaces and {} moved", self.empty_ground(), self.prev_moves); // FIXME: Keep this?
             loop {
                 self.perform_round();
                 count += 1;
-                println!("after round {count} there are {} open spaces and {} moved", self.empty_ground(), self.prev_moves); // FIXME: Keep this?
                 if self.prev_moves == 0 {
                     return count;
                 }
@@ -309,7 +329,7 @@ mod compute {
         pub fn empty_ground(&self) -> usize {
             let [min_x, max_x, min_y, max_y] = self.get_bounds();
             let area: usize = ((1 + max_x - min_x) as usize) * ((1 + max_y - min_y) as usize);
-            area - self.elves.len()
+            area - self.all_elves.len()
         }
     }
 
