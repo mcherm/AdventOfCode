@@ -50,7 +50,7 @@ mod parse {
         N, S, E, W,
     }
 
-    #[derive(Debug, Clone)] // FIXME: Remove the Clone
+    #[derive(Debug)]
     pub struct Blizzard {
         pub dir: Direction,
         loc: Coord,
@@ -197,7 +197,7 @@ mod parse {
                     Orientation::Horizontal => &mut h_blizzards,
                     Orientation::Vertical => &mut v_blizzards,
                 };
-                hash_map.entry(fixed_val).or_insert(Vec::new()).push(blizzard.clone());
+                hash_map.entry(fixed_val).or_insert(Vec::new()).push(blizzard);
             }
             Grove{size, start_x, goal_x, h_blizzards, v_blizzards}
         }
@@ -263,8 +263,6 @@ mod parse {
             h_blizzards.chain(v_blizzards)
         }
 
-        // FIXME: It would be a lot better if we only looked at the ones in the right row.
-        //   Doing that would require a data structure change.
         /// Returns true if the given coord is blocked at the given time.
         pub fn is_unblocked(&self, coord: Coord, time: Num) -> bool {
             let h_blizzards = self.h_blizzards.get(&coord.1).into_iter().flatten();
