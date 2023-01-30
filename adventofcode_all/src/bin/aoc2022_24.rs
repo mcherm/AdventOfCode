@@ -12,6 +12,7 @@ mod parse {
     use std::fmt::Debug;
     use std::fs;
     use std::ops::Add;
+    use std::collections::HashMap;
     use itertools::Itertools;
     use itertools::iproduct;
     use nom::{
@@ -49,7 +50,7 @@ mod parse {
         N, S, E, W,
     }
 
-    #[derive(Debug)]
+    #[derive(Debug, Clone)] // FIXME: Remove the Clone
     pub struct Blizzard {
         pub dir: Direction,
         loc: Coord,
@@ -60,7 +61,8 @@ mod parse {
         pub size: Coord, // width and height of inside. (0,0) is the lower left
         start_x: Num,
         goal_x: Num,
-        pub blizzards: Vec<Blizzard>,
+        h_blizzards: HashMap<Num, Vec<Blizzard>>,
+        v_blizzards: HashMap<Num, Vec<Blizzard>>,
     }
 
 
@@ -175,7 +177,7 @@ mod parse {
             let size = Coord(width.try_into().unwrap(), height.try_into().unwrap());
             let xs = 0..width;
             let ys = 0..height;
-            let blizzards: Vec<Blizzard> = iproduct!(xs, ys).filter_map(|(x,y)| {
+            let all_blizzards = iproduct!(xs, ys).filter_map(|(x,y)| {
                 match rows.get(y).unwrap().get(x).unwrap() {
                     None => None,
                     Some(dir) => {
@@ -185,8 +187,19 @@ mod parse {
                         Some(Blizzard{dir, loc: Coord(x,y)})
                     },
                 }
-            }).collect();
-            Grove{size, start_x, goal_x, blizzards}
+            });
+            let mut h_blizzards: HashMap<Num, Vec<Blizzard>> = HashMap::new();
+            let mut v_blizzards: HashMap<Num, Vec<Blizzard>> = HashMap::new();
+            for blizzard in all_blizzards {
+                let orientation = blizzard.orientation();
+                let (fixed_val, _start_val) = orientation.split(blizzard.loc);
+                let hash_map = match orientation {
+                    Orientation::Horizontal => &mut h_blizzards,
+                    Orientation::Vertical => &mut v_blizzards,
+                };
+                hash_map.entry(fixed_val).or_insert(Vec::new()).push(blizzard.clone());
+            }
+            Grove{size, start_x, goal_x, h_blizzards, v_blizzards}
         }
 
 
@@ -242,6 +255,24 @@ mod parse {
         pub fn goal_coord(&self) -> Coord {
             Coord(self.goal_x, 0)
         }
+
+        /// Returns an iterator that iterates through all the blizzards.
+        pub fn all_blizzards(&self) -> impl Iterator<Item=&Blizzard> {
+            let h_blizzards = self.h_blizzards.values().flatten();
+            let v_blizzards = self.v_blizzards.values().flatten();
+            h_blizzards.chain(v_blizzards)
+        }
+
+        // FIXME: It would be a lot better if we only looked at the ones in the right row.
+        //   Doing that would require a data structure change.
+        /// Returns true if the given coord is blocked at the given time.
+        pub fn is_unblocked(&self, coord: Coord, time: Num) -> bool {
+            let h_blizzards = self.h_blizzards.get(&coord.1).into_iter().flatten();
+            let v_blizzards = self.v_blizzards.get(&coord.0).into_iter().flatten();
+            h_blizzards.chain(v_blizzards).all(|blizzard| {
+                blizzard.future_pos(time, self.size) != coord
+            })
+        }
     }
 
 }
@@ -282,21 +313,16 @@ mod compute {
 
 
     impl<'a> GroveState<'a> {
-        // FIXME: It would be a lot better if we only looked at the ones in the right row.
-        //   Doing that would require a data structure change.
         /// Returns true if the given coord is blocked at the given time.
         fn is_unblocked(&self, coord: Coord, time: Num) -> bool {
-            self.grove.blizzards.iter()
-                .all(|blizzard| {
-                    blizzard.future_pos(time, self.grove.size) != coord
-                })
+            self.grove.is_unblocked(coord, time)
         }
 
         /// This can be used to get a grid of chars which tell where the blizzards at
         /// a time that's extra_t in the future.
         fn chars_for_blizzards(&self, extra_time: Num) -> Vec<Vec<char>> {
             let mut chars: Vec<Vec<char>> = vec![vec!['.'; self.grove.size.0.into()]; self.grove.size.1.into()];
-            for blizzard in self.grove.blizzards.iter() {
+            for blizzard in self.grove.all_blizzards() {
                 let coord = blizzard.future_pos(self.time + extra_time, self.grove.size);
                 let c_ref: &mut char = chars.get_mut(coord.1 as usize).unwrap().get_mut(coord.0 as usize).unwrap();
                 *c_ref = match *c_ref {
