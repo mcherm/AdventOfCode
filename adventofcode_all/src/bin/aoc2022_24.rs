@@ -256,6 +256,8 @@ mod compute {
     use crate::parse::{Grove, Coord, Num, Direction};
     use advent_lib::astar;
 
+    const PRINT_DETAILS: bool = false;
+
     #[derive(Debug, Copy, Clone, Eq, PartialEq)]
     pub enum Step {
         Wait,
@@ -392,10 +394,11 @@ mod compute {
     impl<'a> Display for GroveState<'a> {
         fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
             write!(f, "At {} in ({},{})", self.time, self.loc.0, self.loc.1)?;
-            // FIXME: include this part to print more.
-            self.write_picture(f)?;
-            write!(f, "NEXT:")?;
-            self.write_blizzards(f, 1)?;
+            if PRINT_DETAILS {
+                self.write_picture(f)?;
+                write!(f, "NEXT:")?;
+                self.write_blizzards(f, 1)?;
+            }
             Ok(())
         }
     }
@@ -451,7 +454,9 @@ mod compute {
             if self.is_unblocked(self.loc, self.time + 1) {
                 answer.push(Step::Wait);
             }
-            println!("The available moves from this state are: {:?}", answer); // FIXME: Remove
+            if PRINT_DETAILS {
+                println!("The available moves from this state are: {:?}", answer);
+            }
             answer
         }
 
