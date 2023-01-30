@@ -51,7 +51,7 @@ mod parse {
 
     #[derive(Debug)]
     pub struct Blizzard {
-        dir: Direction,
+        pub dir: Direction,
         loc: Coord,
     }
 
@@ -253,7 +253,7 @@ mod compute {
     use std;
     use std::fmt::{Display, Formatter};
     use std::hash::{Hash, Hasher};
-    use crate::parse::{Grove, Coord, Num};
+    use crate::parse::{Grove, Coord, Num, Direction};
     use advent_lib::astar;
 
     #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -289,11 +289,114 @@ mod compute {
                     blizzard.future_pos(time, self.grove.size) != coord
                 })
         }
+
+        /// This can be used to get a grid of chars which tell where the blizzards at
+        /// a time that's extra_t in the future.
+        fn chars_for_blizzards(&self, extra_time: Num) -> Vec<Vec<char>> {
+            let mut chars: Vec<Vec<char>> = vec![vec!['.'; self.grove.size.0.into()]; self.grove.size.1.into()];
+            for blizzard in self.grove.blizzards.iter() {
+                let coord = blizzard.future_pos(self.time + extra_time, self.grove.size);
+                let c_ref: &mut char = chars.get_mut(coord.1 as usize).unwrap().get_mut(coord.0 as usize).unwrap();
+                *c_ref = match *c_ref {
+                    '.' => match blizzard.dir {
+                        Direction::N => '^',
+                        Direction::S => 'v',
+                        Direction::E => '>',
+                        Direction::W => '<',
+                    },
+                    '^' | 'v' | '>' | '<' => '2',
+                    '2' => '3',
+                    '3' => '4',
+                    '4' => '5',
+                    '5' => '6',
+                    '6' => '7',
+                    '7' => '8',
+                    '8' => '9',
+                    '9' => '+',
+                    '+' => '+',
+                    _ => panic!("Unexpected value"),
+                };
+            }
+            chars
+        }
+
+        fn chars_for_header(&self) -> Vec<char> {
+            let mut header_chars: Vec<char> = vec!['#'; (self.grove.size.0 + 2) as usize];
+            header_chars[(self.grove.start_coord().0 + 1) as usize] = '.';
+            header_chars
+        }
+
+        fn chars_for_footer(&self) -> Vec<char> {
+            let mut footer_chars: Vec<char> = vec!['#'; (self.grove.size.0 + 2) as usize];
+            footer_chars[(self.grove.goal_coord().0 + 1) as usize] = '.';
+            footer_chars
+        }
+
+        /// Writes out this GroveState in picture form.
+        fn write_flex_picture(&self, f: &mut Formatter<'_>, extra_time: Num, show_expedition: bool) -> std::fmt::Result {
+            // --- blank line ---
+            writeln!(f)?;
+
+            // --- header ---
+            let mut header_chars = self.chars_for_header();
+            if show_expedition {
+                if self.loc.1 == self.grove.size.1 {
+                    header_chars[(self.grove.start_coord().0 + 1) as usize] = 'E';
+                }
+            }
+            for c in header_chars {
+                write!(f, "{}", c)?;
+            }
+            writeln!(f)?;
+
+            // --- body ---
+            let mut chars = self.chars_for_blizzards(extra_time);
+            if show_expedition {
+                if self.loc.1 < self.grove.size.1 {
+                    assert!(chars[self.loc.1 as usize][self.loc.0 as usize] == '.');
+                    chars[self.loc.1 as usize][self.loc.0 as usize] = 'E';
+                }
+            }
+            for row in chars.iter().rev() {
+                write!(f, "#")?;
+                for c in row {
+                    write!(f, "{}", c)?;
+                }
+                write!(f, "#\n")?;
+            }
+
+            // --- footer ---
+            let footer_chars = self.chars_for_footer();
+            for c in footer_chars {
+                write!(f, "{}", c)?;
+            }
+            writeln!(f)?;
+
+            // --- blank line ---
+            writeln!(f)
+        }
+
+        /// Writes out this GroveState in picture form.
+        fn write_picture(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+            self.write_flex_picture(f, 0, true)
+        }
+
+
+        /// Writes out the blizzard positions for this GroveState at extra_time steps in
+        /// the future.
+        fn write_blizzards(&self, f: &mut Formatter<'_>, extra_time: Num) -> std::fmt::Result {
+            self.write_flex_picture(f, extra_time, false)
+        }
     }
 
     impl<'a> Display for GroveState<'a> {
         fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-            write!(f, "At {} in ({},{})", self.time, self.loc.0, self.loc.1)
+            write!(f, "At {} in ({},{})", self.time, self.loc.0, self.loc.1)?;
+            // FIXME: include this part to print more.
+            self.write_picture(f)?;
+            write!(f, "NEXT:")?;
+            self.write_blizzards(f, 1)?;
+            Ok(())
         }
     }
 
@@ -327,12 +430,28 @@ mod compute {
 
         fn avail_moves(&self) -> Vec<Self::TMove> {
             let mut answer = Vec::with_capacity(5);
-            for coord in self.loc.bounded_neighbors(self.grove.size) {
+            if self.loc == self.grove.start_coord() {
+                // In the entry location is a special case; it can only move South
+                let coord = self.loc + Direction::S;
                 if self.is_unblocked(coord, self.time + 1) {
                     answer.push(Step::MoveTo(coord));
                 }
+            } else {
+                // Anywhere else it can move to any space that will be free
+                for coord in self.loc.bounded_neighbors(self.grove.size) {
+                    if self.is_unblocked(coord, self.time + 1) {
+                        answer.push(Step::MoveTo(coord));
+                    }
+                }
             }
-            answer.push(Step::Wait);
+            if self.loc == self.grove.start_coord() + Direction::S {
+                // Being below the entry location is another special case; it can ALSO move to entry
+                answer.push(Step::MoveTo(self.grove.start_coord()));
+            }
+            if self.is_unblocked(self.loc, self.time + 1) {
+                answer.push(Step::Wait);
+            }
+            println!("The available moves from this state are: {:?}", answer); // FIXME: Remove
             answer
         }
 
@@ -365,7 +484,7 @@ fn part_a(grove: &Grove) {
     let solution = solve(grove);
     match solution {
         None => println!("There is no solution."),
-        Some(path) => println!("Solved in {} steps: {:?}", path.len(), path),
+        Some(path) => println!("Solved in {} steps: {:?} then down.", path.len() + 1, path),
     }
 }
 
