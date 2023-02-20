@@ -1173,8 +1173,8 @@ mod cubewrap {
                 |");
             let (rest, map_of_board) = MapOfBoard::parse(&map_data).unwrap();
             assert_eq!(rest, "");
-            let layout_or_err = find_layout(&map_of_board);
-            assert!(matches!(layout_or_err, Err(_)));
+            let ok_or_err = find_layout_fit(&map_of_board);
+            assert!(matches!(ok_or_err, Err(_)));
         }
 
         #[test]
@@ -1195,7 +1195,7 @@ mod cubewrap {
                 |");
             let (rest, map_of_board) = MapOfBoard::parse(&map_data).unwrap();
             assert_eq!(rest, "");
-            let layout = find_layout(&map_of_board)?;
+            let (layout, _) = find_layout_fit(&map_of_board)?;
             let expect_layout = CubeLayout::from_visual("\
                 ..0.\n\
                 321.\n\
@@ -1206,6 +1206,163 @@ mod cubewrap {
         }
 
     }
+}
+
+// ======= Part 2 Using Rachel's Approach =======
+
+
+/// A module that hopes to derive cube mappings in an automated fashion.
+mod cubeanalyze {
+    use std::fmt::{Display, Formatter};
+
+    #[derive(Debug, Copy, Clone, Eq, PartialEq)]
+    enum FlatDirection {N, E, S, W}
+
+    #[derive(Debug, Copy, Clone, Eq, PartialEq)]
+    enum FlatFace {FF1, FF2, FF3, FF4, FF5, FF6}
+
+    /// The information we're given about faces and what connects to what.
+    struct Layout {
+
+    }
+
+
+    #[derive(Debug, Copy, Clone, Eq, PartialEq)]
+    enum CubeFace { F, T, R, H, B, L }
+
+    #[derive(Debug, Copy, Clone, Eq, PartialEq)]
+    struct CubeEdge {
+        on_face: CubeFace,
+        to_face: CubeFace,
+    }
+
+
+    impl CubeFace {
+        const COUNT: u8 = 6;
+
+        fn name(&self) -> &'static str {
+            match self {
+                CubeFace::F => "Front",
+                CubeFace::T => "Top",
+                CubeFace::R => "Right",
+                CubeFace::H => "Hind",
+                CubeFace::B => "Bottom",
+                CubeFace::L => "Left",
+            }
+        }
+
+        /// Returns the face opposite a given face.
+        fn opposite(&self) -> Self {
+            self.add(3)
+        }
+
+        /// Adds a number to the CubeFace, incrementing through in the canonical order.
+        fn add(&self, x: u8) -> Self {
+            let s: u8 = (*self).into();
+            (s + x).into()
+        }
+
+        /// Returns the 4 edges for this face
+        fn edges(&self) -> [CubeEdge; 4] {
+            [self.add(1), self.add(2), self.add(4), self.add(5)].map(|x| CubeEdge::new(*self, x))
+        }
+    }
+
+    impl From<CubeFace> for u8 {
+        fn from(cube_face: CubeFace) -> Self {
+            use CubeFace::{F,T,R,H,B,L};
+            match cube_face {F => 0, T => 1, R => 2, H => 3, B => 4, L => 5}
+        }
+    }
+
+    impl From<u8> for CubeFace {
+        fn from(x: u8) -> Self {
+            use CubeFace::{F,T,R,H,B,L};
+            match x % CubeFace::COUNT {0 => F, 1 => T, 2 => R, 3 => H, 4 => B, 5 => L, _ => panic!()}
+        }
+    }
+
+    impl Display for CubeFace {
+        fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+            write!(f, "{}", self.name())
+        }
+    }
+
+    impl CubeEdge {
+        /// Construct a CubeFace
+        fn new(on_face: CubeFace, to_face: CubeFace) -> Self {
+            CubeEdge{on_face, to_face}
+        }
+
+        /// Returns true if going "clockwise" around the face would mean traversing this
+        /// edge in the "positive" direction (in cube coordinates) and false if not.
+        fn clockwise_positive(&self) -> bool {
+            use CubeFace::{F, T, R, H, B, L};
+            match self.on_face {
+                F | L => u8::from(self.to_face) % 2 == 1,
+                R | H => u8::from(self.to_face) % 2 == 0,
+                T => u8::from(self.to_face.add(1)) > 2,
+                B => u8::from(self.to_face.add(1)) < 2,
+            }
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn test_face_conversion() {
+            for i in 0_u8..6_u8 {
+                let f: CubeFace = i.into();
+                let j: u8 = f.into();
+                assert_eq!(j, i);
+            }
+        }
+
+        #[test]
+        fn test_clockwise_positive_rule() {
+            use CubeFace::{F, T, R, H, B, L};
+            // Comparing it against a table I wrote by hand.
+            for edge in (0..CubeFace::COUNT).flat_map(|x| CubeFace::from(x).edges()) { // for every legal edge...
+                let expect = match (edge.on_face, edge.to_face) {
+                    (F,L) => true,  // +5  # 0,5 = t  (odd to_face)
+                    (F,T) => true,  // +1  # 0,1 = t
+                    (F,R) => false, // +2  # 0,2 = f
+                    (F,B) => false, // +4  # 0,4 = f
+
+                    (T,H) => true,  // +2  # 1,3 = t (to_face + 1 is large)
+                    (T,R) => true,  // +1  # 1,2 = t
+                    (T,F) => false, // +5  # 1,0 = f
+                    (T,L) => false, // +4  # 1,5 = f
+
+                    (R,B) => true,  // +2  # 2,4 = t (even to_face)
+                    (R,F) => true,  // +4  # 2,0 = t
+                    (R,T) => false, // +5  # 2,1 = f
+                    (R,H) => false, // +1  # 2,3 = f
+
+                    (H,B) => true,  // +1  # 3,4 = t (even to_face)
+                    (H,R) => true,  // +5  # 3,2 = t
+                    (H,T) => false, // +4  # 3,1 = f
+                    (H,L) => false, // +2  # 3,5 = f
+
+                    (B,L) => true,  // +1  # 4,5 = t (to_face + 1 is small)
+                    (B,F) => true,  // +2  # 4,0 = t
+                    (B,R) => false, // +4  # 4,2 = f
+                    (B,H) => false, // +5  # 4,3 = f
+
+                    (L,H) => true,  // +4  # 5,3 = t (odd to_face)
+                    (L,T) => true,  // +2  # 5,1 = t
+                    (L,F) => false, // +1  # 5,0 = f
+                    (L,B) => false, // +5  # 5,4 = f
+
+                    (_,_) => panic!("Invalid edge."),
+                };
+                assert_eq!(edge.clockwise_positive(), expect);
+            }
+        }
+    }
+
 }
 
 // ======= main() =======
