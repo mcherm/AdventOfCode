@@ -17,7 +17,7 @@ mod part_a {
     use nom::character::complete::i64 as nom_value;
 
 
-// ======== Reading Input ========
+    // ======== Reading Input ========
 
     /// An error that we can encounter when reading the input.
     #[derive(Debug)]
@@ -90,7 +90,7 @@ mod part_a {
 
 
 
-// ======== Types ========
+    // ======== Types ========
 
     type Value = i64;
 
@@ -153,7 +153,7 @@ mod part_a {
         path_len: Option<usize>,
     }
 
-// ======== Implementations ========
+    // ======== Implementations ========
 
     impl Register {
         const NUM_ITEMS: usize = 4;
@@ -697,7 +697,7 @@ mod part_a {
         let min_val = 0;
         let max_val = 0;
         #[allow(unused_mut)]
-            let mut valid_paths = PathSet::new();
+        let mut valid_paths = PathSet::new();
         for a in min_val..=max_val {
             for b in min_val..=max_val {
                 for c in min_val..=max_val {
