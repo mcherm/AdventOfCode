@@ -291,6 +291,16 @@ mod compute {
     pub enum Step {
         Wait,
         MoveTo(Coord),
+        MoveOut, // move out of the valley
+    }
+
+    /// For part b, we will declare 3 possible goals.
+    #[derive(Debug, Copy, Clone, Eq, PartialEq)]
+    pub enum Goal {
+        Done,
+        GoToExit,
+        GoBackForLunchThenExit,
+        GoAcrossThreeTimes,
     }
 
     /// A state of the traversal.
@@ -298,17 +308,64 @@ mod compute {
     struct GroveState<'a> {
         grove: &'a Grove, // immutable reference
         time: Num, // 0 is sitting on the start location before we go anywhere
-        loc: Coord, // current location of the traveler
+        loc: Option<Coord>, // current location of the traveler. None means out of the exit.
+        goal: Goal, // the largest goal we still need to achieve
     }
 
     /// The function that solves it.
-    pub fn solve(grove: &Grove) -> Option<Vec<Step>> {
-        let initial_state = GroveState{grove, time: 0, loc: grove.start_coord()};
-        let print_every_n_moves = 1;
+    pub fn solve(grove: &Grove, goal: Goal) -> Option<Vec<Step>> {
+        let initial_state = GroveState{grove, time: 0, loc: Some(grove.start_coord()), goal};
+        let print_every_n_moves = 0;
         astar::solve_with_astar(&initial_state, print_every_n_moves)
     }
 
 
+    impl Goal {
+        /// This returns the NEXT goal we will have if we are currently on this goal and we perform
+        /// the given Step.
+        fn next_goal(self, step: &Step, start_coord: Coord) -> Goal {
+            match self {
+                Goal::Done => Goal::Done,
+                Goal::GoToExit => match step {
+                    Step::MoveOut => Goal::Done,
+                    _ => Goal::GoToExit,
+                },
+                Goal::GoBackForLunchThenExit => match step {
+                    Step::MoveTo(loc) if *loc == start_coord => Goal::GoToExit,
+                    _ => Goal::GoBackForLunchThenExit,
+                }
+                Goal::GoAcrossThreeTimes => match step {
+                    Step::MoveOut => Goal::GoBackForLunchThenExit,
+                    _ => Goal::GoAcrossThreeTimes,
+                }
+            }
+        }
+
+        /// Determines the distance needed to travel to win, starting from the given location
+        /// and moving on the given grove.
+        fn distance_to_win(&self, opt_loc: Option<Coord>, grove: &Grove) -> usize {
+            match self {
+                Goal::Done => 0,
+                Goal::GoToExit => match opt_loc {
+                    None => panic!("Invalid state: Goal=GoToExit, loc=out-of-valley"),
+                    Some(loc) => usize::from(loc.taxi_dist(grove.goal_coord())) + 1,
+                }
+                Goal::GoBackForLunchThenExit => {
+                    let go_back_for_lunch = match opt_loc {
+                        Some(loc) => usize::from(loc.taxi_dist(grove.start_coord())),
+                        None => usize::from(grove.goal_coord().taxi_dist(grove.start_coord())) + 1,
+                    };
+                    let last_leg = Goal::GoToExit.distance_to_win(Some(grove.start_coord()), grove);
+                    go_back_for_lunch + last_leg
+                }
+                Goal::GoAcrossThreeTimes => {
+                    let next_leg = Goal::GoToExit.distance_to_win(opt_loc, grove);
+                    let other_legs = Goal::GoBackForLunchThenExit.distance_to_win(None, grove);
+                    next_leg + other_legs
+                }
+            }
+        }
+    }
 
     impl<'a> GroveState<'a> {
         /// Returns true if the given coord is blocked at the given time.
@@ -366,7 +423,7 @@ mod compute {
             // --- header ---
             let mut header_chars = self.chars_for_header();
             if show_expedition {
-                if self.loc.1 == self.grove.size.1 {
+                if self.loc.is_some() && self.loc.unwrap().1 == self.grove.size.1 {
                     header_chars[(self.grove.start_coord().0 + 1) as usize] = 'E';
                 }
             }
@@ -378,9 +435,11 @@ mod compute {
             // --- body ---
             let mut chars = self.chars_for_blizzards(extra_time);
             if show_expedition {
-                if self.loc.1 < self.grove.size.1 {
-                    assert!(chars[self.loc.1 as usize][self.loc.0 as usize] == '.');
-                    chars[self.loc.1 as usize][self.loc.0 as usize] = 'E';
+                if let Some(loc) = self.loc {
+                    if loc.1 < self.grove.size.1 {
+                        assert!(chars[loc.1 as usize][loc.0 as usize] == '.');
+                        chars[loc.1 as usize][loc.0 as usize] = 'E';
+                    }
                 }
             }
             for row in chars.iter().rev() {
@@ -417,7 +476,10 @@ mod compute {
 
     impl<'a> Display for GroveState<'a> {
         fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-            write!(f, "At {} in ({},{})", self.time, self.loc.0, self.loc.1)?;
+            match self.loc {
+                Some(loc) => write!(f, "At {} in ({},{})", self.time, loc.0, loc.1)?,
+                None => write!(f, "At {} out of valley", self.time)?,
+            }
             if PRINT_DETAILS {
                 self.write_picture(f)?;
                 write!(f, "NEXT:")?;
@@ -448,35 +510,52 @@ mod compute {
         type TMove = Step;
 
         fn is_winning(&self) -> bool {
-            self.loc == self.grove.goal_coord()
+            matches!(self.goal, Goal::Done)
         }
 
         fn min_moves_to_win(&self) -> usize {
-            self.loc.taxi_dist(self.grove.goal_coord()).into()
+            self.goal.distance_to_win(self.loc, self.grove)
         }
 
         fn avail_moves(&self) -> Vec<Self::TMove> {
             let mut answer = Vec::with_capacity(5);
-            if self.loc == self.grove.start_coord() {
-                // In the entry location is a special case; it can only move South
-                let coord = self.loc + Direction::S;
-                if self.is_unblocked(coord, self.time + 1) {
-                    answer.push(Step::MoveTo(coord));
-                }
-            } else {
-                // Anywhere else it can move to any space that will be free
-                for coord in self.loc.bounded_neighbors(self.grove.size) {
-                    if self.is_unblocked(coord, self.time + 1) {
-                        answer.push(Step::MoveTo(coord));
+            match self.loc {
+                Some(loc) => {
+                    // --- We're in the valley ---
+                    if loc == self.grove.start_coord() {
+                        // In the entry location is a special case; it can only move South, it can always wait
+                        let coord = loc + Direction::S;
+                        if self.is_unblocked(coord, self.time + 1) {
+                            answer.push(Step::MoveTo(coord));
+                        }
+                        answer.push(Step::Wait);
+                    } else {
+                        // Anywhere else it can move to any space that will be free; it can wait if the space will be clear
+                        for coord in loc.bounded_neighbors(self.grove.size) {
+                            if self.is_unblocked(coord, self.time + 1) {
+                                answer.push(Step::MoveTo(coord));
+                            }
+                        }
+                        if self.is_unblocked(loc, self.time + 1) {
+                            answer.push(Step::Wait);
+                        }
+                    }
+                    if loc == self.grove.start_coord() + Direction::S {
+                        // Being below the entry location is another special case; it can ALSO move to entry
+                        answer.push(Step::MoveTo(self.grove.start_coord()));
+                    }
+                    if loc == self.grove.goal_coord() {
+                        // Being above the exit location is another special case; it can exit the valley
+                        answer.push(Step::MoveOut);
                     }
                 }
-            }
-            if self.loc == self.grove.start_coord() + Direction::S {
-                // Being below the entry location is another special case; it can ALSO move to entry
-                answer.push(Step::MoveTo(self.grove.start_coord()));
-            }
-            if self.is_unblocked(self.loc, self.time + 1) {
-                answer.push(Step::Wait);
+                None => {
+                    // --- We are out of the valley ---
+                    if self.is_unblocked(self.grove.goal_coord(), self.time + 1) {
+                        answer.push(Step::MoveTo(self.grove.goal_coord()));
+                    }
+                    answer.push(Step::Wait);
+                }
             }
             if PRINT_DETAILS {
                 println!("The available moves from this state are: {:?}", answer);
@@ -489,9 +568,11 @@ mod compute {
             let time = self.time + 1;
             let loc = match mv {
                 Step::Wait => self.loc,
-                Step::MoveTo(coord) => *coord,
+                Step::MoveTo(coord) => Some(*coord),
+                Step::MoveOut => None,
             };
-            GroveState{grove, time, loc}
+            let goal = self.goal.next_goal(mv, self.grove.start_coord());
+            GroveState{grove, time, loc, goal}
         }
     }
 
@@ -504,22 +585,26 @@ mod compute {
 // ======= main() =======
 
 use parse::{input, Grove};
-use compute::solve;
-
+use compute::{solve, Goal};
 
 
 fn part_a(grove: &Grove) {
     println!("\nPart a:");
-    let solution = solve(grove);
+    let solution = solve(grove, Goal::GoToExit);
     match solution {
         None => println!("There is no solution."),
-        Some(path) => println!("Solved in {} steps: {:?} then down.", path.len() + 1, path),
+        Some(path) => println!("Solved in {} steps: {:?}", path.len(), path),
     }
 }
 
 
-fn part_b(_input: &Grove) {
+fn part_b(grove: &Grove) {
     println!("\nPart b:");
+    let solution = solve(grove, Goal::GoAcrossThreeTimes);
+    match solution {
+        None => println!("There is no solution."),
+        Some(path) => println!("Solved in {} steps: {:?}", path.len(), path),
+    }
 }
 
 
