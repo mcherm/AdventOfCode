@@ -19,26 +19,33 @@ mod parse {
 // ======= Compute =======
 
 
+/// Find and return the value of the first digit in an iterator of characters.
+/// Panics if there isn't one.
 fn find_digit(chars: impl Iterator<Item = char>) -> u32 {
     chars
         .filter(|c| c.is_digit(10))
-        .map(|c| c.to_digit(10).unwrap() as u32)
+        .map(|c| c.to_digit(10).unwrap())
         .next()
         .unwrap()
 }
 
+/// Returns the value of the first digit in the string, or panics if there isn't one.
 fn first_digit(s: &str) -> u32 {
     find_digit(s.chars())
 }
 
+/// Returns the value of the last digit in the string, or panics if there isn't one.
 fn last_digit(s: &str) -> u32 {
     find_digit(s.chars().rev())
 }
 
-fn part_a_sum(line: &str) -> u32 {
+/// Calculates the value of a line for part a.
+fn part_a_value(line: &str) -> u32 {
     first_digit(line) * 10 + last_digit(line)
 }
 
+/// A list of strings and the corresponding values, allowing for numbers to be spelled
+/// out or just be a digit.
 static NUMBER_MAP: [(&'static str, u32); 20] = [
     ("0", 0),
     ("1", 1),
@@ -84,6 +91,7 @@ fn recognize_number_backwards(s: &str) -> Option<u32> {
     None
 }
 
+/// Returns the value of the first number (digit or spelled out) in the given string.
 fn first_number(s: &str) -> u32 {
     for pos in 0..s.len() {
         let substring = &s[pos..];
@@ -99,6 +107,7 @@ fn reverse(s: &str) -> String {
     s.chars().rev().collect()
 }
 
+/// Returns the value of the last number (digit or spelled out) in the string.
 fn last_number(s: &str) -> u32 {
     let rev: String = reverse(s);
     for pos in 0..rev.len() {
@@ -110,7 +119,9 @@ fn last_number(s: &str) -> u32 {
     panic!("No number found")
 }
 
-fn part_b_sum(line: &str) -> u32 {
+
+/// Returns the value for part b of a given line.
+fn part_b_value(line: &str) -> u32 {
     first_number(line) * 10 + last_number(line)
 }
 
@@ -122,7 +133,7 @@ fn part_a(data: &Vec<String>) {
     println!("\nPart a:");
     let sum: u32 = data.iter()
         .map(|x| x.as_str())
-        .map(part_a_sum)
+        .map(part_a_value)
         .sum();
     println!("The sum is {}", sum);
 }
@@ -132,7 +143,7 @@ fn part_b(data: &Vec<String>) {
     println!("\nPart b:");
     let sum: u32 = data.iter()
         .map(|x| x.as_str())
-        .map(part_b_sum)
+        .map(part_b_value)
         .sum();
     println!("The sum is {}", sum);
 }
