@@ -3,10 +3,12 @@ use anyhow;
 
 // ======= Parsing =======
 
+type Num = u32;
+
 #[derive(Debug)]
 pub struct Card {
-    winning: Vec<u32>,
-    have: Vec<u32>,
+    winning: Vec<Num>,
+    have: Vec<Num>,
 }
 
 
@@ -74,30 +76,59 @@ mod parse {
 use std::collections::HashSet;
 
 impl Card {
-    fn points(&self) -> u32 {
-        let have_set: HashSet<u32> = self.have.iter().copied().collect();
+    /// Returns the number of items in the winning list that match.
+    fn win_count(&self) -> usize {
+        let have_set: HashSet<Num> = self.have.iter().copied().collect();
         assert!(have_set.len() == self.have.len());
-        let win_count = self.winning.iter().filter(|x| have_set.contains(x)).count();
-        if win_count == 0 {
-            0
-        } else {
-            1 << (win_count - 1)
+        self.winning.iter().filter(|x| have_set.contains(x)).count()
+    }
+
+    fn points(&self) -> Num {
+        match self.win_count() {
+            0 => 0,
+            count => 1 << (count - 1)
         }
     }
 }
+
+
+/// Examines the matching numbers for a specific card and increases the multiplier
+/// of subsequent cards
+fn score_card(cards: &Vec<Card>, multipliers: &mut Vec<usize>, which: usize) {
+    assert!(cards.len() == multipliers.len());
+    assert!(which < cards.len());
+    let matches = cards.get(which).unwrap().win_count();
+    let multiplier: usize = *multipliers.get(which).unwrap();
+    for card_number_won in (which + 1) .. (which + 1 + matches) {
+        assert!(card_number_won < cards.len()); // Rules weren't clear, if this is violated I want to know
+        multipliers[card_number_won] += multiplier;
+    }
+}
+
+/// Performs the scoring of part b.
+fn score_cards(cards: &Vec<Card>) -> usize {
+    let mut multipliers = vec![1; cards.len()];
+    for i in 0 .. cards.len() {
+        score_card(cards, &mut multipliers, i);
+    }
+    multipliers.iter().sum()
+}
+
 
 // ======= main() =======
 
 
 fn part_a(data: &Vec<Card>) {
     println!("\nPart a:");
-    let sum: u32 = data.iter().map(|x| x.points()).sum();
+    let sum: Num = data.iter().map(|x| x.points()).sum();
     println!("Sum of cards: {:?}", sum);
 }
 
 
-fn part_b(_data: &Vec<Card>) {
+fn part_b(data: &Vec<Card>) {
     println!("\nPart b:");
+    let scratchcards = score_cards(data);
+    println!("Scratchcards = {}", scratchcards);
 }
 
 
