@@ -115,9 +115,9 @@ mod parse {
 // ======= Compute =======
 
 mod compute {
-    use im::HashMap;
-    use crate::{Almanac, AlmanacMap};
-    use super::Num;
+    use super::{Almanac, AlmanacMap, AlmanacRange, Num};
+    use std::collections::HashMap;
+    use itertools::Itertools;
 
 
     /// This is a structure, made from an AlmanacMap, that performs the actual mapping.
@@ -131,6 +131,17 @@ mod compute {
         maps_by_dest: HashMap<&'a str, AlmanacMapper<'a>>,
     }
 
+    /// Represents a range of numbers, with min, top, and len.
+    #[derive(Debug)]
+    struct Range {
+        min: Num,
+        top: Num, // one more than the top number
+    }
+
+    /// This represents a few ranges of numbers.
+    type Ranges = Vec<Range>;
+
+
     impl<'a> AlmanacMapper<'a> {
         /// Takes a source number and produces the right dest value.
         fn map(&self, num: Num) -> Num {
@@ -140,6 +151,49 @@ mod compute {
                 }
             }
             num
+        }
+
+        /// Given a range, this runs it through the map and returns a new range or
+        /// ranges.
+        fn map_range(&self, input_ranges: Ranges) -> Ranges {
+            let mut input_ranges: Ranges = input_ranges;
+            for row in self.0.rows.iter() {
+                input_ranges = input_ranges.iter()
+                    .map(|in_range| map_range_to_one_row(in_range, row))
+                    .flatten()
+                    .collect();
+            }
+            let output_ranges: Ranges = input_ranges.iter()
+                .map(|in_range| Range::new(
+                    self.map(in_range.min()),
+                    self.map(in_range.max()) + 1, // convert largest, then add 1 to get top not max.
+                ))
+                .collect();
+            output_ranges
+        }
+    }
+
+    fn map_range_to_one_row(input_range: &Range, row: &AlmanacRange) -> Ranges {
+        let a = row.source_start;
+        let first_break = if a > input_range.min && a < input_range.top() {
+            Some(a)
+        } else {
+            None
+        };
+        let b = row.source_start + row.len;
+        assert!(b > a);
+        let second_break = if b > input_range.min && b < input_range.top() {
+            Some(b)
+        } else {
+            None
+        };
+        let x = input_range.min();
+        let y = input_range.top();
+        match (first_break, second_break) {
+            (None, None) => vec![Range::new(x, y)],
+            (Some(a), None) => vec![Range::new(x, a), Range::new(a, y)],
+            (None, Some(b)) => vec![Range::new(x, b), Range::new(b, y)],
+            (Some(a), Some(b)) => vec![Range::new(x, a), Range::new(a, b), Range::new(b, y)],
         }
     }
 
@@ -189,6 +243,45 @@ mod compute {
                 .unwrap()
         }
 
+        pub fn solve_part_b(&self) -> Num {
+            let path = self.path_from_seed();
+            let seed_ranges = self.seeds.chunks(2)
+                .map(|chunk| {
+                    let min = *chunk.get(0).unwrap();
+                    let len = *chunk.get(1).unwrap();
+                    Range::new(min, min + len)
+                })
+                .collect_vec();
+            let mut ranges = seed_ranges;
+            for name in path.iter().skip(1) {
+                ranges = self.maps_by_dest.get(name).unwrap().map_range(ranges);
+            }
+            ranges.iter()
+                .map(|range| range.min())
+                .min()
+                .unwrap()
+        }
+    }
+
+    impl Range {
+        fn new(min: Num, top: Num) -> Self {
+            assert!(top > min);
+            Range{min, top}
+        }
+
+        fn min(&self) -> Num {
+            self.min
+        }
+
+        /// Returns the largest one
+        fn max(&self) -> Num {
+            self.top - 1
+        }
+
+        /// Returns the upper bound (which is NOT in the range)
+        fn top(&self) -> Num {
+            self.top
+        }
     }
 }
 
@@ -205,8 +298,11 @@ fn part_a(data: &Almanac) {
 }
 
 
-fn part_b(_data: &Almanac) {
+fn part_b(data: &Almanac) {
     println!("\nPart b:");
+    let solver = AlmanacSolver::new(data);
+    let lowest_location = solver.solve_part_b();
+    println!("Lowest Location (using ranges): {}", lowest_location);
 }
 
 
