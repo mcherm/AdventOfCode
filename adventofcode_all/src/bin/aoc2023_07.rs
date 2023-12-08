@@ -1,11 +1,16 @@
+use std::cmp::Ordering;
+use std::fmt::{Display, Formatter};
 use anyhow;
+use itertools::Itertools;
 
 
 // ======= Parsing =======
 
+const CARD_CHARS: &str = "AKQJT98765432";
+
 type Num = u32;
 
-#[derive(Debug)]
+#[derive(Debug, Eq, PartialEq)]
 struct Card {
     c: char,
 }
@@ -19,7 +24,7 @@ pub struct Hand {
 
 impl Card {
     fn new(c: char) -> Self {
-        assert!("AKQJT98765432".contains(c));
+        assert!(CARD_CHARS.contains(c));
         Card{c}
     }
 }
@@ -87,7 +92,121 @@ mod parse {
 
 // ======= Compute =======
 
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+enum HandType {
+    FiveOfAKind,
+    FourOfAKind,
+    FullHouse,
+    ThreeOfAKind,
+    TwoPair,
+    OnePair,
+    HighCard,
+}
 
+impl Card {
+    /// Returns a number which can be used to sort the cards.
+    fn value(&self) -> u8 {
+        14 - (CARD_CHARS.find(self.c).unwrap() as u8)
+    }
+}
+
+impl HandType {
+    /// Returns a number which can be used to sort the hands.
+    fn rank_num(&self) -> u8 {
+        match self {
+            HandType::FiveOfAKind => 7,
+            HandType::FourOfAKind => 6,
+            HandType::FullHouse => 5,
+            HandType::ThreeOfAKind => 4,
+            HandType::TwoPair => 3,
+            HandType::OnePair => 2,
+            HandType::HighCard => 1,
+        }
+    }
+}
+
+
+impl PartialOrd for HandType {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        self.rank_num().partial_cmp(&other.rank_num())
+    }
+}
+
+
+impl Hand {
+    /// Counts how many Cards with c appear in the hand.
+    fn count(&self, c: char) -> usize {
+        self.cards.iter()
+            .filter(|card| card.c == c)
+            .count()
+    }
+
+    fn hand_type(&self) -> HandType {
+        let counts = CARD_CHARS.chars()
+            .map(|c| self.count(c))
+            .sorted()
+            .rev()
+            .take(5)
+            .collect_tuple()
+            .unwrap();
+        match counts {
+            (5,0,0,0,0) => HandType::FiveOfAKind,
+            (4,1,0,0,0) => HandType::FourOfAKind,
+            (3,2,0,0,0) => HandType::FullHouse,
+            (3,1,1,0,0) => HandType::ThreeOfAKind,
+            (2,2,1,0,0) => HandType::TwoPair,
+            (2,1,1,1,0) => HandType::OnePair,
+            (1,1,1,1,1) => HandType::HighCard,
+            _ => panic!("Invalid hand type"),
+        }
+    }
+
+    /// Returns a tuple that's useful for sorting. The tuple will sort the same way as
+    /// the hand would.
+    fn sorting_tuple(&self) -> (HandType, u8, u8, u8, u8, u8) {
+        (
+            self.hand_type(),
+            self.cards[0].value(),
+            self.cards[1].value(),
+            self.cards[2].value(),
+            self.cards[3].value(),
+            self.cards[4].value(),
+        )
+    }
+}
+
+
+impl PartialEq for Hand {
+    fn eq(&self, other: &Self) -> bool {
+        self.cards == other.cards
+    }
+}
+
+impl Eq for Hand {}
+
+impl PartialOrd for Hand {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        self.sorting_tuple().partial_cmp(&other.sorting_tuple())
+    }
+}
+
+impl Ord for Hand {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.partial_cmp(&other).unwrap()
+    }
+}
+
+impl Display for Card {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.c)
+    }
+}
+
+impl Display for Hand {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}{}{}{}{}", self.cards[0], self.cards[1], self.cards[2], self.cards[3], self.cards[4])
+    }
+}
 
 
 // ======= main() =======
@@ -95,7 +214,12 @@ mod parse {
 
 fn part_a(data: &Vec<Hand>) {
     println!("\nPart a:");
-    println!("Hands: {:?}", data);
+    let hands: Vec<&Hand> = data.iter().sorted().collect();
+    let total_win: Num = hands.iter()
+        .enumerate()
+        .map(|(i,hand): (usize,&&Hand)| ((i as Num) + 1) * hand.bid)
+        .sum();
+    println!("Total winnings: {}", total_win);
 }
 
 
