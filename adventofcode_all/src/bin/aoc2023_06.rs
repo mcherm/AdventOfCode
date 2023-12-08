@@ -1,9 +1,10 @@
 use anyhow;
+use itertools::Itertools;
 
 
 // ======= Parsing =======
 
-type Num = u32;
+type Num = u64;
 
 #[derive(Debug)]
 pub struct Race {
@@ -23,7 +24,7 @@ mod parse {
         IResult,
         bytes::complete::tag,
     };
-    use nom::character::complete::u32 as nom_num;
+    use nom::character::complete::u64 as nom_num;
 
 
     pub fn input<'a>() -> Result<Vec<Race>, anyhow::Error> {
@@ -71,7 +72,7 @@ mod parse {
 // ======= Compute =======
 
 mod compute {
-    use super::Race;
+    use super::{Race, Num};
 
     impl Race {
 
@@ -85,11 +86,28 @@ mod compute {
         }
 
     }
+
+    /// This takes an iterator of numbers and munges the digits to produce one bigger number.
+    fn fix_kerning(nums: impl Iterator<Item=Num>) -> Num {
+        let mut s = String::new();
+        for n in nums {
+            s = format!("{}{}", s, n);
+        }
+        s.parse().unwrap()
+    }
+
+    /// Given a list of races produced by "bad kerning", this creates a single Race out of it.
+    pub fn make_super_race(races: &Vec<Race>) -> Race {
+        let time = fix_kerning(races.iter().map(|race| race.time));
+        let dist = fix_kerning(races.iter().map(|race| race.dist));
+        Race{time, dist}
+    }
 }
 
 
 // ======= main() =======
 
+use compute::make_super_race;
 
 fn part_a(data: &Vec<Race>) {
     println!("\nPart a:");
@@ -100,8 +118,11 @@ fn part_a(data: &Vec<Race>) {
 }
 
 
-fn part_b(_data: &Vec<Race>) {
+fn part_b(data: &Vec<Race>) {
     println!("\nPart b:");
+    let race = make_super_race(data);
+    let answer = race.brute_force_ways_to_win();
+    println!("Big race: {:?}", answer);
 }
 
 
