@@ -5,6 +5,7 @@ use std::collections::{HashMap, HashSet};
 
 // ======= Constants =======
 
+const PRINT: bool = true;
 
 // ======= Parsing =======
 
@@ -31,8 +32,9 @@ use Direction::*;
 
 #[derive(Debug)]
 pub struct Grid {
-    width: usize,
-    height: usize,
+    bounds: Coord, // the width and height of the Grid
+    // width: usize, // FIXME: Remove
+    // height: usize, // FIXME: Remove
     start_coord: Coord,
     start_dir: Direction, // direction we start going around
     items: HashMap<Coord,Item>
@@ -133,13 +135,31 @@ impl Direction {
             West => East,
         }
     }
+
+    fn clockwise(&self) -> Direction {
+        match self {
+            North => East,
+            South => West,
+            East => South,
+            West => North,
+        }
+    }
+
+    fn counter_clockwise(&self) -> Direction {
+        match self {
+            North => West,
+            South => East,
+            East => North,
+            West => South,
+        }
+    }
 }
 
 impl Display for Grid {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         writeln!(f)?;
-        for y in 0..self.height {
-            for x in 0..self.width {
+        for y in 0..self.bounds.1 {
+            for x in 0..self.bounds.0 {
                 write!(f, "{}", self.items.get(&Coord(x,y)).unwrap())?;
             }
             writeln!(f)?
@@ -151,15 +171,15 @@ impl Display for Grid {
 impl Coord {
     /// Returns a list of (direction,neighbor_coord) pairs. It will not always be
     /// of length 4, but WILL always be in the grid.
-    fn neighbors(&self,  width: usize, height: usize) -> Vec<(Direction,Coord)> {
+    fn neighbors(&self, bounds: Coord) -> Vec<(Direction,Coord)> {
         let mut answer = Vec::with_capacity(4);
         if self.1 > 0 {
             answer.push((Direction::North, Coord(self.0, self.1 - 1)))
         }
-        if self.1 + 1 < height {
+        if self.1 + 1 < bounds.1 {
             answer.push((Direction::South, Coord(self.0, self.1 + 1)));
         }
-        if self.0 + 1 < width {
+        if self.0 + 1 < bounds.0 {
             answer.push((Direction::East, Coord(self.0 + 1, self.1)));
         }
         if self.0 > 0 {
@@ -214,11 +234,12 @@ mod parse {
                 anyhow::ensure!(y == 0 || line_width == width, "uneven lines");
                 width = line_width;
             }
+            let bounds = Coord(width, height);
 
             if let Some(start_coord) = start_opt {
                 // Need to set the start item
                 let mut connects: HashSet<Direction> = HashSet::with_capacity(2);
-                for (dir, coord) in start_coord.neighbors(width, height) {
+                for (dir, coord) in start_coord.neighbors(bounds) {
                     if items.get(&coord).unwrap().connects_to(dir.reverse()) {
                         connects.insert(dir);
                     }
@@ -229,7 +250,7 @@ mod parse {
                 items.insert(start_coord, start_item);
 
                 // Now the grid is ready
-                Ok(Grid{width, height, start_coord, start_dir, items})
+                Ok(Grid{bounds, start_coord, start_dir, items})
             } else {
                 Err(anyhow::anyhow!("no start location"))
             }
@@ -272,7 +293,7 @@ impl Grid {
         };
         loop {
             let next_coord = step.coord
-                .neighbors(self.width, self.height)
+                .neighbors(self.bounds)
                 .into_iter()
                 .filter_map(move |(dir, next_coord)| if dir == step.going_to {
                     Some(next_coord)
@@ -306,6 +327,161 @@ impl Grid {
 }
 
 
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+enum Region {
+    Pipe, Left, Right,
+}
+
+
+#[derive(Debug)]
+struct ColoredGrid<'a> {
+    grid: &'a Grid,
+    inside_region: Region,
+    regions: HashMap<Coord,Region>
+}
+
+
+impl Region {
+    /// Returns a printable character
+    fn char(&self) -> char {
+        match self {
+            Region::Pipe => '+',
+            Region::Left => 'A',
+            Region::Right => 'B',
+        }
+    }
+}
+
+
+
+// FIXME: Consider using bounds instead of passing Grid width and height everywhere
+
+/// Modifies regions by performing a flood fill from all locations marked with region treating
+/// Region::Pipe as the barriers. Also returns true if while doing so we found that it touched
+/// the edge of the graph and false if not. The grid is provided ONLY to give the dimensions for
+/// width and height.
+fn flood_fill(bounds: Coord, regions: &mut HashMap<Coord,Region>, region: Region) -> bool {
+    let mut touches_edge = false;
+    let mut current_wave: HashSet<Coord> = regions.iter()
+        .filter(|(_,v)| **v == region)
+        .map(|(k,_)| k)
+        .cloned()
+        .collect();
+    let mut next_wave: HashSet<Coord> = HashSet::new();
+
+    while current_wave.len() > 0 {
+        for coord in current_wave.iter() {
+            let neighbors = coord.neighbors(bounds);
+            if neighbors.len() < 4 {
+                touches_edge = true;
+            }
+            for (_, neighbor_coord) in neighbors {
+                let existing_region = regions.get(&neighbor_coord);
+                match existing_region {
+                    None => {
+                        regions.insert(neighbor_coord, region);
+                        next_wave.insert(neighbor_coord);
+                    },
+                    Some(Region::Pipe) => {}, // ignore this
+                    Some(r) if *r == region => {}, // ignore this
+                    Some(r) => {panic!("Got a value I didn't expect: {:?}.", r);},
+                }
+            }
+        }
+        std::mem::swap(&mut current_wave, &mut next_wave);
+        next_wave.clear();
+    }
+
+    touches_edge
+}
+
+
+impl<'a> ColoredGrid<'a> {
+    /// Construct a ColoredGrid which involves coloring all the spots.
+    fn new(grid: &'a Grid) -> Self {
+        let mut inside_region: Option<Region> = None;
+        let mut regions: HashMap<Coord,Region> = HashMap::with_capacity(grid.bounds.0 * grid.bounds.1);
+        let path = grid.trace_path();
+
+        // --- mark the pipes ---
+        for PathStep{coord, ..} in path.steps.iter() {
+            regions.insert(*coord, Region::Pipe);
+        }
+
+        // --- mark initial neighbors to left and right of path ---
+        for i in 0..path.len() {
+            // --- get where we are and which way we're going on the way out ---
+            let PathStep{coord, going_to} = path.steps.get(i).unwrap();
+            let left_dir = going_to.counter_clockwise();
+            let right_dir = going_to.clockwise();
+
+            // --- for THIS coord, mark left and right as we're facing on our way out ---
+            for (dir,neighbor_coord) in coord.neighbors(grid.bounds) {
+                // --- mark left neighbor AFTER turning ---
+                if dir == left_dir && regions.get(&neighbor_coord).is_none() {
+                    regions.insert(neighbor_coord, Region::Left);
+                }
+                // --- mark right neighbor AFTER turning ---
+                if dir == right_dir && regions.get(&neighbor_coord).is_none() {
+                    regions.insert(neighbor_coord, Region::Right);
+                }
+            }
+            // --- for NEXT coord, mark left and right as we're facing on our way IN ---
+            let PathStep{coord: next_coord, ..} = path.steps.get((i + 1) % path.len()).unwrap();
+            for (dir,neighbor_coord) in next_coord.neighbors(grid.bounds) {
+                // --- mark left neighbor AFTER turning ---
+                if dir == left_dir && regions.get(&neighbor_coord).is_none() {
+                    regions.insert(neighbor_coord, Region::Left);
+                }
+                // --- mark right neighbor AFTER turning ---
+                if dir == right_dir && regions.get(&neighbor_coord).is_none() {
+                    regions.insert(neighbor_coord, Region::Right);
+                }
+            }
+        }
+
+        // --- perform a flood fill ---
+        let is_edge = flood_fill(grid.bounds, &mut regions, Region::Left);
+        if is_edge {
+            assert!(inside_region.is_none());
+            inside_region = Some(Region::Right);
+        }
+        let is_edge = flood_fill(grid.bounds, &mut regions, Region::Right);
+        if is_edge {
+            assert!(inside_region.is_none());
+            inside_region = Some(Region::Left);
+        }
+
+        // --- validate things and return the result ---
+        assert!(regions.len() == grid.bounds.0 * grid.bounds.1); // assert we classified every spot
+        let inside_region = inside_region.unwrap();
+        ColoredGrid{grid, inside_region, regions}
+    }
+
+
+    /// Returns the number of locations inside the pipe.
+    fn count_inside(&self) -> usize {
+        self.regions.values()
+            .filter(|r| **r == self.inside_region)
+            .count()
+    }
+
+}
+
+
+impl<'a> Display for ColoredGrid<'a> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        writeln!(f)?;
+        for y in 0..self.grid.bounds.1 {
+            for x in 0..self.grid.bounds.0 {
+                write!(f, "{}", self.regions.get(&Coord(x,y)).map_or_else(|| ' ', |r| r.char()))?;
+            }
+            writeln!(f)?
+        }
+        Ok(())
+    }
+}
+
 // ======= main() =======
 
 
@@ -318,8 +494,14 @@ fn part_a(input: &Input) {
 }
 
 
-fn part_b(_input: &Input) {
+fn part_b(input: &Input) {
     println!("\nPart b:");
+    let c_grid = ColoredGrid::new(input);
+    println!("There are {} spaces inside.", c_grid.count_inside());
+    if PRINT {
+        println!();
+        println!("{}", c_grid);
+    }
 }
 
 
