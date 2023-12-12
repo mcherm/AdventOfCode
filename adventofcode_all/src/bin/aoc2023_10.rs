@@ -33,7 +33,8 @@ use Direction::*;
 pub struct Grid {
     width: usize,
     height: usize,
-    start: Coord,
+    start_coord: Coord,
+    start_dir: Direction, // direction we start going around
     items: HashMap<Coord,Item>
 }
 
@@ -168,6 +169,12 @@ impl Coord {
     }
 }
 
+impl Display for Coord {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "({},{})", self.0, self.1)
+    }
+}
+
 
 mod parse {
     use std::collections::{HashMap, HashSet};
@@ -208,20 +215,21 @@ mod parse {
                 width = line_width;
             }
 
-            if let Some(start) = start_opt {
+            if let Some(start_coord) = start_opt {
                 // Need to set the start item
                 let mut connects: HashSet<Direction> = HashSet::with_capacity(2);
-                for (dir, coord) in start.neighbors(width, height) {
+                for (dir, coord) in start_coord.neighbors(width, height) {
                     if items.get(&coord).unwrap().connects_to(dir.reverse()) {
                         connects.insert(dir);
                     }
                 }
                 anyhow::ensure!(connects.len() == 2, "start does not connect to exactly 2 pipes");
+                let start_dir: Direction = *connects.iter().next().unwrap(); // pick a direction to go around
                 let start_item: Item = connects.try_into()?;
-                items.insert(start, start_item);
+                items.insert(start_coord, start_item);
 
                 // Now the grid is ready
-                Ok(Grid{width, height, start, items})
+                Ok(Grid{width, height, start_coord, start_dir, items})
             } else {
                 Err(anyhow::anyhow!("no start location"))
             }
@@ -234,6 +242,68 @@ mod parse {
 
 // ======= Compute =======
 
+#[derive(Debug)]
+struct PathStep {
+    coord: Coord,
+    going_to: Direction,
+}
+
+#[derive(Debug)]
+struct Path {
+    steps: Vec<PathStep>
+}
+
+impl Path {
+    /// Gives the length of the Path.
+    fn len(&self) -> usize {
+        self.steps.len()
+    }
+}
+
+impl Grid {
+    /// Traces the path, from start_pos going until we get back
+    /// to it, returned as a Path object. Panics if the path is
+    /// found to not be a proper loop.
+    fn trace_path(&self) -> Path {
+        let mut steps = Vec::new();
+        let mut step: PathStep = PathStep{
+            coord: self.start_coord,
+            going_to: self.start_dir,
+        };
+        loop {
+            let next_coord = step.coord
+                .neighbors(self.width, self.height)
+                .into_iter()
+                .filter_map(move |(dir, next_coord)| if dir == step.going_to {
+                    Some(next_coord)
+                } else {
+                    None
+                })
+                .next()
+                .expect(format!("path goes off the board at {}", step.coord).as_str());
+            let next_item = self.items.get(&next_coord).unwrap();
+            if matches!(next_item, Item::Ground) {
+                panic!("path leads to the ground at {}", step.coord)
+            }
+            let mut where_we_could_go_next = next_item.connections();
+            let connected_to_prev_step = where_we_could_go_next.remove(&step.going_to.reverse());
+            if !connected_to_prev_step {
+                panic!("path doesn't connect properly at {}", step.coord)
+            }
+            assert!(where_we_could_go_next.len() == 1);
+            let next_going_to = where_we_could_go_next.into_iter().next().unwrap();
+
+            // Now we can actually move there and create the new PathStep
+            steps.push(step);
+            step = PathStep{coord: next_coord, going_to: next_going_to};
+            if step.coord == self.start_coord {
+                // we completed the loop!
+                break;
+            }
+        }
+        Path{steps}
+    }
+}
 
 
 // ======= main() =======
@@ -241,7 +311,10 @@ mod parse {
 
 fn part_a(input: &Input) {
     println!("\nPart a:");
-    println!("The input is {:?}", input);
+    let len = input.trace_path().len();
+    assert!(len % 2 == 0);
+    let half_len = len / 2;
+    println!("The midpoint is {} steps away", half_len);
 }
 
 
