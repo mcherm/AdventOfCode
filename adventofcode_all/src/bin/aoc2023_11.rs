@@ -115,7 +115,7 @@ impl SpaceImage {
     /// Given two coords that are within the SpaceImage and that are both galaxies,
     /// this returns that taxicab distance between them after expansion. It panics
     /// on any other input.
-    fn expanded_distance(&self, a: Coord, b: Coord) -> usize {
+    fn expanded_distance(&self, expansion: usize, a: Coord, b: Coord) -> usize {
         assert!(a.0 < self.bound.0 && a.1 < self.bound.1);
         assert!(b.0 < self.bound.0 && b.1 < self.bound.1);
         assert!(self.is_galaxy(a) && self.is_galaxy(b));
@@ -126,11 +126,11 @@ impl SpaceImage {
         let expanded_y = self.empty_rows.iter()
             .filter(|y| **y > a.1.min(b.1) && **y < a.1.max(b.1))
             .count();
-        base_dist + expanded_x + expanded_y
+        base_dist + (expansion - 1) * (expanded_x + expanded_y)
     }
 
     /// Returns the sum of the distance between all pairs of galaxies.
-    fn expanded_distance_all_pairs(&self) -> usize {
+    fn expanded_distance_all_pairs(&self, expansion: usize) -> usize {
         let mut galaxies: Vec<Coord> = Vec::new();
         for y in 0..self.bound.1 {
             for x in 0..self.bound.0 {
@@ -143,7 +143,7 @@ impl SpaceImage {
         let mut answer: usize = 0;
         for (i, gal_1) in galaxies.iter().enumerate() {
             for gal_2 in galaxies.iter().skip(i + 1) {
-                answer += self.expanded_distance(*gal_1, *gal_2);
+                answer += self.expanded_distance(expansion, *gal_1, *gal_2);
             }
         }
         answer
@@ -156,12 +156,13 @@ impl SpaceImage {
 
 fn part_a(input: &Input) {
     println!("\nPart a:");
-    println!("Dist between all galaxy pairs is {}", input.expanded_distance_all_pairs());
+    println!("Dist between all galaxy pairs is {}", input.expanded_distance_all_pairs(2));
 }
 
 
-fn part_b(_input: &Input) {
+fn part_b(input: &Input) {
     println!("\nPart b:");
+    println!("Dist between all galaxy pairs is {}", input.expanded_distance_all_pairs(1000000));
 }
 
 
