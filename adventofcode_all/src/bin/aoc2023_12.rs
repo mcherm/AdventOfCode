@@ -1,6 +1,6 @@
 use std::fmt::{Display, Formatter};
+use std::iter::Iterator;
 use anyhow;
-use itertools::Itertools;
 
 
 // ======= Constants =======
@@ -18,7 +18,6 @@ pub struct ConditionRecord {
 
 
 type Input = Vec<ConditionRecord>;
-
 
 
 
@@ -304,6 +303,99 @@ impl ConditionRecord {
         }
         answer
     }
+
+
+    /// Return a RefRecord made from this record.
+    fn as_ref_record<'a>(&'a self) -> RefRecord<'a> {
+        let pattern: &[u8] = self.pattern.as_bytes();
+        assert!(pattern.len() == self.pattern.len());
+        let groups: &[usize] = &self.groups;
+        RefRecord{pattern, groups}
+    }
+}
+
+/// It's like a ConditionRecord but it doesn't own its contents.
+#[derive(Debug)]
+struct RefRecord<'a> {
+    pattern: &'a [u8], // uses ascii
+    groups: &'a [usize],
+}
+
+
+impl<'a> Display for RefRecord<'a> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let readable_pattern: String = self.pattern.iter().map(|x| *x as char).collect();
+        write!(f, "RefRecord{{\"{}\" {:?}}}", readable_pattern, self.groups)
+    }
+}
+
+/// Given a slice of numbers, which more than 1 item long, this splits it into 3 groups:
+/// left slice, middle item, and right slice. The right slice could be of length 0.
+fn split_group_at_pivot<'a>(groups: &'a [usize]) -> (&'a [usize], usize, &'a [usize]) {
+    assert!(groups.len() >= 1); // do NOT use this on lists < 1 item
+    let pivot = groups.len() / 2;
+    (&groups[0..pivot], groups[pivot], &groups[pivot + 1..])
+}
+
+/// Given a slice of numbers representing group sizes, returns the minimum number of spaces
+/// it must take up for that many groups plus one item of padding on one side if there is
+/// at least 1 group. Note that a zero length slice will always return 0.
+fn min_possible_size_with_padding(groups: &[usize]) -> usize {
+    groups.iter().sum::<usize>() + groups.len()
+}
+
+
+
+
+impl<'a> RefRecord<'a> {
+    /// Try again with a different algorithm. This one is based on placing some middle
+    /// group and then splitting up into a left-hand and right-hand side problem.
+    fn valid_pattern_count(&self) -> usize {
+        let mut count = 0;
+        let (left_groups, group, right_groups) = split_group_at_pivot(&self.groups);
+        let leftmost_pos = min_possible_size_with_padding(left_groups);
+        let rightmost_pos = self.pattern.len() - min_possible_size_with_padding(right_groups) - group;
+        for insert_at in leftmost_pos..=rightmost_pos {
+            // -- make sure the group is over '?' or '#'
+            let group_can_go_there = self.pattern[insert_at..(insert_at + group)].iter()
+                .all(|c| *c != '.' as u8); // none are '.'
+            let ends_on_left = insert_at == 0 || self.pattern[insert_at - 1] != '#' as u8; // no '#' before it
+            let right_bound = insert_at + group;
+            let ends_on_right = right_bound == self.pattern.len() || self.pattern[right_bound] != '#' as u8; // no '#' after it
+            let can_place_here = group_can_go_there && ends_on_left && ends_on_right;
+            if can_place_here {
+
+                // --- do left side ---
+                let left_arrangements = if left_groups.len() > 0 {
+                    let left_record = RefRecord{pattern: &self.pattern[..(insert_at - 1)], groups: left_groups};
+                    left_record.valid_pattern_count()
+                } else {
+                    if insert_at <= 1 {
+                        1
+                    } else {
+                        let left_pattern = &self.pattern[..(insert_at - 1)];
+                        if left_pattern.iter().all(|x| *x != '#' as u8) {1} else {0}
+                    }
+                };
+
+                // --- do right side ---
+                let right_arrangements = if right_groups.len() > 0 {
+                    let right_record = RefRecord{pattern: &self.pattern[(right_bound + 1)..], groups: right_groups};
+                    right_record.valid_pattern_count()
+                } else {
+                    if right_bound > self.pattern.len() - 1 {
+                        1
+                    } else {
+                        let right_pattern = &self.pattern[(right_bound + 1)..];
+                        if right_pattern.iter().all(|x| *x != '#' as u8) {1} else {0}
+                    }
+                };
+                count += left_arrangements * right_arrangements;
+            }
+        }
+        count
+    }
+
 }
 
 // ======= main() =======
@@ -318,12 +410,8 @@ fn part_a(input: &Input) {
 
 fn part_b(input: &Input) {
     println!("\nPart b:");
-    let unfolded = input.iter().map(|x| x.unfold()).collect_vec();
-    let total_count: usize = unfolded.iter()
-        .map(|x| {
-            println!("--- doing {:?}", x);
-            x.fast_valid_pattern_count()
-        })
+    let total_count: usize = input.iter()
+        .map(|x| x.unfold().as_ref_record().valid_pattern_count())
         .sum();
     println!("The sum of the possible arrangements on each line is {}", total_count);
 }
