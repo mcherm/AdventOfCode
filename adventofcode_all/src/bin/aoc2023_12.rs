@@ -352,15 +352,15 @@ impl<'a> RefRecord<'a> {
     /// group and then splitting up into a left-hand and right-hand side problem.
     fn valid_pattern_count(&self) -> usize {
         let mut count = 0;
-        let (left_groups, group, right_groups) = split_group_at_pivot(&self.groups);
+        let (left_groups, group_len, right_groups) = split_group_at_pivot(&self.groups);
         let leftmost_pos = min_possible_size_with_padding(left_groups);
-        let rightmost_pos = self.pattern.len() - min_possible_size_with_padding(right_groups) - group;
+        let rightmost_pos = self.pattern.len() - min_possible_size_with_padding(right_groups) - group_len;
         for insert_at in leftmost_pos..=rightmost_pos {
             // -- make sure the group is over '?' or '#'
-            let group_can_go_there = self.pattern[insert_at..(insert_at + group)].iter()
+            let group_can_go_there = self.pattern[insert_at..(insert_at + group_len)].iter()
                 .all(|c| *c != '.' as u8); // none are '.'
             let ends_on_left = insert_at == 0 || self.pattern[insert_at - 1] != '#' as u8; // no '#' before it
-            let right_bound = insert_at + group;
+            let right_bound = insert_at + group_len;
             let ends_on_right = right_bound == self.pattern.len() || self.pattern[right_bound] != '#' as u8; // no '#' after it
             let can_place_here = group_can_go_there && ends_on_left && ends_on_right;
             if can_place_here {
