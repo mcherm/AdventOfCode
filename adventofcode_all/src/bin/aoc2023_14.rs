@@ -2,6 +2,10 @@ use std::fmt::{Display, Formatter};
 use anyhow;
 use itertools::Itertools;
 use std::ops::Range;
+use std::collections::HashMap;
+use std::hash::Hasher;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::Hash;
 
 
 // ======= Constants =======
@@ -216,8 +220,8 @@ impl Grid {
         }
     }
 
-    /// Gives the overall load for the given column.
-    fn column_load(&self, x: usize) -> usize {
+    /// Gives the overall load for the given column (part 1).
+    fn column_load_after_tilt_north(&self, x: usize) -> usize {
         assert!(x < self.width());
         let mut load = 0;
         let mut floating_rounds = 0;
@@ -244,9 +248,24 @@ impl Grid {
     }
 
     /// Find the total load (part 1).
+    fn load_after_tilt_north(&self) -> usize {
+        (0..self.width()).map(|y| self.column_load_after_tilt_north(y)).sum()
+    }
+
+
+    /// Gives the overall load for the given column (part 1).
+    fn column_load(&self, x: usize) -> usize {
+        assert!(x < self.width());
+        (0..self.height())
+            .map(|y| if self.value(Coord(x,y)) == Rock::Round {self.height() - y} else {0})
+            .sum()
+    }
+
+    /// Find the total load (part 1).
     fn load(&self) -> usize {
         (0..self.width()).map(|y| self.column_load(y)).sum()
     }
+
 
 
     /// Finds a single column of tilting north
@@ -322,26 +341,50 @@ impl Grid {
 }
 
 
+
+fn calculate_hash<T: Hash>(t: &T) -> u64 {
+    let mut s = DefaultHasher::new();
+    t.hash(&mut s);
+    s.finish()
+}
+
+/// This performs part b by advancing a grid by a given number of cycles
+/// which may be a very large number of cycles and returning the Grid we
+/// get at the end.
+fn advance_many_cycles(grid: &Grid, n: usize) -> Grid {
+    let mut prev_stages: HashMap<Grid, usize> = HashMap::new();
+    let mut g = grid.clone();
+    let extra_steps;
+    for i in 0..n {
+        if let Some(loop_start) = prev_stages.get(&g) {
+            let loop_len = i - loop_start;
+            extra_steps = (n - loop_start) % loop_len;
+            for _ in 0..extra_steps {
+                g = g.cycle();
+            }
+            return g;
+        }
+        prev_stages.insert(g.clone(),i);
+        g = g.cycle();
+    }
+    g
+}
+
+
 // ======= main() =======
 
 
 fn part_a(input: &Input) {
     println!("\nPart a:");
-    let load = input.load();
+    let load = input.load_after_tilt_north();
     println!("The load was {}", load);
 }
 
 
 fn part_b(input: &Input) {
     println!("\nPart b:");
-    println!("Input is {}", input);
-    let grid = input;
-    let grid = grid.cycle();
-    println!("After one cycle it is {}", grid);
-    let grid = grid.cycle();
-    println!("After two cycles it is {}", grid);
-    let grid = grid.cycle();
-    println!("After three cycles it is {}", grid);
+    let advanced_grid = advance_many_cycles(input, 1000000000);
+    println!("Its load is {}", advanced_grid.load());
 }
 
 
