@@ -6,3 +6,4 @@ pub mod eznom;
 pub mod hash_life;
 
 pub mod astar;
+pub mod grid;
