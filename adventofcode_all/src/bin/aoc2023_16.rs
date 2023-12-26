@@ -142,8 +142,8 @@ struct ActiveBeamTable<'a> {
 const STARTING_TIP: BeamTip = BeamTip{destination: Coord(0,0), dir: Direction::East};
 
 impl<'a> ActiveBeamTable<'a> {
-    fn new(controls: &'a BeamGrid) -> Self {
-        let beams = vec![STARTING_TIP];
+    fn new(controls: &'a BeamGrid, start: BeamTip) -> Self {
+        let beams = vec![start];
         let illuminated: Grid<HashSet<Direction>> = Grid::new_default(controls.bound());
         Self{controls, beams, illuminated}
     }
@@ -195,6 +195,7 @@ impl<'a> ActiveBeamTable<'a> {
             .map(|set| if set.is_empty() {0} else {1})
             .sum()
     }
+
 }
 
 // ======= main() =======
@@ -202,15 +203,33 @@ impl<'a> ActiveBeamTable<'a> {
 
 fn part_a(input: &Input) {
     println!("\nPart a:");
-    let mut active = ActiveBeamTable::new(input);
+    let mut active = ActiveBeamTable::new(input, STARTING_TIP);
     active.advance_all();
     let count = active.count_energized();
     println!("There are {} that are active.", count);
 }
 
 
-fn part_b(_input: &Input) {
+fn part_b(input: &Input) {
     println!("\nPart b:");
+    let width = input.bound().x();
+    let height = input.bound().y();
+    use Direction::*;
+    let east_tips = (0..height).map(|y| BeamTip{destination: Coord(0,y), dir: East});
+    let west_tips = (0..height).map(|y| BeamTip{destination: Coord(width - 1,y), dir: West});
+    let south_tips = (0..width).map(|x| BeamTip{destination: Coord(x,0), dir: South});
+    let north_tips = (0..width).map(|x| BeamTip{destination: Coord(x, height - 1), dir: North});
+    let tips = east_tips.chain(west_tips).chain(south_tips).chain(north_tips);
+    let mut max_energized: usize = 0;
+    for tip in tips {
+        let mut active = ActiveBeamTable::new(input, tip);
+        active.advance_all();
+        let count = active.count_energized();
+        if count > max_energized {
+            max_energized = count;
+        }
+    }
+    println!("The best we can do is to energize {} of them.", max_energized);
 }
 
 
