@@ -354,7 +354,6 @@ impl Region {
 
 
 
-// FIXME: Consider using bounds instead of passing Grid width and height everywhere
 
 /// Modifies regions by performing a flood fill from all locations marked with region treating
 /// Region::Pipe as the barriers. Also returns true if while doing so we found that it touched
