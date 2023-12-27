@@ -18,6 +18,9 @@ mod direction {
     use Direction::*;
 
     impl Direction {
+        pub const ALL: [Direction; 4] = [East, South, West, North];
+
+
         /// Returns the next Direction clockwise from this one.
         pub fn clockwise(&self) -> Direction {
             match self {
@@ -107,6 +110,30 @@ mod coord {
                 Direction::West => if self.x() > 0 {Some(Coord(self.x() - 1, self.y()))} else {None},
                 Direction::North => if self.y() > 0 {Some(Coord(self.x(), self.y() - 1))} else {None},
             }
+        }
+
+        /// This returns all the adjacent neighbors of this coord. It will *not* include any
+        /// neighbors that would have an x or y coordinate < 0, or which would not be < bound.
+        pub fn neighbors(&self, bound: Coord) -> Vec<Coord> {
+            let mut answer = Vec::with_capacity(4);
+            if self.0 > 0 { answer.push(Coord(self.0 - 1, self.1)) }
+            if self.1 > 0 { answer.push(Coord(self.0, self.1 - 1)) }
+            if self.0 + 1 < bound.0 { answer.push(Coord(self.0 + 1, self.1)) }
+            if self.1 + 1 < bound.1 { answer.push(Coord(self.0, self.1 + 1)) }
+            answer
+        }
+
+        /// This returns the directions of all adjacent neighbors of this coord. It will *not*
+        /// include the direction to any neighbors hat would have an x or y coordinate < 0, or
+        /// which would not be < bound.
+        pub fn neighbor_directions(&self, bound: Coord) -> Vec<Direction> {
+            let mut answer = Vec::with_capacity(4);
+            use Direction::*;
+            if self.0 > 0 { answer.push(West) }
+            if self.1 > 0 { answer.push(North) }
+            if self.0 + 1 < bound.0 { answer.push(East) }
+            if self.1 + 1 < bound.1 { answer.push(South) }
+            answer
         }
     }
 
