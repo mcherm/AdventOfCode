@@ -101,6 +101,30 @@ mod coord {
             ByColsCoordIterator::new(*self)
         }
 
+        /// This gives the coord that is one step away in the given direction, or None if
+        /// stepping that way would take us below 0. See also bounded_step() that ensures we
+        /// stay within some rectangle and safe_step() that is simpler to use if we know
+        /// that it won't go out of bounds.
+        pub fn step(&self, dir: Direction) -> Option<Coord> {
+            match dir {
+                Direction::East => Some(Coord(self.x() + 1, self.y())),
+                Direction::South => Some(Coord(self.x(), self.y() + 1)),
+                Direction::West => if self.x() > 0 {Some(Coord(self.x() - 1, self.y()))} else {None},
+                Direction::North => if self.y() > 0 {Some(Coord(self.x(), self.y() - 1))} else {None},
+            }
+        }
+
+        /// This gives the coord that is one step away in the given direction. It panics if
+        /// that goes below 0 -- use it only when it is known to be safe.
+        pub fn safe_step(&self, dir: Direction) -> Coord {
+            match dir {
+                Direction::East => Coord(self.x() + 1, self.y()),
+                Direction::South => Coord(self.x(), self.y() + 1),
+                Direction::West => Coord(self.x() - 1, self.y()),
+                Direction::North => Coord(self.x(), self.y() - 1),
+            }
+        }
+
         /// This gives the coord that is one step away in the given direction. But, it returns
         /// None instead if the step would take us below 0 or beyond the given bound.
         pub fn bounded_step(&self, dir: Direction, bound: Coord) -> Option<Coord> {
@@ -121,6 +145,18 @@ mod coord {
             if self.0 + 1 < bound.0 { answer.push(Coord(self.0 + 1, self.1)) }
             if self.1 + 1 < bound.1 { answer.push(Coord(self.0, self.1 + 1)) }
             answer
+        }
+
+        /// This returns all the adjacent neighbors of this coord. It will panic if the coord
+        /// given has x=0 or y=0 (so a neighbor would be out of bounds), so it should only
+        /// be called if we are sure that is safe.
+        pub fn safe_neighbors(&self) -> [Coord; 4] {
+            [
+                Coord(self.0 - 1, self.1),
+                Coord(self.0, self.1 - 1),
+                Coord(self.0 + 1, self.1),
+                Coord(self.0, self.1 + 1),
+            ]
         }
 
         /// This returns the directions of all adjacent neighbors of this coord. It will *not*
