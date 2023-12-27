@@ -85,11 +85,15 @@ struct SolverPos {
     cost: u32,
 }
 
+enum CrucibleType {
+    Normal, Ultra
+}
+
 
 
 impl SolverState {
-    /// Returns true if this solves it; false if not.
-    fn finished(&self, grid: &HeatLossGrid) -> bool {
+    /// Returns true if this is at the exit of the grid; false if not.
+    fn at_grid_exit(&self, grid: &HeatLossGrid) -> bool {
         self.coord.x() + 1 == grid.bound().x() && self.coord.y() + 1 == grid.bound().y()
     }
 }
@@ -105,10 +109,34 @@ impl Debug for SolverPos {
     }
 }
 
+
+impl CrucibleType {
+    /// Returns the minimum number of steps in a straight line for this crucible type.
+    fn min_straight(&self) -> u8 {
+        match self {
+            CrucibleType::Normal => 1,
+            CrucibleType::Ultra => 4,
+        }
+    }
+
+    /// Returns the maximum number of steps in a straight line for this crucible type.
+    fn max_straight(&self) -> u8 {
+        match self {
+            CrucibleType::Normal => 3,
+            CrucibleType::Ultra => 10,
+        }
+    }
+
+    fn can_stop(&self, state: &SolverState) -> bool {
+        state.steps_gone_straight >= self.min_straight()
+    }
+}
+
+
 /// Given a HeatLossGrid, this finds the one of the fastest paths from the top-left to
 /// the bottom-right and then returns the total cost of that (excluding the cost to enter
 /// the top-left).
-fn solve(grid: &HeatLossGrid) -> u32 {
+fn solve(grid: &HeatLossGrid, crucible: CrucibleType) -> u32 {
     let mut available_positions: Vec<SolverPos> = Vec::new(); // we'll keep this sorted with least cost at the end
     let mut visited_states: HashSet<SolverState> = HashSet::new();
     let start_pos = SolverPos{
@@ -124,8 +152,7 @@ fn solve(grid: &HeatLossGrid) -> u32 {
     // Loop until we find the answer (or run out of choices!)
     while let Some(pos) = available_positions.pop() {
 
-        if pos.state.finished(grid) {
-            println!("Finished at pos {:?}", pos);
+        if pos.state.at_grid_exit(grid) && crucible.can_stop(&pos.state) {
             return pos.cost;
         }
 
@@ -136,11 +163,18 @@ fn solve(grid: &HeatLossGrid) -> u32 {
         if was_new { // if it wasn't new, then we've done this before and can skip the rest
 
             // Figure out the directions we can go (ignoring out-of-bounds)
+            let min_straight = crucible.min_straight();
+            let max_straight = crucible.max_straight();
+            assert!(state.steps_gone_straight <= max_straight);
             let mut next_directions: HashSet<Direction> = Direction::ALL.iter().copied().collect();
             if let Some(dir) = state.dir { // except for when we teleported in
                 next_directions.remove(&dir.reverse()); // can't reverse
-                if state.steps_gone_straight == 3 {
-                    next_directions.remove(&dir); // can't go 3 steps in a line
+                if state.steps_gone_straight < min_straight { // can't turn if less than min_straight
+                    next_directions.remove(&dir.clockwise());
+                    next_directions.remove(&dir.counter_clockwise());
+                }
+                if state.steps_gone_straight == max_straight {
+                    next_directions.remove(&dir); // can't go more than max_straight steps in a line
                 }
             }
 
@@ -197,13 +231,15 @@ fn solve(grid: &HeatLossGrid) -> u32 {
 
 fn part_a(input: &Input) {
     println!("\nPart a:");
-    let heat_loss = solve(input);
+    let heat_loss = solve(input, CrucibleType::Normal);
     println!("When solved, it loses at least {} heat.", heat_loss);
 }
 
 
-fn part_b(_input: &Input) {
+fn part_b(input: &Input) {
     println!("\nPart b:");
+    let heat_loss = solve(input, CrucibleType::Ultra);
+    println!("When solved, it loses at least {} heat.", heat_loss);
 }
 
 
