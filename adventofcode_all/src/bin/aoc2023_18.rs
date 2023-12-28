@@ -47,7 +47,7 @@ impl Display for DigStep {
 }
 
 
-type Input = Vec<DigStep>;
+type Input = Vec<(DigStep,DigStep)>;
 
 
 
@@ -76,29 +76,64 @@ mod parse {
                 |c: char| DigDir::from_char(c)
             )(input)
         }
+
+        /// Reads the coded version, using 0..3
+        fn parse_coded(input: &str) -> IResult<&str, Self> {
+            nom::combinator::map(
+                nom::character::complete::one_of("0123"),
+                |c: char| DigDir::from_char(match c {
+                    '0' => 'R', '1' => 'D', '2' => 'L', '3' => 'U', _ => panic!()
+                })
+            )(input)
+        }
     }
 
     impl DigStep {
-        fn parse(input: &str) -> IResult<&str, Self> {
+        fn parse_normal(input: &str) -> IResult<&str, Self> {
             nom::combinator::map(
                 nom::sequence::tuple((
                     DigDir::parse,
                     nom::bytes::complete::tag(" "),
-                    nom_num,
-                    nom::bytes::complete::tag(" ("),
-                    nom::bytes::complete::is_not(")"),
-                    nom::bytes::complete::tag(")"),
+                    nom_num
                 )),
-                |(dig_dir, _, dist, _, _, _)| {
+                |(dig_dir, _, dist)| {
                     DigStep{dig_dir, dist}
                 }
             )(input)
         }
 
-        fn parse_list(input: &str) -> IResult<&str, Vec<Self>> {
+        fn parse_coded(input: &str) -> IResult<&str, Self> {
+            nom::combinator::map(
+                nom::sequence::tuple((
+                    nom::bytes::complete::tag("(#"),
+                    nom::bytes::complete::take(5usize),
+                    DigDir::parse_coded,
+                    nom::bytes::complete::tag(")"),
+                )),
+                |(_, hex, dig_dir, _)| {
+                    let dist = u32::from_str_radix(hex, 16).expect("invalid hex chars");
+                    DigStep{dig_dir, dist}
+                }
+            )(input)
+        }
+
+        fn parse_pair(input: &str) -> IResult<&str, (Self, Self)> {
+            nom::combinator::map(
+                nom::sequence::tuple((
+                    Self::parse_normal,
+                    nom::bytes::complete::tag(" "),
+                    Self::parse_coded,
+                )),
+                |(first, _, second)| {
+                    (first, second)
+                }
+            )(input)
+        }
+
+        fn parse_list(input: &str) -> IResult<&str, Vec<(Self,Self)>> {
             nom::multi::many1(
                 nom::sequence::terminated(
-                    Self::parse,
+                    Self::parse_pair,
                     nom::character::complete::line_ending,
                 )
             )(input)
@@ -142,14 +177,14 @@ impl DigGrid {
     /// the offset at which the starting location must be placed to ensure that we never
     /// go off the left and top edges, and the second is the bounds of the rectangle we
     /// will fill.
-    fn find_bounds(input: &Input) -> (Coord, Coord) {
+    fn find_bounds(steps: &Vec<DigStep>) -> (Coord, Coord) {
         let mut x: i64 = 0;
         let mut y: i64 = 0;
         let mut min_x: i64 = 0;
         let mut min_y: i64 = 0;
         let mut max_x: i64 = 0;
         let mut max_y: i64 = 0;
-        for step in input {
+        for step in steps {
             match step.dig_dir.0 {
                 Direction::East => x += step.dist as i64,
                 Direction::South => y += step.dist as i64,
@@ -203,10 +238,10 @@ impl DigGrid {
     }
 
     /// Creates the grid from a given input.
-    fn new(input: &Input) -> Self {
+    fn new(steps: &Vec<DigStep>) -> Self {
 
         // --- Find the bounds and make a grid ---
-        let (offset, bounds) = Self::find_bounds(input);
+        let (offset, bounds) = Self::find_bounds(steps);
         let mut grid: Grid<DigType> = Grid::new_default(bounds);
 
         // --- Dig the trenches ---
@@ -243,7 +278,7 @@ impl DigGrid {
             }
         }
 
-        for step in input {
+        for step in steps {
             fill_inward(&mut grid, &mut need_to_swap, step.dig_dir, pos);
             for _ in 0..step.dist {
                 pos = pos.safe_step(step.dig_dir.0);
@@ -289,13 +324,18 @@ impl Display for DigGrid {
 
 fn part_a(input: &Input) {
     println!("\nPart a:");
-    let dig_grid = DigGrid::new(input);
+    let steps = input.into_iter().map(|(x,_)| x).copied().collect();
+    let dig_grid = DigGrid::new(&steps);
     println!("The area it can hold is {}", dig_grid.area());
 }
 
 
-fn part_b(_input: &Input) {
+fn part_b(input: &Input) {
     println!("\nPart b:");
+    let steps: Vec<DigStep> = input.into_iter().map(|(_,x)| x).copied().collect();
+    for step in steps {
+        println!("Step: {}", step);
+    }
 }
 
 
