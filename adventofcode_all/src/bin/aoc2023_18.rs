@@ -1,7 +1,9 @@
 use std::fmt::{Display, Formatter};
-use std::collections::HashSet;
+use std::collections::{HashSet, HashMap};
 use std::cmp::{max, min};
+use std::hash::Hash;
 use anyhow;
+use itertools::Itertools;
 use advent_lib::grid::{Direction, Coord, Grid};
 
 
@@ -237,7 +239,8 @@ impl DigGrid {
         }
     }
 
-    /// Creates the grid from a given input.
+    /// Creates the grid from a given input. This will ONLY work if the length of the
+    /// steps is small enough that we can actually create a grid.
     fn new(steps: &Vec<DigStep>) -> Self {
 
         // --- Find the bounds and make a grid ---
@@ -319,6 +322,152 @@ impl Display for DigGrid {
     }
 }
 
+
+/// An object that supports mapping from indexes to items or items to indexes (efficiently
+/// in either direction).
+struct TwoWayIndexMap<T: Hash + Ord + Clone> {
+    index_to_value: Vec<T>,
+    value_to_index: HashMap<T,usize>,
+}
+
+impl<T: Hash + Ord + Clone> TwoWayIndexMap<T> {
+
+    /// This is passed a set of values which can be sorted. It puts them in order, and numbers
+    /// them 0, 1, 2, and so forth, then returns a TwoWayIndexMap which can efficiently convert
+    /// either way between values and indexes.
+    pub fn new(values: HashSet<T>) -> TwoWayIndexMap<T> {
+        let index_to_value: Vec<T> = values.iter().sorted().cloned().collect();
+        let value_to_index: HashMap<T,usize> = index_to_value.iter()
+            .enumerate()
+            .map(|(i,x)| (x.clone(),i))
+            .collect();
+        TwoWayIndexMap{index_to_value, value_to_index}
+    }
+
+    /// Convert index to value.
+    pub fn to_value(&self, i: usize) -> Option<&T> {
+        self.index_to_value.get(i)
+    }
+
+    /// Convert value to index.
+    pub fn to_index(&self, value: &T) -> Option<usize> {
+        self.value_to_index.get(value).map(|x| *x)
+    }
+
+    /// Returns the number of items that are mapped.
+    #[allow(dead_code)] // This is useful when printing stuff out and debugging
+    pub fn len(&self) -> usize {
+        self.index_to_value.len()
+    }
+}
+
+
+
+
+/// This determines the area for a path where the steps are too big to solve using
+/// just a simple grid (because it would take too much memory).
+fn giant_size_area(steps: &Vec<DigStep>) -> usize {
+
+    // --- Find the bounds ---
+    let (offset, bounds) = DigGrid::find_bounds(steps);
+
+    // --- Find interesting rows and columns ---
+    // These are the rows/columns where we dig a trench AND those one away from it.
+    // The idea is that everything can be compressed to a "big" grid storing only
+    // these "interesting" rows and columns.
+    use Direction::*;
+    let mut special_rows: HashSet<usize> = HashSet::with_capacity(steps.len());
+    let mut special_cols: HashSet<usize> = HashSet::with_capacity(steps.len());
+    let mut x: usize = offset.0;
+    let mut y: usize = offset.1;
+    for step in steps {
+        match step.dig_dir.0 {
+            East => x += step.dist as usize,
+            South => y += step.dist as usize,
+            West => x -= step.dist as usize,
+            North => y -= step.dist as usize,
+        }
+        match step.dig_dir.0 {
+            East | West => {
+                special_rows.insert(y);
+                special_rows.insert(y + 1);
+            },
+            North | South => {
+                special_cols.insert(x);
+                special_cols.insert(x + 1);
+            },
+        }
+    }
+    // The boundaries should be included because they were one more than a boundary
+    //   trench. Confirm that this is the case.
+    assert!(special_rows.contains(&bounds.y()));
+    assert!(special_cols.contains(&bounds.x()));
+
+    // --- Build a 2-way map between "special rows" and "special cols" and small numbers ---
+    let row_map = TwoWayIndexMap::new(special_rows);
+    let col_map = TwoWayIndexMap::new(special_cols);
+
+    // --- Construct an input based on the indexes, which WILL be small enough to solve ---
+    let mut small_steps: Vec<DigStep> = Vec::with_capacity(steps.len());
+    let mut big_x: usize = offset.0;
+    let mut big_y: usize = offset.1;
+    for big_step in steps {
+        let dig_dir = big_step.dig_dir;
+        let big_dist = big_step.dist;
+        let small_dist = match dig_dir.0 {
+            East => {
+                let small_start = col_map.to_index(&big_x).expect("any value we encounter should be in the map");
+                big_x += big_dist as usize;
+                let small_end = col_map.to_index(&big_x).expect("any value we encounter should be in the map");
+                let small_dist = small_end - small_start;
+                small_dist as u32
+            },
+            South => {
+                let small_start = row_map.to_index(&big_y).expect("any value we encounter should be in the map");
+                big_y += big_dist as usize;
+                let small_end = row_map.to_index(&big_y).expect("any value we encounter should be in the map");
+                let small_dist = small_end - small_start;
+                small_dist as u32
+            },
+            West => {
+                let small_start = col_map.to_index(&big_x).expect("any value we encounter should be in the map");
+                big_x -= big_dist as usize;
+                let small_end = col_map.to_index(&big_x).expect("any value we encounter should be in the map");
+                let small_dist = small_start - small_end;
+                small_dist as u32
+            },
+            North => {
+                let small_start = row_map.to_index(&big_y).expect("any value we encounter should be in the map");
+                big_y -= big_dist as usize;
+                let small_end = row_map.to_index(&big_y).expect("any value we encounter should be in the map");
+                let small_dist = small_start - small_end;
+                small_dist as u32
+            },
+        };
+        let small_step = DigStep{dig_dir: dig_dir, dist: small_dist};
+        small_steps.push(small_step);
+    }
+
+    // --- Solve the small one ---
+    let small_dig_grid = DigGrid::new(&small_steps);
+
+    // --- Find the area, but use bigger sizes ---
+    let big_grid_area: usize = small_dig_grid.grid.bound().range_by_rows()
+        .filter(|coord| *small_dig_grid.grid.get(*coord) != DigType::Edge)
+        .map(|coord| {
+            let big_x_min = col_map.to_value(coord.x()).expect("any value we encounter should be in the map");
+            let big_x_max = col_map.to_value(coord.x() + 1).expect("any value we encounter should be in the map");
+            let big_delta_x = big_x_max - big_x_min;
+            let big_y_min = row_map.to_value(coord.y()).expect("any value we encounter should be in the map");
+            let big_y_max = row_map.to_value(coord.y() + 1).expect("any value we encounter should be in the map");
+            let big_delta_y = big_y_max - big_y_min;
+            big_delta_x * big_delta_y
+        })
+        .sum();
+
+    big_grid_area
+}
+
 // ======= main() =======
 
 
@@ -333,9 +482,8 @@ fn part_a(input: &Input) {
 fn part_b(input: &Input) {
     println!("\nPart b:");
     let steps: Vec<DigStep> = input.into_iter().map(|(_,x)| x).copied().collect();
-    for step in steps {
-        println!("Step: {}", step);
-    }
+    let area = giant_size_area(&steps);
+    println!("The area it can hold is {}", area);
 }
 
 
