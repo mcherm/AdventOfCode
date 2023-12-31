@@ -1,5 +1,6 @@
 use std::fmt::{Debug, Display, Formatter};
 use anyhow;
+use im::HashMap;
 use advent_lib::asciienum::AsciiEnum;
 
 
@@ -13,12 +14,7 @@ type Num = u32;
 
 
 AsciiEnum!{
-    enum Rating {
-        X('x'),
-        M('m'),
-        A('a'),
-        S('s'),
-    }
+    enum Rating { X('x'), M('m'), A('a'), S('s') }
 }
 
 
@@ -198,13 +194,104 @@ mod parse {
 
 // ======= Compute =======
 
+impl Part {
+    /// Returns the rating this part has for the given Rating.
+    fn get_rating(&self, r: Rating) -> Num {
+        use Rating::*;
+        match r {
+            X => self.x,
+            M => self.m,
+            A => self.a,
+            S => self.s,
+        }
+    }
+}
+
+impl CompareOp {
+    /// Returns true if a is compare_op of b.
+    fn is(&self, a: Num, b: Num) -> bool {
+        use CompareOp::*;
+        match self {
+            Less => a < b,
+            More => a > b,
+        }
+    }
+}
+
+impl Rule {
+    /// Applies this rule to the given Part. Returns None if this rule doesn't say what to
+    /// do, or a reference to a str if it should go somewhere.
+    fn apply(&self, part: Part) -> Option<&str> {
+        let r = part.get_rating(self.rating);
+        if self.compare_op.is(r, self.value) {
+            Some(&self.target)
+        } else {
+            None
+        }
+    }
+}
+
+impl Workflow {
+    /// Returns the name as an &str.
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Applies this workflow to the given Part and returns the name of the destination
+    /// (which could be a Workflow or could be "R" or "A").
+    fn apply(&self, part: Part) -> &str {
+        for rule in self.rules.iter() {
+            if let Some(destination) = rule.apply(part) {
+                return destination;
+            }
+        }
+        &self.default_target
+    }
+}
+
+#[derive(Debug)]
+struct Workshop<'a> {
+    workflow_map: HashMap<&'a str, &'a Workflow>,
+}
+
+#[derive(Debug)]
+enum Outcome { Accept, Reject }
+
+impl<'a> Workshop<'a> {
+    fn new(workflows: &'a Vec<Workflow>) -> Self {
+        let mut workflow_map = HashMap::new();
+        for workflow in workflows.iter() {
+            workflow_map.insert(workflow.name(), workflow);
+        }
+        Self{workflow_map}
+    }
+
+    fn process_part(&self, part: Part) -> Outcome {
+        let mut current: &str = "in";
+        loop {
+            current = self.workflow_map.get(current).expect("workflow name not found").apply(part);
+            match current {
+                "A" => return Outcome::Accept,
+                "R" => return Outcome::Reject,
+                _ => {},
+            }
+        }
+    }
+}
+
+
 
 // ======= main() =======
 
 
 fn part_a(input: &Input) {
     println!("\nPart a:");
-    println!("The input is {:?}", input);
+    let workshop = Workshop::new(&input.workflows);
+    let accepted_sum: Num = input.parts.iter()
+        .filter(|part| matches!(workshop.process_part(**part), Outcome::Accept))
+        .map(|part| part.x + part.m + part.a + part.s)
+        .sum();
+    println!("accepted_sum: {}", accepted_sum);
 }
 
 
