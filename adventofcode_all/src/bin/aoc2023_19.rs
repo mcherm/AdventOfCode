@@ -1,6 +1,6 @@
 use std::fmt::{Debug, Display, Formatter};
 use anyhow;
-use im::HashMap;
+use std::collections::HashMap;
 use advent_lib::asciienum::AsciiEnum;
 
 
