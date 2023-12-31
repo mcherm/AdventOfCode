@@ -30,7 +30,6 @@ AsciiEnum!{
     enum CompareOp { Less('<'), More('>') }
 }
 
-#[allow(dead_code)] // FIXME: Remove once I use it
 #[derive(Debug)]
 pub struct Rule {
     rating: Rating,
@@ -39,7 +38,6 @@ pub struct Rule {
     target: String,
 }
 
-#[allow(dead_code)] // FIXME: Remove once I use it
 #[derive(Debug)]
 pub struct Workflow {
     name: String,
@@ -47,7 +45,6 @@ pub struct Workflow {
     default_target: String,
 }
 
-#[allow(dead_code)] // FIXME: Remove once I use it
 #[derive(Debug)]
 pub struct ProblemSet {
     workflows: Vec<Workflow>,
