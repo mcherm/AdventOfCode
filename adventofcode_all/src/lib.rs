@@ -7,3 +7,4 @@ pub mod hash_life;
 
 pub mod astar;
 pub mod grid;
+pub mod asciienum;

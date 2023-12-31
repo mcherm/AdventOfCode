@@ -1,5 +1,6 @@
 use std::fmt::{Debug, Display, Formatter};
 use anyhow;
+use advent_lib::asciienum::AsciiEnum;
 
 
 // ======= Constants =======
@@ -9,12 +10,17 @@ use anyhow;
 
 type Num = u32;
 
-// FIXME: Maybe it's time to build the library for "AsciiEnum".
 
-#[derive(Copy, Clone)]
-enum Rating {
-    X, M, A, S
+
+AsciiEnum!{
+    enum Rating {
+        X('x'),
+        M('m'),
+        A('a'),
+        S('s'),
+    }
 }
+
 
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]
 pub struct Part {
@@ -24,11 +30,11 @@ pub struct Part {
     s: Num,
 }
 
-#[derive(Copy, Clone)]
-enum CompareOp {
-    Less, More
+AsciiEnum!{
+    enum CompareOp { Less('<'), More('>'), }
 }
 
+#[allow(dead_code)] // FIXME: Remove once I use it
 #[derive(Debug)]
 pub struct Rule {
     rating: Rating,
@@ -37,6 +43,7 @@ pub struct Rule {
     target: String,
 }
 
+#[allow(dead_code)] // FIXME: Remove once I use it
 #[derive(Debug)]
 pub struct Workflow {
     name: String,
@@ -44,6 +51,7 @@ pub struct Workflow {
     default_target: String,
 }
 
+#[allow(dead_code)] // FIXME: Remove once I use it
 #[derive(Debug)]
 pub struct ProblemSet {
     workflows: Vec<Workflow>,
@@ -56,81 +64,6 @@ type Input = ProblemSet;
 struct InvalidRatingError(char);
 
 
-
-impl TryFrom<char> for Rating {
-    type Error = anyhow::Error;
-
-    fn try_from(value: char) -> Result<Self, Self::Error> {
-        use Rating::*;
-        Ok(match value {
-            'x' => X,
-            'm' => M,
-            'a' => A,
-            's' => S,
-            _ => return Err(anyhow::anyhow!("invalid rating character '{}'", value))
-        })
-    }
-}
-
-impl From<Rating> for char {
-    fn from(value: Rating) -> Self {
-        use Rating::*;
-        match value {
-            X => 'x',
-            M => 'm',
-            A => 'a',
-            S => 's',
-        }
-    }
-}
-
-impl Debug for Rating {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        let c: char = (*self).into();
-        write!(f, "{}", c)
-    }
-}
-
-impl Display for Rating {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self)
-    }
-}
-
-impl TryFrom<char> for CompareOp {
-    type Error = anyhow::Error;
-
-    fn try_from(value: char) -> Result<Self, Self::Error> {
-        use CompareOp::*;
-        Ok(match value {
-            '<' => Less,
-            '>' => More,
-            _ => return Err(anyhow::anyhow!("invalid character '{}'", value))
-        })
-    }
-}
-
-impl From<CompareOp> for char {
-    fn from(value: CompareOp) -> Self {
-        use CompareOp::*;
-        match value {
-            Less => '<',
-            More => '>',
-        }
-    }
-}
-
-impl Debug for CompareOp {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", match self {CompareOp::Less => '<', CompareOp::More => '>'})
-    }
-}
-
-impl Display for CompareOp {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self)
-    }
-}
 
 impl Display for Part {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
@@ -151,6 +84,7 @@ impl Workflow {
 }
 
 
+
 mod parse {
     use super::{Input, Part, Rating, CompareOp, Rule, Workflow, ProblemSet};
     use std::fs;
@@ -165,24 +99,6 @@ mod parse {
             Ok(("", x)) => Ok(x),
             Ok((s, _)) => panic!("Extra input starting at {}", s),
             Err(_) => panic!("Invalid input"),
-        }
-    }
-
-    impl Rating {
-        fn parse(input: &str) -> IResult<&str, Self> {
-            nom::combinator::map(
-                nom::character::complete::one_of("xmas"),
-                |c: char| Self::try_from(c).expect("should already be a valid character")
-            )(input)
-        }
-    }
-
-    impl CompareOp {
-        fn parse(input: &str) -> IResult<&str, Self> {
-            nom::combinator::map(
-                nom::character::complete::one_of("<>"),
-                |c: char| Self::try_from(c).expect("should already be a valid character")
-            )(input)
         }
     }
 
