@@ -27,7 +27,7 @@ pub struct Part {
 }
 
 AsciiEnum!{
-    enum CompareOp { Less('<'), More('>'), }
+    enum CompareOp { Less('<'), More('>') }
 }
 
 #[allow(dead_code)] // FIXME: Remove once I use it

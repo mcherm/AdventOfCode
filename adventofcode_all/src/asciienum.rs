@@ -16,14 +16,11 @@
 
 
 
-// FIXME: In the match pattern, the comma is optional, but I only really wanted a TRAILING comma
-//   to be optional. This way doesn't really break anything.
-
 #[macro_export]
 macro_rules! AsciiEnum{
     (
         enum $type_name:ident {
-            $($item_name:ident($ch:expr) $(,)? )*
+            $($item_name:ident($ch:expr) ),* $(,)?
         }
     ) => {
         #[derive(Copy, Clone, Eq, PartialEq, Hash)]
