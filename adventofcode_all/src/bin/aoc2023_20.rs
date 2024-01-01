@@ -1,3 +1,22 @@
+///
+/// Part 2 of this advent of code problem has done something which rather annoys me. The
+/// problem to solve is one which is straightforward to code in a simple fashion, but it's
+/// execution time for the input problem when coded that way is too long. So far, that's
+/// perfectly fine, but there is (as far as I know, and I think this may be provable) no way
+/// to write an algorithm that is fundamentally faster and works for any possible input.
+///
+/// The PARTICULAR input we have received is of a very particular form, which CAN (if you
+/// analyze it) be solved. I analyzed my own input by hand and created a diagram, which
+/// you can see in "/notes/2023/aoc2023_20_diagram.svg". It has basically been set up to
+/// [NOT SURE OF THIS... PROVE IT LATER] multiply 4 large numbers.
+///
+/// What I am going to set out to do is (1) write the naive code that will technically solve
+/// this for any possible input, (2) detect whether the input is of the specific form that
+/// mine is, and if so, solve it faster. That way I will technically have something that can
+/// solve any possible input, and can solve the actual inputs people get in reasonable time.
+///
+
+
 use std::fmt::{Debug, Display, Formatter};
 use anyhow;
 use std::collections::{VecDeque, HashMap, HashSet, hash_map};
@@ -37,8 +56,6 @@ pub struct Machine {
     flip_flops: FixedStringMap<bool>,
     /// for each conjunction, for each input, existing and true means it was high, missing or false means it was low
     conjunctions: FixedStringMap<FixedStringMap<PulseKind>>,
-    /// to count pulses
-    pulse_count: HashMap<PulseKind,usize>,
 }
 
 type Input = Machine;
@@ -115,13 +132,8 @@ impl Machine {
         }
         let modules = FixedStringMap(module_map);
 
-        // -- empty pulse count to start with --
-        let mut pulse_count = HashMap::with_capacity(2);
-        pulse_count.insert(Low, 0);
-        pulse_count.insert(High, 0);
-
         // -- construct it --
-        Self{modules, flip_flops, conjunctions, pulse_count}
+        Self{modules, flip_flops, conjunctions}
     }
 }
 
@@ -213,16 +225,19 @@ impl<'a> Display for Pulse<'a> {
 
 impl Machine {
     /// The naive implementation of pressing a button. It simulates all the pulses
-    /// resulting from a button press. This uses the existing state of everything,
-    /// and it increments the pulse_count.
-    fn button_push(&mut self) {
+    /// resulting from a button press. This uses the existing state of everything in
+    /// the machine. For different parts of the problem, we want it to DO different
+    /// things, so we provide a pulse_func, which is called each time the Machine
+    /// sends any Pulse. For instance, for part 1 we will use a function that simply
+    /// increments the pulse_count.
+    fn button_push<T: FnMut(&Pulse)>(&mut self, mut pulse_func: T) {
         use PulseKind::*;
         use ModuleKind::*;
         let mut pulses: VecDeque<Pulse> = VecDeque::new();
         pulses.push_back(Pulse{kind: Low, source: "button", destination: "broadcaster"});
         while let Some(pulse) = pulses.pop_front() {
-            // increment the count of pulses sent
-            *(self.pulse_count.get_mut(&pulse.kind).unwrap()) += 1;
+            // invoke the pulse_func
+            pulse_func(&pulse);
 
             let module = self.modules.get(pulse.destination);
             let new_pulse_kind: Option<PulseKind> = match module.kind {
@@ -259,23 +274,43 @@ impl Machine {
         }
     }
 
-    /// Returns the product of low pulses sent and high pulses sent.
-    fn pulse_count_code(&self) -> usize {
-        use PulseKind::*;
-        self.pulse_count.get(&High).unwrap() * self.pulse_count.get(&Low).unwrap()
-    }
 }
+
+/// This solves part 1. It sends the given number button-pushes and counts the number of high
+/// and low pulses that occur, then multiplies those and returns the answer, the
+/// "pulse_count_code".
+fn count_pulses(input: &Machine, pushes: usize) -> usize {
+    use PulseKind::*;
+    // -- create machine --
+    let mut machine = input.clone();
+
+    // -- empty pulse count to start with --
+    let mut pulse_count: HashMap<PulseKind,usize> = HashMap::with_capacity(2);
+    pulse_count.insert(Low, 0);
+    pulse_count.insert(High, 0);
+
+    // -- create counter function that increments the pulse count --
+    let mut pulse_func = |pulse: &Pulse| {
+        *(pulse_count.get_mut(&pulse.kind).unwrap()) += 1;
+    };
+
+    // -- send the pushes (using this function) --
+    for _ in 0..pushes {
+        machine.button_push(&mut pulse_func);
+    }
+
+    // -- return the answer --
+    pulse_count.get(&High).unwrap() * pulse_count.get(&Low).unwrap()
+}
+
+
 
 // ======= main() =======
 
 
 fn part_a(input: &Input) {
     println!("\nPart a:");
-    let mut machine = input.clone();
-    for _ in 0..1000 {
-        machine.button_push();
-    }
-    let pulse_count_code = machine.pulse_count_code();
+    let pulse_count_code = count_pulses(input, 1000);
     println!("The pulse count code is {}", pulse_count_code);
 }
 
