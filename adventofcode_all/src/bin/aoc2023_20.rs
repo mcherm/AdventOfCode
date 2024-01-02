@@ -19,7 +19,8 @@
 
 use std::fmt::{Debug, Display, Formatter};
 use anyhow;
-use std::collections::{VecDeque, HashMap, HashSet, hash_map};
+use std::collections::{VecDeque, HashMap, BTreeMap, HashSet};
+use std::hash::Hash;
 
 
 // ======= Constants =======
@@ -27,12 +28,12 @@ use std::collections::{VecDeque, HashMap, HashSet, hash_map};
 
 // ======= Parsing =======
 
-#[derive(Debug, Eq, PartialEq, Copy, Clone)]
+#[derive(Debug, Hash, Eq, PartialEq, Copy, Clone)]
 pub enum ModuleKind {
     Broadcaster, FlipFlop, Conjunction, Output
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Hash, Eq, PartialEq)]
 pub struct Module {
     name: String,
     kind: ModuleKind,
@@ -43,8 +44,8 @@ pub struct Module {
 /// To protect against bugs, I want to create a variant of HashMap that does not let you
 /// alter the keys. It has only the actual calls I happen to be using, and it only allows
 /// Strings as keys.
-#[derive(Debug, Clone)]
-struct FixedStringMap<V>(HashMap<String,V>);
+#[derive(Debug, Hash, Eq, PartialEq, Clone)]
+struct FixedStringMap<V: Hash>(BTreeMap<String,V>);
 
 #[derive(Debug, Eq, PartialEq, Copy, Clone, Hash)]
 enum PulseKind { High, Low }
@@ -68,7 +69,7 @@ impl Module {
     }
 }
 
-impl<V> FixedStringMap<V> {
+impl<V: Hash> FixedStringMap<V> {
     /// Retrieves a reference to the value from the map, but because the strings are known, this
     /// one returns &T (not Option<&T> like HashMap) and it panics if the string passed isn't
     /// valid.
@@ -84,7 +85,7 @@ impl<V> FixedStringMap<V> {
     }
 
     /// Iterator for the values in the map, just like in HashMap.
-    fn values(&self) -> hash_map::Values<'_, String, V> {
+    fn values(&self) -> std::collections::btree_map::Values<'_, String, V> {
         self.0.values()
     }
 }
@@ -101,16 +102,16 @@ impl Machine {
         use ModuleKind::*;
         use PulseKind::*;
         // -- construct FlipFlop state --
-        let flip_flops_map: HashMap<String,bool> = modules.iter()
+        let flip_flops_map: BTreeMap<String,bool> = modules.iter()
             .filter_map(|m| if m.kind == FlipFlop {Some((m.name.clone(), false))} else {None})
             .collect();
         let flip_flops = FixedStringMap(flip_flops_map);
 
         // -- construct Conjunction state --
-        let conjunctions_map: HashMap<String, FixedStringMap<PulseKind>> = modules.iter()
+        let conjunctions_map: BTreeMap<String, FixedStringMap<PulseKind>> = modules.iter()
             .filter(|m| m.kind == Conjunction)
             .map(|m| {
-                let source_state_map: HashMap<String,PulseKind> = modules.iter()
+                let source_state_map: BTreeMap<String,PulseKind> = modules.iter()
                     .filter(|source_m| source_m.destinations.contains(&m.name))
                     .map(|source_m| (source_m.name.clone(), Low))
                     .collect();
@@ -123,7 +124,7 @@ impl Machine {
         let all_names_sent_to: HashSet<String> = modules.iter()
             .flat_map(|m| m.destinations.iter().map(|dest| dest.clone()))
             .collect();
-        let mut module_map: HashMap<String, Module> = modules.into_iter().map(|m| (m.name.clone(), m)).collect();
+        let mut module_map: BTreeMap<String, Module> = modules.into_iter().map(|m| (m.name.clone(), m)).collect();
         for name in all_names_sent_to {
             if !module_map.contains_key(&name) {
                 let nowhere: Vec<&str> = Vec::new();
@@ -224,17 +225,15 @@ impl<'a> Display for Pulse<'a> {
 }
 
 impl Machine {
-    /// The naive implementation of pressing a button. It simulates all the pulses
-    /// resulting from a button press. This uses the existing state of everything in
-    /// the machine. For different parts of the problem, we want it to DO different
-    /// things, so we provide a pulse_func, which is called each time the Machine
-    /// sends any Pulse. For instance, for part 1 we will use a function that simply
-    /// increments the pulse_count.
-    fn button_push<T: FnMut(&Pulse)>(&mut self, mut pulse_func: T) {
+    /// This injects the given Pulse into the Machine and triggers all subsequent internal
+    /// pulses until things settle down. For different parts of the problem, we want it to
+    /// DO different things, so we provide a pulse_func, which is called each time the
+    /// Machine sends any Pulse to anywhere.
+    fn inject_pulse<T: FnMut(&Pulse)>(&mut self, mut pulse_func: T, pulse: Pulse) {
         use PulseKind::*;
         use ModuleKind::*;
         let mut pulses: VecDeque<Pulse> = VecDeque::new();
-        pulses.push_back(Pulse{kind: Low, source: "button", destination: "broadcaster"});
+        pulses.push_back(pulse);
         while let Some(pulse) = pulses.pop_front() {
             // invoke the pulse_func
             pulse_func(&pulse);
@@ -274,6 +273,17 @@ impl Machine {
         }
     }
 
+    /// The naive implementation of pressing a button. It simulates all the pulses
+    /// resulting from a button press. This uses the existing state of everything in
+    /// the machine. For different parts of the problem, we want it to DO different
+    /// things, so we provide a pulse_func, which is called each time the Machine
+    /// sends any Pulse. For instance, for part 1 we will use a function that simply
+    /// increments the pulse_count.
+    fn button_push<T: FnMut(&Pulse)>(&mut self, pulse_func: T) {
+        let pulse = Pulse{kind: PulseKind::Low, source: "button", destination: "broadcaster"};
+        self.inject_pulse(pulse_func, pulse);
+    }
+
 }
 
 /// This solves part 1. It sends the given number button-pushes and counts the number of high
@@ -304,6 +314,208 @@ fn count_pulses(input: &Machine, pushes: usize) -> usize {
 }
 
 
+/// This just solves part 2 in a very straightforward manner. It may run way too long.
+/// It repetedly presses the button until a pulse of kind_needed is sent to the module
+/// named module_to_watch (which must exist or this panics!).
+/// It is not at all generalized... for instance, it looks for the specific field "rx"
+/// as its output. It returns the number of pushes needed before the component "rx"
+/// (which must exist or this panics) receives a low pulse.
+#[allow(dead_code)] // FIXME: Remove once I'm using this as a fallback
+fn pushes_until_pulse_received(input: &Machine, module_to_watch: &str, kind_needed: PulseKind) -> usize {
+    // -- create machine --
+    let mut machine = input.clone();
+
+    // -- here is the state we'll be updating --
+    let mut done: bool = false;
+
+    // -- send the pushes (using this function) --
+    let mut pushes: usize = 0;
+    while !done {
+        pushes += 1;
+        // -- create counter function that updates <done> --
+        let mut pulse_func = |pulse: &Pulse| {
+            if pulse.destination == module_to_watch && pulse.kind == kind_needed {
+                done = true;
+            }
+        };
+        machine.button_push(&mut pulse_func);
+    }
+
+    // -- return the answer --
+    pushes
+}
+
+
+/// An Isolate is a very particular structure, which would be quite specialized and unlikely
+/// in general problems, but which happens to occur within the particular Machines that are
+/// given out for this problem. It consists of a particular subset of the nodes of some
+/// Machine, which have the following properties:
+///   (1) This subset of nodes may have many connections between members of the set, but
+///       it has only one incoming link and one outgoing link.
+///   (2) The incoming link always receives a series of "Low" pulses.
+#[derive(Debug)]
+struct Isolate<'a> {
+    /// The original machine which we read from. It will NOT be run, but will get
+    /// duplicated and the duplicate executed.
+    original_machine: &'a Machine,
+    /// The set of nodes in the machine. All must be names of Modules in the source_machine.
+    members: HashSet<&'a str>,
+    /// The module (in the subset) that receives the series of Low pulses.
+    start_module: &'a str,
+    /// The name to use for the source of the input pulses
+    source: &'a str,
+    /// The module (NOT in the subset) that receives the output
+    exit_module: &'a str,
+}
+
+
+/// This represents a stream of PulseTypes (abstracting away what it is going to and coming
+/// from) which is assumed to repeat.
+struct PulseStream {
+    /// Just a list of (PulseKind, number-of-repeats) pairs.
+    items: Vec<(PulseKind, usize)>,
+}
+
+/// The state of a Machine.
+#[derive(Hash, Eq, PartialEq, Clone)]
+struct MachineState {
+    flip_flops: FixedStringMap<bool>,
+    conjunctions: FixedStringMap<FixedStringMap<PulseKind>>,
+}
+
+
+/// Can't easily create this as a constant, so here's a function to creat a PulseStream
+/// of all Low Pulses.
+fn all_low() -> PulseStream {
+    PulseStream{items: vec![(PulseKind::Low, 1)]}
+}
+
+struct PulseStreamIter<'a> {
+    stream: &'a PulseStream,
+    item: usize, // next item to read from
+    pos: usize, // next pos in that item
+}
+
+
+impl PulseStream {
+    /// Length before this repeats. Always at least 1.
+    fn len(&self) -> usize {
+        self.items.iter().map(|(_,x)| x).sum()
+    }
+
+    /// Iterate through the PulseStream.
+    fn iter(&self) -> PulseStreamIter {
+        PulseStreamIter{stream: self, item: 0, pos: 0}
+    }
+}
+
+impl<'a> Iterator for PulseStreamIter<'a> {
+    type Item = PulseKind;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let (next, count) = self.stream.items[self.item];
+        self.pos += 1;
+        if self.pos == count {
+            self.pos = 0;
+            self.item += 1;
+            if self.item == self.stream.items.len() {
+                self.item = 0; // because we loop around infinitely
+            }
+        }
+        Some(next)
+    }
+}
+
+
+impl MachineState {
+    /// Get the state from a machine.
+    fn snag_state(machine: &Machine) -> Self {
+        MachineState{
+            flip_flops: machine.flip_flops.clone(),
+            conjunctions: machine.conjunctions.clone(),
+        }
+    }
+}
+
+
+impl<'a> Isolate<'a> {
+    /// Create a new Isolate. All items in members should be names of Modules in source_machine.
+    /// start_module should be a name in members and exit_module should be a name NOT in
+    /// members that is the name of some other Module in source_machine.
+    fn new(
+        original_machine: &'a Machine,
+        members: HashSet<&'a str>,
+        start_module: &'a str,
+        source: &'a str,
+        exit_module: &'a str
+    ) -> Self {
+        Isolate{original_machine, members, start_module, source, exit_module}
+    }
+
+    /// Finds the output of this Isolate (the hard way... by trying it until it repeats). It
+    /// returns a tuple with the number of input pulses needed until it repeats and the
+    /// PulseStream that it emits.
+    /// // FIXME: Need to include position in the input_stream as part of the state
+    fn find_output(&self, input_stream: PulseStream) -> (usize, PulseStream) {
+        // -- make a Machine for just this isolate, which we'll run until it repeats a state --
+        let modules = self.members.iter()
+            .map(|name| self.original_machine.modules.get(name).clone())
+            .collect();
+        let mut mini_machine: Machine = Machine::new(modules);
+
+        // -- we'll iterate through the input --
+        let mut iter = input_stream.iter();
+
+        // -- keep a list of all the states we've ever been in. and if they were new --
+        let mut state_was_new: bool;
+        let mut states_seen: HashSet<MachineState> = HashSet::new();
+        states_seen.insert(MachineState::snag_state(&mini_machine));
+
+        // -- collect the data we need in order to return a PulseStream --
+        let mut output_items: Vec<(PulseKind, usize)> = Vec::new();
+
+        // -- loop through until it repeats --
+        let mut input_pulse_count = 0;
+        loop {
+            // there could be multiple output pulses from this one input... collect them here
+            let mut output_pulse_kinds: Vec<PulseKind> = Vec::new();
+            let pulse_func = |pulse: &Pulse| {
+                if pulse.destination == self.exit_module {
+                    output_pulse_kinds.push(pulse.kind);
+                }
+            };
+            let pulse: Pulse = Pulse{kind: iter.next().unwrap(), source: self.source, destination: self.start_module};
+            mini_machine.inject_pulse(pulse_func, pulse);
+
+            // -- this one counts, so record the outputs --
+            input_pulse_count += 1;
+            for pulse_kind in output_pulse_kinds {
+                match output_items.pop() {
+                    Some( (prev_pulse_kind, prev_pulse_count) ) => {
+                        if prev_pulse_kind == pulse_kind {
+                            output_items.push( (pulse_kind, prev_pulse_count + 1) );
+                        } else {
+                            output_items.push( (prev_pulse_kind, prev_pulse_count) );
+                            output_items.push( (pulse_kind, 1) );
+                        }
+                    }
+                    None => {
+                        output_items.push( (pulse_kind, 1) );
+                    }
+                }
+            }
+
+            // -- see if it's time to exit --
+            state_was_new = states_seen.insert(MachineState::snag_state(&mini_machine));
+            if !state_was_new {
+                break;
+            }
+        }
+
+        // -- return the output --
+        (input_pulse_count, PulseStream{items: output_items})
+    }
+}
 
 // ======= main() =======
 
@@ -315,8 +527,48 @@ fn part_a(input: &Input) {
 }
 
 
-fn part_b(_input: &Input) {
+fn part_b(input: &Input) {
     println!("\nPart b:");
+    // FIXME: The following is the "works-for-anything" version.
+    // let pushes_needed = pushes_until_pulse_received(input, "rx", PulseKind::Low);
+    // println!("It took {} pushes before rs first received a Low pulse.", pushes_needed);
+
+    // FIXME: The following is where I'm slowly building up the specialized version.
+    // FIXME: Remove this block
+    //use ModuleKind::*;
+    // let module_data: Vec<(&str,ModuleKind,Vec<&str>)> = vec![
+    //     ("mg", FlipFlop, vec!["fj", "dt"]),
+    //     ("fj", FlipFlop, vec!["tr", "dt"]),
+    //     ("tr", FlipFlop, vec!["bx", "dt"]),
+    //     ("bx", FlipFlop, vec!["qb"]),
+    //     ("qb", FlipFlop, vec!["qm"]),
+    //     ("qm", FlipFlop, vec!["dt"]),
+    //     ("dt", Conjunction, vec!["mg", "cl", "bx", "qb"]),
+    // ];
+    // let modules = module_data.iter().map(|(a,b,c)| Module::new(*a,*b,c.clone())).collect();
+    // let machine = Machine::new(modules);
+    // let members: HashSet<&str> = module_data.iter().map(|x| x.0).collect();
+    let machine = input;
+    {
+        let members: HashSet<&str> = [
+            "mg", "fj", "tr", "bx", "qb", "qm", "ll", "zb", "gz", "dx", "bv", "bs", "dt"
+        ].iter().cloned().collect();
+        let start_module = "mg";
+        let exit_module = "cl";
+    }
+    let members: HashSet<&str> = [
+        "sb", "lp", "sh", "kn", "jc", "zf", "lh", "kd", "jg", "bj", "fp", "bk", "cs"
+    ].iter().cloned().collect();
+    let start_module = "sb";
+    let exit_module = "dr";
+    let source = "broadcaster";
+    let isolate = Isolate::new(machine, members, start_module, source, exit_module);
+
+    let (input_pulse_count, output_pulse_stream) = isolate.find_output(all_low());
+    println!("With {} inputs, we get a looping output of length {}", input_pulse_count, output_pulse_stream.len());
+    for (pulse_type, count) in output_pulse_stream.items {
+        println!("    {} of {}", count, pulse_type);
+    }
 }
 
 
@@ -334,6 +586,30 @@ mod test {
     use super::*;
 
     #[test]
-    fn none() {
+    fn isolate() {
+        use ModuleKind::*;
+        use PulseKind::*;
+        let module_data: Vec<(&str,ModuleKind,Vec<&str>)> = vec![
+            ("mg", FlipFlop, vec!["fj", "dt"]),
+            ("fj", FlipFlop, vec!["tr", "dt"]),
+            ("tr", FlipFlop, vec!["dt"]),
+            ("dt", Conjunction, vec!["mg", "cl"]),
+        ];
+        let modules = module_data.iter().map(|(a,b,c)| Module::new(*a,*b,c.clone())).collect();
+        let machine = Machine::new(modules);
+        let members: HashSet<&str> = module_data.iter().map(|x| x.0).collect();
+        let start_module = "mg";
+        let source = "broadcaster";
+        let exit_module = "cl";
+        let isolate = Isolate::new(&machine, members, start_module, source, exit_module);
+
+        let (input_pulse_count, output_pulse_stream) = isolate.find_output(all_low());
+
+        assert_eq!(input_pulse_count, 7);
+        assert_eq!(output_pulse_stream.len(), 14);
+        assert_eq!(
+            output_pulse_stream.items,
+            vec![(High,10), (Low,1), (High,3)]
+        );
     }
 }
