@@ -455,7 +455,11 @@ impl<'a> Isolate<'a> {
     /// Finds the output of this Isolate (the hard way... by trying it until it repeats). It
     /// returns a tuple with the number of input pulses needed until it repeats and the
     /// PulseStream that it emits.
-    /// // FIXME: Need to include position in the input_stream as part of the state
+    ///
+    /// FIXME: We need to know how many button presses until it gets the single low pulse as the
+    ///   first output after some button press. But returning the stream and the count of presses
+    ///   doesn't quite do that. Maybe we'll change this so it detects the particular thing we
+    ///   care about?
     fn find_output(&self, input_stream: PulseStream) -> (usize, PulseStream) {
         // -- make a Machine for just this isolate, which we'll run until it repeats a state --
         let modules = self.members.iter()
@@ -517,6 +521,91 @@ impl<'a> Isolate<'a> {
     }
 }
 
+
+/// Based on the input I saw, I expect other machines to be like mine: they'll have
+/// a Broadcast module that leads to several "stacks" of FlipFlop modules, which
+/// connect to a single Collecter module and all that (except the Broadcast module)
+/// forms one Isolate. (We then expect each of these to each lead to a single Collecter
+/// used as an inverter, then all those join in one Collecter which leads to "rx".)
+///
+/// This function is passed a machine, and attempts to locate that exact pattern. If
+/// it succeeds in finding the pattern, it returns the Isolates; if the pattern does
+/// not seem to hold then it returns None.
+fn build_expected_isolates<'a>(machine: &'a Machine) -> Option< Vec<Isolate<'a>> > {
+    use ModuleKind::*;
+    let source = "broadcaster";
+    let starts: Vec<&str> = machine.modules.get(source).destinations.iter()
+        .map(|s| s.as_str()).collect();
+    let mut answer: Vec<Isolate> = Vec::new();
+    for start_module in starts {
+        // -- for this start_module, we will find an Isolate (or fail to and bail) --
+        let mut modules_to_check: Vec<&str> = vec![start_module];
+        let mut the_collector_opt: Option<&str> = None;
+        let mut exit_module_opt: Option<&str> = None;
+        let mut members: HashSet<&str> = HashSet::new();
+
+        // -- keep looping, adding in everything linked to other than the exit_module --
+        while let Some(name) = modules_to_check.pop() {
+            if !members.contains(name) { // if we didn't already do this one
+                let module = machine.modules.get(name);
+                match module.kind {
+                    Broadcaster => {
+                        return None
+                    }
+                    Output => {
+                        return None
+                    }
+                    Conjunction => {
+                        match the_collector_opt {
+                            None => {
+                                the_collector_opt = Some(name);
+                                members.insert(name); // the collector is one of our members (with a bunch of FlipFlops)
+                                // Things linked to by the_collector could be the exit node,
+                                //   so we have to check the type of each one before adding
+                                //   it to modules_to_check.
+                                for next_module in module.destinations.iter() {
+                                    if machine.modules.get(next_module.as_str()).kind == Conjunction {
+                                        exit_module_opt = Some(next_module.as_str()); // Found the exit point!
+                                    } else {
+                                        modules_to_check.push(next_module.as_str()); // Not the exit; so we'll consider it.
+                                    }
+                                }
+                            }
+                            Some(collector) => {
+                                if collector == name {
+                                    // to be expected -- we found the collector again. Nothing to do.
+                                } else {
+                                    return None; // we found a DIFFERENT Conjunction.
+                                }
+                            }
+                        }
+                    }
+                    FlipFlop => {
+                        members.insert(name); // this is one of the FlipFlops
+                        for next_module in module.destinations.iter() { // consider everything it connects to
+                            modules_to_check.push(next_module.as_str());
+                        }
+                    }
+                }
+            }
+        }
+
+        // -- check that it's valid --
+        if the_collector_opt.is_none() {
+            return None; // we didn't find a collector, so it's not valid
+        }
+        if exit_module_opt.is_none() {
+            return None; // we didn't find the single exit leading to another collector, so it's not valid
+        }
+        let exit_module = exit_module_opt.unwrap();
+
+        // -- create the Isolate --
+        let isolate = Isolate::new(machine, members, start_module, source, exit_module);
+        answer.push(isolate);
+    }
+    Some(answer)
+}
+
 // ======= main() =======
 
 
@@ -530,45 +619,43 @@ fn part_a(input: &Input) {
 fn part_b(input: &Input) {
     println!("\nPart b:");
     // FIXME: The following is the "works-for-anything" version.
-    // let pushes_needed = pushes_until_pulse_received(input, "rx", PulseKind::Low);
-    // println!("It took {} pushes before rs first received a Low pulse.", pushes_needed);
+    let pushes_needed = pushes_until_pulse_received(input, "rx", PulseKind::Low);
+    println!("It took {} pushes before rs first received a Low pulse.", pushes_needed);
+
+    let isolates = build_expected_isolates(input).expect("My test case didn't have isolates!");
+    for isolate in isolates {
+        println!();
+        println!("--- Isolate ---");
+        let (input_pulse_count, output_pulse_stream) = isolate.find_output(all_low());
+        println!("With {} inputs, we get a looping output of length {}", input_pulse_count, output_pulse_stream.len());
+        for (pulse_type, count) in output_pulse_stream.items {
+            println!("    {} of {}", count, pulse_type);
+        }
+    }
+
 
     // FIXME: The following is where I'm slowly building up the specialized version.
-    // FIXME: Remove this block
-    //use ModuleKind::*;
-    // let module_data: Vec<(&str,ModuleKind,Vec<&str>)> = vec![
-    //     ("mg", FlipFlop, vec!["fj", "dt"]),
-    //     ("fj", FlipFlop, vec!["tr", "dt"]),
-    //     ("tr", FlipFlop, vec!["bx", "dt"]),
-    //     ("bx", FlipFlop, vec!["qb"]),
-    //     ("qb", FlipFlop, vec!["qm"]),
-    //     ("qm", FlipFlop, vec!["dt"]),
-    //     ("dt", Conjunction, vec!["mg", "cl", "bx", "qb"]),
-    // ];
-    // let modules = module_data.iter().map(|(a,b,c)| Module::new(*a,*b,c.clone())).collect();
-    // let machine = Machine::new(modules);
-    // let members: HashSet<&str> = module_data.iter().map(|x| x.0).collect();
-    let machine = input;
-    {
-        let members: HashSet<&str> = [
-            "mg", "fj", "tr", "bx", "qb", "qm", "ll", "zb", "gz", "dx", "bv", "bs", "dt"
-        ].iter().cloned().collect();
-        let start_module = "mg";
-        let exit_module = "cl";
-    }
-    let members: HashSet<&str> = [
-        "sb", "lp", "sh", "kn", "jc", "zf", "lh", "kd", "jg", "bj", "fp", "bk", "cs"
-    ].iter().cloned().collect();
-    let start_module = "sb";
-    let exit_module = "dr";
-    let source = "broadcaster";
-    let isolate = Isolate::new(machine, members, start_module, source, exit_module);
-
-    let (input_pulse_count, output_pulse_stream) = isolate.find_output(all_low());
-    println!("With {} inputs, we get a looping output of length {}", input_pulse_count, output_pulse_stream.len());
-    for (pulse_type, count) in output_pulse_stream.items {
-        println!("    {} of {}", count, pulse_type);
-    }
+    // let machine = input;
+    // {
+    //     let members: HashSet<&str> = [
+    //         "mg", "fj", "tr", "bx", "qb", "qm", "ll", "zb", "gz", "dx", "bv", "bs", "dt"
+    //     ].iter().cloned().collect();
+    //     let start_module = "mg";
+    //     let exit_module = "cl";
+    // }
+    // let members: HashSet<&str> = [
+    //     "sb", "lp", "sh", "kn", "jc", "zf", "lh", "kd", "jg", "bj", "fp", "bk", "cs"
+    // ].iter().cloned().collect();
+    // let start_module = "sb";
+    // let exit_module = "dr";
+    // let source = "broadcaster";
+    // let isolate = Isolate::new(machine, members, start_module, source, exit_module);
+    //
+    // let (input_pulse_count, output_pulse_stream) = isolate.find_output(all_low());
+    // println!("With {} inputs, we get a looping output of length {}", input_pulse_count, output_pulse_stream.len());
+    // for (pulse_type, count) in output_pulse_stream.items {
+    //     println!("    {} of {}", count, pulse_type);
+    // }
 }
 
 
