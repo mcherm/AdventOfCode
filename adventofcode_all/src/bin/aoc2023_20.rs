@@ -21,6 +21,7 @@ use std::fmt::{Debug, Display, Formatter};
 use anyhow;
 use std::collections::{VecDeque, HashMap, BTreeMap, HashSet};
 use std::hash::Hash;
+use num;
 
 
 // ======= Constants =======
@@ -320,7 +321,6 @@ fn count_pulses(input: &Machine, pushes: usize) -> usize {
 /// It is not at all generalized... for instance, it looks for the specific field "rx"
 /// as its output. It returns the number of pushes needed before the component "rx"
 /// (which must exist or this panics) receives a low pulse.
-#[allow(dead_code)] // FIXME: Remove once I'm using this as a fallback
 fn pushes_until_pulse_received(input: &Machine, module_to_watch: &str, kind_needed: PulseKind) -> usize {
     // -- create machine --
     let mut machine = input.clone();
@@ -386,6 +386,7 @@ struct MachineState {
 
 /// Can't easily create this as a constant, so here's a function to creat a PulseStream
 /// of all Low Pulses.
+#[allow(dead_code)]
 fn all_low() -> PulseStream {
     PulseStream{items: vec![(PulseKind::Low, 1)]}
 }
@@ -399,6 +400,7 @@ struct PulseStreamIter<'a> {
 
 impl PulseStream {
     /// Length before this repeats. Always at least 1.
+    #[allow(dead_code)]
     fn len(&self) -> usize {
         self.items.iter().map(|(_,x)| x).sum()
     }
@@ -456,10 +458,9 @@ impl<'a> Isolate<'a> {
     /// returns a tuple with the number of input pulses needed until it repeats and the
     /// PulseStream that it emits.
     ///
-    /// FIXME: We need to know how many button presses until it gets the single low pulse as the
-    ///   first output after some button press. But returning the stream and the count of presses
-    ///   doesn't quite do that. Maybe we'll change this so it detects the particular thing we
-    ///   care about?
+    /// Unfortunately, this did NOT turn out to be useful in solving the problem. So now
+    /// it is just dead code.
+    #[allow(dead_code)]
     fn find_output(&self, input_stream: PulseStream) -> (usize, PulseStream) {
         // -- make a Machine for just this isolate, which we'll run until it repeats a state --
         let modules = self.members.iter()
@@ -519,25 +520,97 @@ impl<'a> Isolate<'a> {
         // -- return the output --
         (input_pulse_count, PulseStream{items: output_items})
     }
+
+
+    /// We expect (because that's what they do in the problems that they give us, not because
+    /// this is somehow normal) that when our Isolate receives an infinite stream of Low
+    /// pulses, it will emit some (0 or more) High pulses each of the first N-1 times the Low
+    /// pulse is received. Then the next (Nth) time a Low pulse is received, it will emit a
+    /// single Low pulse followed by (0 or more) High pulses. Then the NEXT time the button is
+    /// pressed it will repeat from the beginning.
+    ///
+    /// What this does is to simulate button presses, verifying that we get exactly that
+    /// behavior. If we DO get exactly that behavior, then it returns Ok(N) (the number of
+    /// times that will generate the single High pulse). If we DON'T get exactly that
+    /// behavior then this returns Err(msg), where msg is a message telling what went wrong.
+    fn seek_expected_output(&self) -> Result<usize,String> {
+        use PulseKind::*;
+
+        // -- make a Machine for just this isolate, which we'll run until it repeats a state --
+        let modules = self.members.iter()
+            .map(|name| self.original_machine.modules.get(name).clone())
+            .collect();
+        let mut mini_machine: Machine = Machine::new(modules);
+
+        // -- keep a list of all the states we've ever been in. and if they were new --
+        let mut states_seen: HashSet<MachineState> = HashSet::new();
+        states_seen.insert(MachineState::snag_state(&mini_machine));
+
+        let input_pulse = || Pulse{kind: Low, source: self.source, destination: self.start_module};
+
+        // -- loop through until it repeats --
+        let mut input_pulse_count = 0;
+        loop {
+            // there could be multiple output pulses from this one input... collect them here
+            let mut output_pulse_kinds: Vec<PulseKind> = Vec::new();
+            let pulse_func = |pulse: &Pulse| {
+                if pulse.destination == self.exit_module {
+                    output_pulse_kinds.push(pulse.kind);
+                }
+            };
+            mini_machine.inject_pulse(pulse_func, input_pulse());
+            input_pulse_count += 1;
+
+            // -- so record the outputs --
+            if output_pulse_kinds.iter().all(|kind| *kind == High) {
+                // -- a normal step, let's make sure we haven't repeated a state --
+                let state_was_new = states_seen.insert(MachineState::snag_state(&mini_machine));
+                if !state_was_new {
+                    return Err("one section entered an infinite loop before emitting a low pulse".to_string());
+                }
+            } else {
+                // -- OK, let's see if it started with a single Low --
+                let mut iter = output_pulse_kinds.iter();
+                if *iter.next().unwrap() == High { // safe to unwrap: if it were length 0 we'd do the other branch
+                    return Err("one section had a button press emit some low pulses, but not the FIRST pulse from that button press".to_string());
+                }
+                // -- OK, check if the rest in this block are Low --
+                if ! iter.all(|x| *x == High) {
+                    return Err("one section had a button press emit more than one low pulse".to_string());
+                }
+                // -- OK, make sure the NEXT step repeats the loop --
+                let pulse_func = |_: &Pulse| {};
+                mini_machine.inject_pulse(pulse_func, input_pulse());
+                let state_was_new = states_seen.insert(MachineState::snag_state(&mini_machine));
+                if state_was_new {
+                    return Err("one section, after a button press emitted a Low pulse, did not repeat".to_string());
+                }
+                return Ok(input_pulse_count);
+            }
+        }
+    }
 }
 
 
 /// Based on the input I saw, I expect other machines to be like mine: they'll have
 /// a Broadcast module that leads to several "stacks" of FlipFlop modules, which
 /// connect to a single Collecter module and all that (except the Broadcast module)
-/// forms one Isolate. (We then expect each of these to each lead to a single Collecter
-/// used as an inverter, then all those join in one Collecter which leads to "rx".)
+/// forms one Isolate. We then expect each of these to each lead to a single Collecter
+/// used as an inverter, then all those join in one Collecter which leads to "rx".
 ///
 /// This function is passed a machine, and attempts to locate that exact pattern. If
-/// it succeeds in finding the pattern, it returns the Isolates; if the pattern does
-/// not seem to hold then it returns None.
-fn build_expected_isolates<'a>(machine: &'a Machine) -> Option< Vec<Isolate<'a>> > {
+/// it succeeds in finding the pattern, it returns a successful Result with the Isolates;
+/// if the pattern does not seem to hold then it returns an Err Result with a &str
+/// containing a reason why.
+fn build_expected_isolates<'a>(machine: &'a Machine) -> Result< Vec<Isolate<'a>>, String > {
     use ModuleKind::*;
     let source = "broadcaster";
     let starts: Vec<&str> = machine.modules.get(source).destinations.iter()
         .map(|s| s.as_str()).collect();
-    let mut answer: Vec<Isolate> = Vec::new();
+    let mut isolates: Vec<Isolate> = Vec::new();
     for start_module in starts {
+        let prefix = || format!("in the section starting from {},", start_module);
+
         // -- for this start_module, we will find an Isolate (or fail to and bail) --
         let mut modules_to_check: Vec<&str> = vec![start_module];
         let mut the_collector_opt: Option<&str> = None;
@@ -550,10 +623,10 @@ fn build_expected_isolates<'a>(machine: &'a Machine) -> Option< Vec<Isolate<'a>>
                 let module = machine.modules.get(name);
                 match module.kind {
                     Broadcaster => {
-                        return None
+                        return Err(format!("{} we found a broadcaster module", prefix()));
                     }
                     Output => {
-                        return None
+                        return Err(format!("{} we found an output module", prefix()));
                     }
                     Conjunction => {
                         match the_collector_opt {
@@ -575,7 +648,7 @@ fn build_expected_isolates<'a>(machine: &'a Machine) -> Option< Vec<Isolate<'a>>
                                 if collector == name {
                                     // to be expected -- we found the collector again. Nothing to do.
                                 } else {
-                                    return None; // we found a DIFFERENT Conjunction.
+                                    return Err(format!("{} we found multiple conjunction modules", prefix()));
                                 }
                             }
                         }
@@ -592,19 +665,93 @@ fn build_expected_isolates<'a>(machine: &'a Machine) -> Option< Vec<Isolate<'a>>
 
         // -- check that it's valid --
         if the_collector_opt.is_none() {
-            return None; // we didn't find a collector, so it's not valid
+            return Err(format!("{} we didn't find a collector", prefix()));
         }
         if exit_module_opt.is_none() {
-            return None; // we didn't find the single exit leading to another collector, so it's not valid
+            return Err(format!("{} the collector didn't have a single exit leading to another collector", prefix()));
         }
         let exit_module = exit_module_opt.unwrap();
 
         // -- create the Isolate --
         let isolate = Isolate::new(machine, members, start_module, source, exit_module);
-        answer.push(isolate);
+        isolates.push(isolate);
     }
-    Some(answer)
+
+    // -- make sure we had at least 1 isolate --
+    if isolates.is_empty() {
+        return Err("we didn't find even one isolated section with a single collector as an exit".to_string());
+    }
+
+    // -- now check on what comes OUT of the isolates --
+    let mut final_point_opt: Option<&str> = None;
+    for isolate in isolates.iter() {
+        let inverter_destinations = &machine.modules.get(isolate.exit_module).destinations;
+        if inverter_destinations.len() != 1 {
+            return Err("an inverter after an isolate didn't go exactly 1 place".to_string());
+        }
+        match final_point_opt {
+            None => {
+                final_point_opt = Some(&inverter_destinations[0]);
+            }
+            Some(final_point) => {
+                if final_point != &inverter_destinations[0] {
+                    return Err("different inverters (after isolates) went to different places".to_string());
+                }
+            }
+        }
+    }
+    let final_point = final_point_opt.unwrap(); // we checked that there was at least 1 so it's safe
+    let final_module = machine.modules.get(final_point);
+    if final_module.kind != Conjunction {
+        return Err("the final module the inverters lead to isn't a conjunction".to_string());
+    }
+    if final_module.destinations != ["rx"] {
+        return Err("the final module the inverters lead to doesn't connect to exactly one thing named \"rx\"".to_string());
+    }
+
+    // -- It worked! We can return the Isolates. --
+    Ok(isolates)
 }
+
+
+/// Finds the least common multiple of a list of numbers. Can return None if the list is empty.
+fn lcm(numbers: &Vec<usize>) -> Option<usize> {
+    numbers.into_iter().cloned().reduce(|acc: usize, x: usize| num::integer::lcm(acc,x))
+}
+
+
+/// This attempts to solve (part 2 of) the problem quickly by knowing FAR too much about exactly
+/// how it is laid out. It either succeeds, and returns the number of pushes required to output
+/// the first Low pulse, or it fails and returns a string describing why it couldn't solve it.
+fn maybe_solve_fast(machine: &Machine) -> Result<usize,String> {
+    let isolates = build_expected_isolates(machine)?;
+
+    let numbers = isolates.iter()
+        .map(|i| i.seek_expected_output())
+        .collect::<Result<Vec<usize>,String>>()?;
+    println!(
+        "Aha! This machine appears to be finding the least common multiple of the numbers {}.",
+        itertools::join(numbers.clone(), ", ")
+    );
+    assert!(numbers.len() > 0);
+    Ok(lcm(&numbers).unwrap())
+}
+
+
+/// This attempts to solve (part 2 of) the problem quickly and reverts to solving it the slow
+/// way if that doesn't work.
+fn solve_fast_or_slow(machine: &Machine) -> usize {
+    match maybe_solve_fast(machine) {
+        Ok(answer) => answer,
+        Err(err_msg) => {
+            println!("We did NOT succeed in solving it using our knowledge of the layout. The problem was {}", err_msg);
+            println!("So instead, we will solve it the slow way.");
+            println!();
+            pushes_until_pulse_received(machine, "rx", PulseKind::Low)
+        }
+    }
+}
+
 
 // ======= main() =======
 
@@ -618,44 +765,8 @@ fn part_a(input: &Input) {
 
 fn part_b(input: &Input) {
     println!("\nPart b:");
-    // FIXME: The following is the "works-for-anything" version.
-    let pushes_needed = pushes_until_pulse_received(input, "rx", PulseKind::Low);
+    let pushes_needed = solve_fast_or_slow(input);
     println!("It took {} pushes before rs first received a Low pulse.", pushes_needed);
-
-    let isolates = build_expected_isolates(input).expect("My test case didn't have isolates!");
-    for isolate in isolates {
-        println!();
-        println!("--- Isolate ---");
-        let (input_pulse_count, output_pulse_stream) = isolate.find_output(all_low());
-        println!("With {} inputs, we get a looping output of length {}", input_pulse_count, output_pulse_stream.len());
-        for (pulse_type, count) in output_pulse_stream.items {
-            println!("    {} of {}", count, pulse_type);
-        }
-    }
-
-
-    // FIXME: The following is where I'm slowly building up the specialized version.
-    // let machine = input;
-    // {
-    //     let members: HashSet<&str> = [
-    //         "mg", "fj", "tr", "bx", "qb", "qm", "ll", "zb", "gz", "dx", "bv", "bs", "dt"
-    //     ].iter().cloned().collect();
-    //     let start_module = "mg";
-    //     let exit_module = "cl";
-    // }
-    // let members: HashSet<&str> = [
-    //     "sb", "lp", "sh", "kn", "jc", "zf", "lh", "kd", "jg", "bj", "fp", "bk", "cs"
-    // ].iter().cloned().collect();
-    // let start_module = "sb";
-    // let exit_module = "dr";
-    // let source = "broadcaster";
-    // let isolate = Isolate::new(machine, members, start_module, source, exit_module);
-    //
-    // let (input_pulse_count, output_pulse_stream) = isolate.find_output(all_low());
-    // println!("With {} inputs, we get a looping output of length {}", input_pulse_count, output_pulse_stream.len());
-    // for (pulse_type, count) in output_pulse_stream.items {
-    //     println!("    {} of {}", count, pulse_type);
-    // }
 }
 
 
