@@ -473,4 +473,52 @@ mod grid {
         }
     }
 
+
+    /// An error type for converting from a square grid.
+    #[derive(Debug)]
+    pub struct RowsOfUnevenLengthError;
+
+    impl Display for RowsOfUnevenLengthError {
+        fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+            write!(f, "row lengths are not even")
+        }
+    }
+
+    impl Error for RowsOfUnevenLengthError {}
+
+    /// Support for converting from a "square vector" to a Grid. The rows must be of equal length.
+    impl<T: Clone> TryFrom<&Vec<Vec<T>>> for Grid<T> {
+        type Error = RowsOfUnevenLengthError;
+
+        fn try_from(value: &Vec<Vec<T>>) -> Result<Self, Self::Error> {
+            if value.len() == 0 || value.len() == 1 && value[0].len() ==  0 {
+                Ok(Self{bound: Coord(0,0), data: Vec::new()})
+            } else {
+                // -- check that the rows are the same length --
+                let width = value[0].len();
+                if value.iter().any(|row| row.len() != width) {
+                    return Err(RowsOfUnevenLengthError)
+                }
+
+                // -- copy the data over --
+                let bound = Coord(width, value.len());
+                let data = value.iter()
+                    .flat_map(|row| row.iter()
+                        .map(|item| item.clone())
+                    )
+                    .collect();
+                Ok(Self{bound, data})
+            }
+        }
+    }
+
+    /// Support for converting from a "square vector" to a Grid. The rows must be of equal length.
+    impl<T: Clone> TryFrom<Vec<Vec<T>>> for Grid<T> {
+        type Error = RowsOfUnevenLengthError;
+
+        fn try_from(value: Vec<Vec<T>>) -> Result<Self, Self::Error> {
+            (&value).try_into()
+        }
+    }
+
 }
