@@ -1,5 +1,6 @@
-use std::fmt::Debug;
+use std::fmt::{Debug, Display, Formatter};
 use anyhow;
+use std::collections::HashSet;
 use advent_lib::grid::{Coord, Grid};
 use advent_lib::asciienum::AsciiEnum;
 
@@ -79,14 +80,102 @@ mod parse {
 
 // ======= Compute =======
 
+impl Spot {
+    /// True if you can go there.
+    fn passable(&self) -> bool {
+        match self {
+            Spot::Open => true,
+            Spot::Rock => false,
+        }
+    }
+}
 
+
+/// A calculation of the number of steps needed to reach the locations in the grid from a
+/// given start location. If a location cannot be reached then it stores None.
+#[derive(Debug)]
+struct DistanceGrid {
+    #[allow(dead_code)]
+    start: Coord,
+    dist: Grid<Option<usize>>,
+}
+
+
+impl DistanceGrid {
+    /// Construct a DistanceGrid for a given start location for a given set of spots.
+    fn from_spots(spots: &Grid<Spot>, start: Coord) -> Self {
+        let bound = spots.bound();
+        let mut dist: Grid<Option<usize>> = Grid::new_default(bound);
+        let mut steps = 0;
+        let mut next_sites: HashSet<Coord> = HashSet::new();
+        if spots.get(start).passable() {
+            next_sites.insert(start);
+        }
+        while !next_sites.is_empty() {
+            let sites: Vec<Coord> = next_sites.drain().collect();
+            for site in sites {
+                if *spots.get(site) == Spot::Open {
+                    let d = dist.get_mut(site);
+                    if d.is_none() {
+                        *d = Some(steps);
+                    }
+                    for neighbor in site.neighbors(bound) {
+                        // if it isn't a rock and we haven't been there, it's in the next step
+                        if spots.get(neighbor).passable() && dist.get(neighbor).is_none() {
+                            next_sites.insert(neighbor);
+                        }
+                    }
+                }
+            }
+            steps += 1;
+        }
+        DistanceGrid{start, dist}
+    }
+}
+
+
+impl Display for DistanceGrid {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        for y in 0..self.dist.bound().y() {
+            writeln!(f)?;
+            for x in 0..self.dist.bound().x() {
+                match self.dist.get(Coord(x,y)) {
+                    None => write!(f, "|##")?,
+                    Some(n) => write!(f, "{:3}", n)?,
+                };
+            }
+        }
+        writeln!(f)
+    }
+}
+
+
+/// This solves part 1 by counting the number of sites in that Garden that can be reached in
+/// exactly the given number of steps.
+fn count_reachable_sites(garden: &Garden, steps: usize) -> usize {
+    let dist = DistanceGrid::from_spots(&garden.grid, garden.start);
+    dist.dist.into_iter()
+        .map(|d: Option<usize>| match d {
+            None => 0,
+            Some(s) => {
+                if s <= steps && s % 2 == steps % 2 {
+                    1
+                } else {
+                    0
+                }
+            }
+        })
+        .sum()
+}
 
 // ======= main() =======
 
 
 fn part_a(input: &Input) {
     println!("\nPart a:");
-    println!("Input was {:?}", input);
+    let steps = 64;
+    let count = count_reachable_sites(input, steps);
+    println!("The elf can reach {} sites in exactly {} steps.", count, steps);
 }
 
 
