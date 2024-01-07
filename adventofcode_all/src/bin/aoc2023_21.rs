@@ -140,8 +140,8 @@ impl Display for DistanceGrid {
             writeln!(f)?;
             for x in 0..self.dist.bound().x() {
                 match self.dist.get(Coord(x,y)) {
-                    None => write!(f, "|##")?,
-                    Some(n) => write!(f, "{:3}", n)?,
+                    None => write!(f, "|###")?,
+                    Some(n) => write!(f, "|{:3}", n)?,
                 };
             }
         }
@@ -179,8 +179,25 @@ fn part_a(input: &Input) {
 }
 
 
-fn part_b(_input: &Input) {
+fn part_b(input: &Input) {
     println!("\nPart b:");
+    let dist = DistanceGrid::from_spots(&input.grid, input.start);
+    let start = input.start;
+    let dist_if_empty = DistanceGrid{
+        start: start,
+        dist: Grid::from_function(input.grid.bound(), |coord| {
+            let natural_dist = coord.x().abs_diff(start.x()) + coord.y().abs_diff(start.y());
+            match dist.dist.get(coord) {
+                None => None,
+                Some(actual_dist) => {
+                    if *actual_dist == natural_dist {None} else {Some(*actual_dist)}
+                }
+            }
+        })
+    };
+    println!("{}", dist);
+    println!("----------------------");
+    println!("{}", dist_if_empty);
 }
 
 

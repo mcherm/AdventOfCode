@@ -89,6 +89,11 @@ mod coord {
             self.1
         }
 
+        /// Measures the area of the coord.
+        pub fn area(&self) -> usize {
+            self.0 * self.1
+        }
+
         /// This returns an iterator that will go through all the Coords that are less than this
         /// Coord (all smaller x and y values), changing x fastest, and then y.
         pub fn range_by_rows(&self) -> impl Iterator<Item=Coord> {
@@ -248,6 +253,18 @@ mod coord {
             }
             answer
         }
+
+        fn size_hint(&self) -> (usize, Option<usize>) {
+            let left_to_go = match self.next {
+                None => 0,
+                Some(next_c) => {
+                    let rows_to_go = self.bound.y() - next_c.y() - 1;
+                    let cols_to_go_in_row = self.bound.x() - next_c.x();
+                    rows_to_go * self.bound.x() + cols_to_go_in_row
+                }
+            };
+            (left_to_go, Some(left_to_go))
+        }
     }
 
     struct ByColsCoordIterator {
@@ -276,14 +293,80 @@ mod coord {
                 self.next = if prev.1 + 1 < self.bound.1 {
                     Some(Coord(prev.0, prev.1 + 1))
                 } else if prev.0 + 1 < self.bound.0 {
-                    Some(Coord(0 + 1, prev.1))
+                    Some(Coord(prev.0 + 1, 0))
                 } else {
                     None
                 }
             }
             answer
         }
+
+        fn size_hint(&self) -> (usize, Option<usize>) {
+            let left_to_go = match self.next {
+                None => 0,
+                Some(next_c) => {
+                    let cols_to_go = self.bound.x() - next_c.x() - 1;
+                    let rows_to_go_in_col = self.bound.y() - next_c.y();
+                    cols_to_go * self.bound.y() + rows_to_go_in_col
+                }
+            };
+            (left_to_go, Some(left_to_go))
+        }
     }
+
+
+
+    // ========================== TESTS ==========================
+
+    #[cfg(test)]
+    mod test {
+        use super::*;
+
+        #[test]
+        fn test_iter_by_rows() {
+            let coord = Coord(3,3);
+            let answer: Vec<Coord> = coord.range_by_rows().collect();
+            assert_eq!(answer, vec![
+                Coord(0,0), Coord(1,0), Coord(2,0),
+                Coord(0,1), Coord(1,1), Coord(2,1),
+                Coord(0,2), Coord(1,2), Coord(2,2)
+            ]);
+        }
+
+        #[test]
+        fn test_iter_by_cols() {
+            let coord = Coord(3,3);
+            let answer: Vec<Coord> = coord.range_by_cols().collect();
+            assert_eq!(answer, vec![
+                Coord(0,0), Coord(0,1), Coord(0,2),
+                Coord(1,0), Coord(1,1), Coord(1,2),
+                Coord(2,0), Coord(2,1), Coord(2,2)
+            ]);
+        }
+
+        #[test]
+        fn test_iter_size_hint_by_rows() {
+            let coord = Coord(3,3);
+            let mut iter = coord.range_by_rows();
+            for i in 0..=9 {
+                assert_eq!(iter.size_hint(), (9 - i, Some(9 - i)));
+                let _ = iter.next();
+            }
+            assert_eq!(iter.size_hint(), (0, Some(0)));
+        }
+
+        #[test]
+        fn test_iter_size_hint_by_cols() {
+            let coord = Coord(3,3);
+            let mut iter = coord.range_by_cols();
+            for i in 0..=9 {
+                assert_eq!(iter.size_hint(), (9 - i, Some(9 - i)));
+                let _ = iter.next();
+            }
+            assert_eq!(iter.size_hint(), (0, Some(0)));
+        }
+    }
+
 }
 
 
@@ -303,7 +386,7 @@ mod grid {
 
     impl<T> Grid<T> {
         // FIXME: As a library, maybe get() and set() should returns errors instead of
-        //   panicing when the coord is out of bounds. But this is more convenient.
+        //   panicking when the coord is out of bounds. But this is more convenient.
 
         /// Gets the value at a location
         pub fn get(&self, coord: Coord) -> &T {
@@ -326,7 +409,6 @@ mod grid {
         pub fn bound(&self) -> Coord {
             self.bound
         }
-
     }
 
     impl<T: Debug> Debug for Grid<T> {
@@ -358,7 +440,7 @@ mod grid {
         /// Creates a Grid of the given size by filling in the default value everywhere.
         pub fn new_default(bound: Coord) -> Self {
             let data: Vec<T> = bound.range_by_rows().map(|_| T::default()).collect();
-            Self{bound, data}
+            Self { bound, data }
         }
     }
 
@@ -404,7 +486,7 @@ mod grid {
     }
 
 
-    impl<T: TryFrom<char,Error=ItemE>, ItemE: Error> Grid<T> {
+    impl<T: TryFrom<char, Error=ItemE>, ItemE: Error> Grid<T> {
         /// If you happen to have a grid of characters (in an &str) in which each character
         /// indicates a particular item, and there is a TryFrom to create a T from a character,
         /// then this function can be used to construct a Grid.
@@ -415,7 +497,7 @@ mod grid {
             for (y, line) in s.lines().enumerate() {
                 let mut row_width = 0;
                 for (x, c) in line.chars().enumerate() {
-                    data.push( c.try_into()? );
+                    data.push(c.try_into()?);
                     assert_eq!(row_width, x);
                     row_width += 1;
                 }
@@ -430,7 +512,7 @@ mod grid {
                 height += 1;
             }
             let bound = Coord(width, height);
-            Ok(Self{bound, data})
+            Ok(Self { bound, data })
         }
     }
 
@@ -468,13 +550,14 @@ mod grid {
         }
 
         /// Iterate over (references to) the items in the array. Will go rows-first.
-        pub fn iter_mut(&mut self) -> impl Iterator<Item=& mut T> {
+        pub fn iter_mut(&mut self) -> impl Iterator<Item=&mut T> {
             (&mut self.data).iter_mut()
         }
     }
 
 
-    /// An error type for converting from a square grid.
+    /// An error type for converting from a "square vector" or other things not guaranteed
+    /// to be rectangular.
     #[derive(Debug)]
     pub struct RowsOfUnevenLengthError;
 
@@ -491,8 +574,8 @@ mod grid {
         type Error = RowsOfUnevenLengthError;
 
         fn try_from(value: &Vec<Vec<T>>) -> Result<Self, Self::Error> {
-            if value.len() == 0 || value.len() == 1 && value[0].len() ==  0 {
-                Ok(Self{bound: Coord(0,0), data: Vec::new()})
+            if value.len() == 0 || value.len() == 1 && value[0].len() == 0 {
+                Ok(Self { bound: Coord(0, 0), data: Vec::new() })
             } else {
                 // -- check that the rows are the same length --
                 let width = value[0].len();
@@ -507,7 +590,7 @@ mod grid {
                         .map(|item| item.clone())
                     )
                     .collect();
-                Ok(Self{bound, data})
+                Ok(Self { bound, data })
             }
         }
     }
@@ -521,4 +604,15 @@ mod grid {
         }
     }
 
+
+    impl<T> Grid<T> {
+        /// Given a function that produces individual elements (and a bounds), this creates a
+        /// new Grid.
+        pub fn from_function<Func>(bound: Coord, mut f: Func) -> Self
+            where Func: FnMut(Coord) -> T
+        {
+            let data: Vec<T> = bound.range_by_rows().map(|coord| f(coord)).collect();
+            Self { bound, data }
+        }
+    }
 }
