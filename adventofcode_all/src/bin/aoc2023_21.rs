@@ -168,6 +168,40 @@ fn count_reachable_sites(garden: &Garden, steps: usize) -> usize {
         .sum()
 }
 
+
+/// Represents an infinitely repeating garden and the calculations required to deal with
+/// such a thing.
+#[derive(Debug)]
+struct MegaGarden<'a> {
+    garden: &'a Garden,
+}
+
+impl<'a> MegaGarden<'a> {
+    fn new(garden: &'a Garden) -> Self {
+        Self{garden}
+    }
+}
+
+
+impl<'a> Display for MegaGarden<'a> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        const PLOT_RADIUS: i32 = 1;
+
+        for _plot_y in -PLOT_RADIUS ..= PLOT_RADIUS {
+            for y in 0..self.garden.grid.bound().y() {
+                for _plot_x in -PLOT_RADIUS ..= PLOT_RADIUS {
+                    for x in 0..self.garden.grid.bound().x() {
+                        write!(f, "{}", self.garden.grid.get(Coord(x,y)))?;
+                    }
+                }
+                writeln!(f)?;
+            }
+        }
+        writeln!(f)
+    }
+}
+
+
 // ======= main() =======
 
 
@@ -198,6 +232,9 @@ fn part_b(input: &Input) {
     println!("{}", dist);
     println!("----------------------");
     println!("{}", dist_if_empty);
+    println!("----------------------");
+    let mega = MegaGarden::new(input);
+    println!("{}", mega);
 }
 
 
