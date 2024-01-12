@@ -95,7 +95,7 @@ impl Spot {
 /// given start location. If a location cannot be reached then it stores None.
 #[derive(Debug)]
 struct DistanceGrid {
-    #[allow(dead_code)]
+    #[allow(dead_code)] // FIXME: Remove this
     start: Coord,
     dist: Grid<Option<usize>>,
 }
@@ -169,6 +169,12 @@ fn count_reachable_sites(garden: &Garden, steps: usize) -> usize {
 }
 
 
+/// Calculates Ciel(a/b) (assuming there is no overflow)
+fn ceiling_divide(a: usize, b: usize) -> usize {
+    (a + b - 1 ) / b
+}
+
+
 /// Represents an infinitely repeating garden and the calculations required to deal with
 /// such a thing.
 #[derive(Debug)]
@@ -179,6 +185,27 @@ struct MegaGarden<'a> {
 impl<'a> MegaGarden<'a> {
     fn new(garden: &'a Garden) -> Self {
         Self{garden}
+    }
+
+    /// Given a number of steps, this determines the exact answer the HARD way -- by simply
+    /// counting them. It won't scale to the full-size problem, but it IS useful for testing
+    /// my better algorithms.
+    fn slow_solve(&self, num_steps: usize) -> usize {
+        let garden_x = self.garden.grid.bound().x();
+        let garden_y = self.garden.grid.bound().y();
+        let plot_x_radius = ceiling_divide(num_steps, garden_x);
+        let plot_y_radius = ceiling_divide(num_steps, garden_y);
+        let giant_x_bound = garden_x * (plot_x_radius * 2 + 1);
+        let giant_y_bound = garden_y * (plot_y_radius * 2 + 1);
+        let giant_bound = Coord(giant_x_bound, giant_y_bound);
+        let giant_spots: Grid<Spot> = Grid::from_function(giant_bound, |c| {
+            *self.garden.grid.get(Coord(c.x() % garden_x, c.y() % garden_y))
+        });
+        let giant_start_x = (garden_x * plot_x_radius) + self.garden.start.x();
+        let giant_start_y = (garden_y * plot_y_radius) + self.garden.start.y();
+        let giant_start = Coord(giant_start_x, giant_start_y);
+        let giant_garden = Garden{grid: giant_spots, start: giant_start};
+        count_reachable_sites(&giant_garden, num_steps)
     }
 }
 
@@ -215,26 +242,29 @@ fn part_a(input: &Input) {
 
 fn part_b(input: &Input) {
     println!("\nPart b:");
-    let dist = DistanceGrid::from_spots(&input.grid, input.start);
-    let start = input.start;
-    let dist_if_empty = DistanceGrid{
-        start: start,
-        dist: Grid::from_function(input.grid.bound(), |coord| {
-            let natural_dist = coord.x().abs_diff(start.x()) + coord.y().abs_diff(start.y());
-            match dist.dist.get(coord) {
-                None => None,
-                Some(actual_dist) => {
-                    if *actual_dist == natural_dist {None} else {Some(*actual_dist)}
-                }
-            }
-        })
-    };
-    println!("{}", dist);
-    println!("----------------------");
-    println!("{}", dist_if_empty);
-    println!("----------------------");
+    // let dist = DistanceGrid::from_spots(&input.grid, input.start);
+    // let start = input.start;
+    // let dist_if_empty = DistanceGrid{
+    //     start: start,
+    //     dist: Grid::from_function(input.grid.bound(), |coord| {
+    //         let natural_dist = coord.x().abs_diff(start.x()) + coord.y().abs_diff(start.y());
+    //         match dist.dist.get(coord) {
+    //             None => None,
+    //             Some(actual_dist) => {
+    //                 if *actual_dist == natural_dist {None} else {Some(*actual_dist)}
+    //             }
+    //         }
+    //     })
+    // };
+    // println!("{}", dist);
+    // println!("----------------------");
+    // println!("{}", dist_if_empty);
+    // println!("----------------------");
     let mega = MegaGarden::new(input);
-    println!("{}", mega);
+    // println!("{}", mega);
+    let steps = 5000;
+    let count = mega.slow_solve(steps);
+    println!("In exactly {} steps we can reach {} locations", steps, count);
 }
 
 
