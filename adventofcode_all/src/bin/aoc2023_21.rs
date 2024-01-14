@@ -391,12 +391,12 @@ impl<'a> MegaGarden<'a> {
         let rc = self.garden.start.x() + 1;
         let rm = (num_steps - rc) / garden_size;
         let re = num_steps - rc - rm * garden_size + 1;
-        println!("rc: {}, rm: {}, re: {}", rc, rm, re); // FIXME: Remove
+        // println!("rc: {}, rm: {}, re: {}", rc, rm, re); // FIXME: Remove
         assert!(rm >= 1);
         assert!(re >= (garden_size + 1) / 2);
         let plot_position_counts = self.plot_count(num_steps);
         PlotPosition::ALL.iter().map(|pp| {
-            println!("    {:?} appears {} times and has {} count", pp, pp.times_appearing(rm), plot_position_counts.get(*pp)); // FIXME: Remove
+            // println!("    {:?} appears {} times and has {} count", pp, pp.times_appearing(rm), plot_position_counts.get(*pp)); // FIXME: Remove
             pp.times_appearing(rm) * plot_position_counts.get(*pp)
         }).sum()
     }
@@ -574,6 +574,8 @@ fn part_b(input: &Input) {
     let slow_count = mega.slow_solve(steps);
     let fast_count = mega.fast_solve(steps);
     println!("In exactly {} steps we can reach {} (slow count) or {} (fast count) positions.", steps, slow_count, fast_count);
+    // FIXME: All we REALLY need is below this line:
+    mega.smart_solve(steps);
 }
 
 
@@ -583,4 +585,98 @@ fn main() -> Result<(), anyhow::Error> {
     part_a(&input);
     part_b(&input);
     Ok(())
+}
+
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use itertools::Itertools;
+    use rand::Rng;
+
+    /// This takes a given Garden and num_steps and makes sure it gives the right answer,
+    /// panicking if it doesn't.
+    fn check_solution(garden: &Garden, num_steps: usize) {
+        print!("Taking {} steps in a {}x{} garden", num_steps, garden.grid.bound().x(), garden.grid.bound().y());
+        let mega = MegaGarden::new(garden);
+        let slow_count = mega.slow_solve(num_steps);
+        let fast_count = mega.fast_solve(num_steps);
+        assert_eq!(slow_count, fast_count);
+        println!(" gives {} locations.", slow_count);
+    }
+
+    /// This generates a random garden. It will be square, with side lengths of the size given
+    /// (which must be odd). It will be centered and unimpeded. The other locations will have a
+    /// probability density of being rocks (density should be from 0.0 to 1.0).
+    fn random_garden(size: usize, density: f32) -> Garden {
+        assert_eq!(size % 2, 1); // size must be odd
+        let mut rng = rand::thread_rng();
+        let bound = Coord(size,size);
+        let start_val = (size - 1) / 2;
+        let start = Coord(start_val, start_val);
+        let rock_func = |c: Coord| {
+            if c.x() == start_val || c.x() == 0 || c.x() + 1 == size {
+                Spot::Open
+            } else if c.y() == start_val || c.y() == 0 || c.y() + 1 == size {
+                Spot::Open
+            } else {
+                if rng.gen::<f32>() < density {
+                    Spot::Rock
+                } else {
+                    Spot::Open
+                }
+            }
+        };
+        let grid: Grid<Spot> = Grid::from_function(bound, rock_func);
+        Garden{grid, start}
+    }
+
+    #[test]
+    fn try_specific_pattern() {
+        let grid: Grid<Spot> = vec![
+            ".......",
+            ".#.....",
+            "..#....",
+            ".......",
+            ".##..#.",
+            "..#.##.",
+            ".......",
+        ].iter()
+            .map(|s| s.chars().map(|c| match c {'.' => Spot::Open, '#' => Spot::Rock, _ => panic!()}).collect_vec())
+            .collect_vec()
+            .try_into()
+            .unwrap();
+        assert!(grid.bound().x() == grid.bound().y());
+        let start_pos = (grid.bound().x() - 1) / 2;
+        let start = Coord(start_pos, start_pos);
+        let garden = Garden{grid, start};
+        check_solution(&garden, 21);
+    }
+
+    fn try_random_garden() {
+        let mut rng = rand::thread_rng();
+        let size = rng.gen_range(2..15) * 2 + 1;
+        let num_steps = rng.gen_range((size * 3)..(size * 50));
+        let garden = random_garden(size, 0.4);
+        let outer_shaping = {
+            let garden_size = garden.grid.bound().x();
+            let rc = garden.start.x() + 1;
+            let rm = (num_steps - rc) / garden_size;
+            let re = num_steps - rc - rm * garden_size + 1;
+            re >= (garden_size + 1) / 2
+        };
+        if outer_shaping {
+            check_solution(&garden, num_steps);
+        } else {
+            println!("!!! Need to handle inner_shaping !!!");
+        }
+    }
+
+    #[test]
+    fn try_many_random_gardens() {
+        let num_tests = 8;
+        for _ in 0..num_tests {
+            try_random_garden();
+        }
+    }
 }
