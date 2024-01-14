@@ -8,6 +8,7 @@ use crate::outer::PlotPosition;
 
 // ======= Constants =======
 const PRINT_WORK: bool = false; // Set this to true and we print out the blocks we looked at and the counts of them.
+const DEBUG_INDIVIDUAL_PLOTS: bool = false; // turn THIS on to do the full problem the slow way and compare individual plots
 
 
 // ======= Parsing =======
@@ -45,36 +46,42 @@ mod parse {
 
     pub fn input<'a>() -> Result<Input, anyhow::Error> {
         let s = fs::read_to_string("input/2023/input_21.txt")?;
-        // FIXME: It's inefficient to create square_grid then throw it away. But I'm doing it.
-        assert!(s.len() > 1);
-        let mut square_grid: Vec<Vec<Spot>> = Vec::new();
-        let mut start_opt: Option<Coord> = None;
-        for (y, line) in s.lines().enumerate() {
-            let mut grid_row: Vec<Spot> = Vec::new();
-            for (x, c) in line.chars().enumerate() {
-                let item = match c {
-                    '.' => Spot::Open,
-                    '#' => Spot::Rock,
-                    'S' => {
-                        if start_opt.is_some() {
-                            return Err(anyhow!("multiple start locations"));
-                        }
-                        start_opt = Some(Coord(x,y));
-                        Spot::Open
-                    }
-                    _ => panic!("unexpected character '{}'", c),
-                };
-                grid_row.push(item);
-            }
-            square_grid.push(grid_row)
-        }
+        Garden::parse(&s)
+    }
 
-        if start_opt.is_none() {
-            return Err(anyhow!("No starting location"));
+    impl Garden {
+        pub fn parse(s: &str) -> Result<Self, anyhow::Error> {
+            // FIXME: It's inefficient to create square_grid then throw it away. But I'm doing it.
+            assert!(s.len() > 1);
+            let mut square_grid: Vec<Vec<Spot>> = Vec::new();
+            let mut start_opt: Option<Coord> = None;
+            for (y, line) in s.lines().enumerate() {
+                let mut grid_row: Vec<Spot> = Vec::new();
+                for (x, c) in line.chars().enumerate() {
+                    let item = match c {
+                        '.' => Spot::Open,
+                        '#' => Spot::Rock,
+                        'S' => {
+                            if start_opt.is_some() {
+                                return Err(anyhow!("multiple start locations"));
+                            }
+                            start_opt = Some(Coord(x,y));
+                            Spot::Open
+                        }
+                        _ => panic!("unexpected character '{}'", c),
+                    };
+                    grid_row.push(item);
+                }
+                square_grid.push(grid_row)
+            }
+
+            if start_opt.is_none() {
+                return Err(anyhow!("No starting location"));
+            }
+            let start = start_opt.unwrap();
+            let grid: Grid<Spot> = (square_grid).try_into()?;
+            Ok(Garden{grid, start})
         }
-        let start = start_opt.unwrap();
-        let grid: Grid<Spot> = (square_grid).try_into()?;
-        Ok(Garden{grid, start})
     }
 
 }
@@ -311,6 +318,28 @@ impl Layout {
         }
     }
 
+    /// For debugging, this exists to return the position of a sample ACTUAL grid of this type.
+    fn true_position(&self, pp: PlotPosition, rm: usize) -> (i32,i32) {
+        let rmi: i32 = rm as i32;
+        let rmp: i32 = (rm + 1) as i32;
+        use PlotPosition::*;
+        match self {
+            Layout::Outer => {
+                match pp {
+                    NCorner => (0,-rmp), ECorner => (rmp,0), SCorner => (0,rmp), WCorner => (-rmp,0),
+                    NEOuter => (1,-rmp), SEOuter => (rmp,1), SWOuter => (-1,rmp), NWOuter => (-rmp,-1),
+                    NEInner => (1,-rmi), SEInner => (rmi,1), SWInner => (-1,rmi), NWInner => (-rmi,-1),
+                    PerfectCenter => (0, 0), OffsetCenter => (1, 0),
+                    _ => panic!(),
+                }
+            }
+            Layout::Inner => {
+                todo!() // I haven't written this yet. If I need it, write it.
+            }
+            Layout::TooSmall => panic!(),
+        }
+    }
+
     /// Tells how many times the given PlotPosition will occur in a MegaGrid where
     /// the "middle radius" ("rm") is the given value.
     fn times_appearing(&self, pp: PlotPosition, rm: usize) -> usize {
@@ -445,6 +474,40 @@ impl<'a> MegaGarden<'a> {
                     let times_appearing = layout.times_appearing(*pp, rm);
                     if PRINT_WORK {
                         println!("With layout {:?}, {:?} has a count of {} and appears {} times.", layout, pp, count, times_appearing);
+                        // FIXME Below this is the check I'm building for this specific problem
+                        if DEBUG_INDIVIDUAL_PLOTS {
+                            let giant_grid_dimensions = 2 * (rm + 1) + 1;
+                            let giant_grid_size = garden_size * giant_grid_dimensions;
+                            let giant_bound = Coord(giant_grid_size, giant_grid_size);
+                            let giant_spots: Grid<Spot> = Grid::from_function(giant_bound, |c| {
+                                *self.garden.grid.get(Coord(c.x() % garden_size, c.y() % garden_size))
+                            });
+                            let giant_start_num = giant_grid_size / 2;
+                            let giant_start = Coord(giant_start_num, giant_start_num);
+                            let giant_garden = Garden{grid: giant_spots, start: giant_start};
+                            let giant_dist = DistanceGrid::from_spots(&giant_garden.grid, giant_garden.start);
+
+                            let (plot_x, plot_y) = layout.true_position(*pp, rm);
+                            let mut true_count: usize = 0;
+                            for y in 0..garden_size {
+                                for x in 0..garden_size {
+                                    let center_plot_pos = (rm + 1) as i32;
+                                    let giant_x = ((plot_x + center_plot_pos) as usize) * garden_size + x;
+                                    let giant_y = ((plot_y + center_plot_pos) as usize) * garden_size + y;
+                                    let giant_coord = Coord(giant_x, giant_y);
+                                    let is_reachable = match giant_dist.dist.get(giant_coord) {
+                                        None => false, // rocks aren't reachable
+                                        Some(n) => {
+                                            *n % 2 == num_steps % 2 && *n <= num_steps
+                                        }
+                                    };
+                                    if is_reachable {
+                                        true_count += 1;
+                                    }
+                                }
+                            }
+                            println!("    For {:?} a true value was {} and we generated {}", pp, true_count, count);
+                        }
                     }
                     count * times_appearing
                 })
@@ -497,6 +560,7 @@ struct MegaDist<'a> {
 }
 
 impl<'a> MegaDist<'a> {
+    #[allow(dead_code)] // because we use it for debug stuff which is temporarily disables
     fn new(garden: &'a Garden, num_steps: usize, large_dimensions: usize) -> Self {
         let mega_garden = MegaGarden::new(garden);
         MegaDist{mega_garden, num_steps, large_dimensions}
@@ -632,9 +696,10 @@ fn part_a(input: &Input) {
 
 fn part_b(input: &Input) {
     println!("\nPart b:");
-    let steps = 28;
+    let steps = 26501365;
     let mega = MegaGarden::new(input);
-    mega.smart_solve(steps);
+    let count = mega.smart_solve(steps);
+    println!("The elf can reach {} sites in exactly {} steps.", count, steps);
 }
 
 
@@ -650,7 +715,6 @@ fn main() -> Result<(), anyhow::Error> {
 #[cfg(test)]
 mod test {
     use super::*;
-    use itertools::Itertools;
     use rand::Rng;
 
     /// This takes a given Garden and num_steps and makes sure it gives the right answer,
@@ -696,15 +760,8 @@ mod test {
         Garden{grid, start}
     }
 
-    fn try_specific_pattern(pattern: Vec<&str>, num_steps: usize) {
-        let grid: Grid<Spot> = pattern.iter()
-            .map(|s| s.chars().map(|c| match c {'.' => Spot::Open, '#' => Spot::Rock, _ => panic!()}).collect_vec())
-            .collect_vec()
-            .try_into()
-            .unwrap();
-        let start_pos = (grid.bound().x() - 1) / 2;
-        let start = Coord(start_pos, start_pos);
-        let garden = Garden{grid, start};
+
+    fn try_specific_pattern(garden: &Garden, num_steps: usize) {
         assert!(garden.is_square() && garden.is_centered() && garden.is_unimpeded());
         if PRINT_WORK {
             let layout = Layout::select(&garden, num_steps);
@@ -715,56 +772,102 @@ mod test {
 
     #[test]
     fn try_specific_pattern_1() {
-        try_specific_pattern(
-            vec![
-                ".......",
-                ".#.....",
-                "..#....",
-                ".......",
-                ".##..#.",
-                "..#.##.",
-                ".......",
-            ],
-            21
-        )
+        let garden = Garden::parse("\
+            .......\n\
+            .#.....\n\
+            ..#....\n\
+            ...S...\n\
+            .##..#.\n\
+            ..#.##.\n\
+            .......\n\
+            ",
+        ).unwrap();
+        try_specific_pattern(&garden, 21)
     }
 
     #[test]
     fn try_specific_pattern_2() {
-        try_specific_pattern(
-            vec![
-                ".....",
-                ".#.#.",
-                ".....",
-                "...#.",
-                ".....",
-            ],
-            13
-        )
+        let garden = Garden::parse("\
+            .....\n\
+            .#.#.\n\
+            ..S..\n\
+            ...#.\n\
+            .....\n\
+            ",
+        ).unwrap();
+        try_specific_pattern(&garden, 13)
     }
 
+    /// This test demonstrates that the WHOLE APPROACH fails if there is a "deep crevice".
+    /// I'm not sure quite what the definition is of a "deep crevice" but this is the
+    /// minimal example I've been able to create.
+    ///
+    /// What happens is that some of the "inner" plots don't have their full count because
+    /// there is a "deep crevice" which we can't get all the way inside. I've added some
+    /// debugging output to this which helps illustrate it.
+    ///
+    /// AS A RESULT, the entire enterprise is suspect, and I probably can't get it to work
+    /// right without some deeper thinking and plans.
     #[test]
     fn try_specific_pattern_3() {
-        try_specific_pattern(
-            vec![
-                "...............",
-                "...............",
-                "...............",
-                "...............",
-                "...............",
-                "...............",
-                "...............",
-                "...............",
-                "....##.........",
-                ".###..#........",
-                ".#...##........",
-                ".#...#.........",
-                "....#..........",
-                "...##..........",
-                "...............",
-            ],
-            46
-        )
+        let garden = Garden::parse("\
+            .............\n\
+            .#####.#####.\n\
+            .#####.#####.\n\
+            .#####.#####.\n\
+            .#####.#####.\n\
+            .#####.#####.\n\
+            ......S......\n\
+            .#####.#####.\n\
+            .#..##.#####.\n\
+            .#..##.#####.\n\
+            ....##.#####.\n\
+            .#####.#####.\n\
+            .............\n\
+            ",
+        ).unwrap();
+        let num_steps = 39;
+
+        { // some debugging output
+            println!("==================================== TRUE VALUE ====================================");
+            println!("{}", MegaDist::new(&garden, num_steps, 7));
+            println!("==================================== LAYOUT ====================================");
+            let garden_size = garden.grid.bound().x();
+            let giant_dist = {
+                let giant_grid_dimensions = 7;
+                let giant_grid_size = garden_size * giant_grid_dimensions;
+                let giant_bound = Coord(giant_grid_size, giant_grid_size);
+                let giant_spots: Grid<Spot> = Grid::from_function(giant_bound, |c| {
+                    *garden.grid.get(Coord(c.x() % garden_size, c.y() % garden_size))
+                });
+                let giant_start_num = giant_grid_size / 2;
+                let giant_start = Coord(giant_start_num, giant_start_num);
+                let giant_garden = Garden{grid: giant_spots, start: giant_start};
+                DistanceGrid::from_spots(&giant_garden.grid, giant_garden.start)
+            };
+            for plot_y in 0..7 {
+                for plot_x in 0..7 {
+                    let mut plot_count = 0;
+                    for y in 0..garden_size {
+                        for x in 0..garden_size {
+                            let giant_coord = Coord(
+                                plot_x * garden_size + x,
+                                plot_y * garden_size + y
+                            );
+                            if let Some(d) = giant_dist.dist.get(giant_coord) {
+                                if *d % 2 == num_steps % 2 && *d <= num_steps {
+                                    plot_count += 1;
+                                }
+                            }
+                        }
+                    }
+                    print!("|{:3}", plot_count);
+                }
+                println!("|");
+            }
+        }
+
+        try_specific_pattern(&garden, num_steps)
     }
 
     fn try_random_garden() {
