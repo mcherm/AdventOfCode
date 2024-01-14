@@ -3,9 +3,11 @@ use anyhow;
 use std::collections::HashSet;
 use advent_lib::grid::{Coord, Grid};
 use advent_lib::asciienum::AsciiEnum;
+use crate::outer::PlotPosition;
 
 
 // ======= Constants =======
+const PRINT_WORK: bool = false; // Set this to true and we print out the blocks we looked at and the counts of them.
 
 
 // ======= Parsing =======
@@ -180,17 +182,6 @@ fn ceiling_divide(a: usize, b: usize) -> usize {
     (a + b - 1 ) / b
 }
 
-
-/// An enum representing the various patterns of being filled in that we will see
-/// in various plots (assuming travel is unimpeded).
-#[derive(Debug, Eq, PartialEq, Copy, Clone)]
-enum PlotPosition {
-    NCorner, ECorner, SCorner, WCorner,
-    NEOuter, NEInner, SEOuter, SEInner,
-    SWOuter, SWInner, NWOuter, NWInner,
-    PerfectCenter, OffsetCenter,
-}
-
 /// Gives half of n, rounded down.
 fn floor_half(n: usize) -> usize {
     n / 2
@@ -201,106 +192,170 @@ fn ciel_half(n: usize) -> usize {
     (n + 1) / 2
 }
 
+/// Sqquare a number.
 fn squared(n: usize) -> usize {
     n * n
 }
 
-use PlotPosition::*;
-impl PlotPosition {
-    /// a list of all PlotPositions (in a standard order).
-    const ALL: [Self; 14] = [
-        NCorner,
-        ECorner,
-        SCorner,
-        WCorner,
-        NEOuter,
-        NEInner,
-        SEOuter,
-        SEInner,
-        SWOuter,
-        SWInner,
-        NWOuter,
-        NWInner,
-        PerfectCenter,
-        OffsetCenter,
-    ];
 
-    /// Converts a PlotPosition to an index.
-    fn idx(&self) -> usize {
-        Self::ALL.iter().position(|pp| pp == self).unwrap()
+/// There are two different "layouts" we might need to deal with -- an "Outer" layout
+/// where all of the rm plots other than the outermost are totally filled because we
+/// go at least half-way into the outermost corners, and an "Inner" layout where we
+/// go less than half-way into the outermost corners, so the second-outermost plot
+/// is ALSO not full. We need to create different small version of these to solve
+/// the two cases -- they have different PlotPositions and everything. Oh, and there's
+/// one more Layout for anything which is too small to do as one of the other layots.
+/// This enum is for keeping track of these three cases.
+#[derive(Debug, Eq, PartialEq, Copy, Clone)]
+enum Layout {
+    Outer, Inner, TooSmall,
+}
+
+
+mod outer {
+
+    /// An enum representing the various patterns of being filled in that we will see
+    /// in various plots (assuming travel is unimpeded).
+    #[derive(Debug, Eq, PartialEq, Copy, Clone)]
+    pub enum PlotPosition { // FIXME: Make 2 separate enums!
+        NCorner, ECorner, SCorner, WCorner,
+        NRipped, ERipped, SRipped, WRipped,
+        NEOuter, NEInner, SEOuter, SEInner,
+        SWOuter, SWInner, NWOuter, NWInner,
+        PerfectCenter, OffsetCenter,
     }
 
-    /// Converts an index into a PlotPosition.
-    fn from_idx(n: usize) -> Option<Self> {
-        Self::ALL.get(n).copied()
+}
+
+
+impl Layout {
+    /// Called with a garden that is square, centered, and unimpeded, this will select the
+    /// appropriate Layout to use.
+    fn select(garden: &Garden, num_steps: usize) -> Self {
+        assert!(garden.is_square() && garden.is_centered() && garden.is_unimpeded());
+        let garden_size = garden.grid.bound().x();
+        let (_rc, rm, re) = garden.find_radii(num_steps);
+        let big_enough = rm >= 1;
+        let large_outer = re >= (garden_size + 1) / 2;
+        if !big_enough {
+            Layout::TooSmall
+        } else if large_outer {
+            Layout::Outer
+        } else {
+            Layout::Inner
+        }
     }
 
-    /// Gives a canonical location in a (-2 ..= +2) range of plots where we can find
-    /// an example of a plot for each PlotPosition.
-    fn place_in_5x5(&self) -> (i32, i32) {
+    /// Returns the dimensions of the grid we'll build to create samples of each PlotPosition.
+    /// It is different for different Layouts -- but they're 5x5 or 7x7 so we'll just return
+    /// the multiplier.
+    fn large_plot_dimensions(&self) -> usize {
         match self {
-            NCorner => (0,-2),
-            ECorner => (2,0),
-            SCorner => (0,2),
-            WCorner => (-2,0),
-            NEOuter => (1,-2),
-            NEInner => (1,-1),
-            SEOuter => (2,1),
-            SEInner => (1,1),
-            SWOuter => (-1,2),
-            SWInner => (-1,1),
-            NWOuter => (-2,-1),
-            NWInner => (-1,-1),
-            PerfectCenter => (0, 0),
-            OffsetCenter => (1, 0),
+            Layout::Outer => 5,
+            Layout::Inner => 7,
+            Layout::TooSmall => panic!(),
+        }
+    }
+
+    /// Returns the amount rm will be when we use the large layout.
+    fn rm_when_reduced(&self) -> usize {
+        (self.large_plot_dimensions() / 2) - 1
+    }
+
+    /// Returns the collection of PlotPositions that are actually used for the given layout.
+    fn plot_positions(&self) -> Vec<PlotPosition> {
+        use PlotPosition::*;
+        match self {
+            Layout::Outer => vec![
+                NCorner, ECorner, SCorner, WCorner,
+                NEOuter, NEInner, SEOuter, SEInner,
+                SWOuter, SWInner, NWOuter, NWInner,
+                PerfectCenter, OffsetCenter,
+            ],
+            Layout::Inner => vec![
+                NCorner, ECorner, SCorner, WCorner,
+                NRipped, ERipped, SRipped, WRipped,
+                NEOuter, NEInner, SEOuter, SEInner,
+                SWOuter, SWInner, NWOuter, NWInner,
+                PerfectCenter, OffsetCenter,
+            ],
+            Layout::TooSmall => panic!(),
+        }
+    }
+
+    /// Returns the position (offset from the center) of the plot we want to look at as a
+    /// typical example of the given plot position. If given a PlotPosition not appropriate
+    /// for this instance it will panic. // FIXME: There's a design here with a per-instance type of some sort. Maybe try to learn it? The panics are ugly
+    fn standard_position(&self, pp: PlotPosition) -> (i32,i32) {
+        use PlotPosition::*;
+        match self {
+            Layout::Outer => {
+                match pp {
+                    NCorner => (0,-2), ECorner => (2,0), SCorner => (0,2), WCorner => (-2,0),
+                    NEOuter => (1,-2), SEOuter => (2,1), SWOuter => (-1,2), NWOuter => (-2,-1),
+                    NEInner => (1,-1), SEInner => (1,1), SWInner => (-1,1), NWInner => (-1,-1),
+                    PerfectCenter => (0, 0), OffsetCenter => (1, 0),
+                    _ => panic!(),
+                }
+            }
+            Layout::Inner => {
+                match pp {
+                    NCorner => (0,-3), ECorner => (3,0),  SCorner => (0,3), WCorner => (-3,0),
+                    NRipped => (0,-2), ERipped => (2,0),  SRipped => (0,2), WRipped => (-2,0),
+                    NEOuter => (1,-2), SEOuter => (2,1), SWOuter => (-1,2), NWOuter => (-2,-1),
+                    NEInner => (1,-1), SEInner => (1,1), SWInner => (-1,1), NWInner => (-1,-1),
+                    PerfectCenter => (0, 0), OffsetCenter => (1, 0),
+                }
+            }
+            Layout::TooSmall => panic!(),
         }
     }
 
     /// Tells how many times the given PlotPosition will occur in a MegaGrid where
     /// the "middle radius" ("rm") is the given value.
-    fn times_appearing(&self, rm: usize) -> usize {
+    fn times_appearing(&self, pp: PlotPosition, rm: usize) -> usize {
         match self {
-            NCorner => 1,
-            ECorner => 1,
-            SCorner => 1,
-            WCorner => 1,
-            NEOuter => rm + 1,
-            NEInner => rm,
-            SEOuter => rm + 1,
-            SEInner => rm,
-            SWOuter => rm + 1,
-            SWInner => rm,
-            NWOuter => rm + 1,
-            NWInner => rm,
-            PerfectCenter => squared(2 * floor_half(rm) + 1),
-            OffsetCenter => squared(2 * ciel_half(rm)),
+            Layout::Outer => {
+                use PlotPosition::*;
+                match pp {
+                    NCorner => 1, ECorner => 1, SCorner => 1, WCorner => 1,
+                    NEOuter => rm + 1, SEOuter => rm + 1, SWOuter => rm + 1, NWOuter => rm + 1,
+                    NEInner => rm, SEInner => rm, SWInner => rm, NWInner => rm,
+                    PerfectCenter => squared(2 * floor_half(rm) + 1),
+                    OffsetCenter => squared(2 * ciel_half(rm)),
+                    _ => panic!(),
+                }
+            }
+            Layout::Inner => {
+                assert!(rm > 1); // I assume this -- better check it always holds, and adjust min sizes to enforce it
+                use PlotPosition::*;
+                match pp {
+                    NCorner => 1, ECorner => 1, SCorner => 1, WCorner => 1,
+                    NRipped => 1, ERipped => 1, SRipped => 1, WRipped => 1,
+                    NEOuter => rm, SEOuter => rm, SWOuter => rm, NWOuter => rm,
+                    NEInner => rm - 1, SEInner => rm - 1, SWInner => rm - 1, NWInner => rm - 1,
+                    PerfectCenter => squared(2 * floor_half(rm - 1) + 1),
+                    OffsetCenter => squared(2 * ciel_half(rm - 1)),
+                }
+            }
+            Layout::TooSmall => panic!(),
         }
     }
 
     /// Returns true for the center ones, false for all edges.
-    fn is_center(&self) -> bool {
-        match self {
+    fn is_center(&self, pp: PlotPosition) -> bool {
+        use PlotPosition::*;
+        match pp {
             NCorner | ECorner | SCorner | WCorner |
+            NRipped | ERipped | SRipped | WRipped |
             NEOuter | NEInner | SEOuter | SEInner |
             SWOuter | SWInner | NWOuter | NWInner => false,
             PerfectCenter |  OffsetCenter => true,
         }
     }
+
 }
 
-struct PlotPositionCounts([usize; PlotPosition::ALL.len()]);
-
-impl PlotPositionCounts {
-    /// Get the count for a PlotPosition.
-    fn get(&self, pp: PlotPosition) -> usize {
-        *self.0.get(pp.idx()).unwrap()
-    }
-
-    /// Constructor, from a function that returns the count.
-    fn new<F: FnMut(PlotPosition) -> usize>(mut f: F) -> Self {
-        Self(core::array::from_fn(|i| f(PlotPosition::from_idx(i).unwrap())))
-    }
-}
 
 
 /// Represents an infinitely repeating garden and the calculations required to deal with
@@ -336,69 +391,65 @@ impl<'a> MegaGarden<'a> {
         count_reachable_sites(&giant_garden, num_steps)
     }
 
-
-    /// Given a number of steps, this finds the Plot Position Counts for them.
-    fn plot_count(&self, num_steps: usize) -> PlotPositionCounts {
-        let garden_size = self.garden.grid.bound().x();
-        let rc = self.garden.start.x() + 1;
-        let rm = (num_steps - rc) / garden_size;
-        let giant_bound = Coord(garden_size * 5, garden_size * 5);
-        let giant_spots: Grid<Spot> = Grid::from_function(giant_bound, |c| {
-            *self.garden.grid.get(Coord(c.x() % garden_size, c.y() % garden_size))
-        });
-        let giant_start_num = (garden_size * 2) + self.garden.start.x();
-        let giant_start = Coord(giant_start_num, giant_start_num);
-        let giant_garden = Garden{grid: giant_spots, start: giant_start};
-        let giant_dist = DistanceGrid::from_spots(&giant_garden.grid, giant_garden.start);
-        let count_plot = |pp: PlotPosition| {
-            let (plot_x, plot_y) = pp.place_in_5x5();
-            let reduced_steps = if pp.is_center() { // for edges, bring them in. For center, don't.
-                num_steps
-            } else {
-                num_steps - (rm - 1) * garden_size
-            };
-            let mut count: usize = 0;
-            for y in 0..garden_size {
-                for x in 0..garden_size {
-                    let giant_x = ((plot_x + 2) as usize) * garden_size + x;
-                    let giant_y = ((plot_y + 2) as usize) * garden_size + y;
-                    let giant_coord = Coord(giant_x, giant_y);
-                    let is_reachable = match giant_dist.dist.get(giant_coord) {
-                        None => false,
-                        Some(n) => {
-                            *n % 2 == reduced_steps % 2 && *n <= reduced_steps
-                        }
-                    };
-                    if is_reachable {
-                        count += 1;
-                    }
-                }
-            }
-            count
-        };
-        PlotPositionCounts::new(count_plot)
-    }
-
     /// This solves the problem using the "fast" method. It does NOT check to see whether
     /// the "fast" method is applicable.
     ///
     /// The "fast" method is this: find the number of blocks going north, south, east, or
     /// west, outside the central one that we pass FULLY through. Call that "rm", the "middle
     /// radius".
-    fn fast_solve(&self, num_steps: usize) -> usize {
-        assert!(self.garden.is_square() && self.garden.is_centered());
-        let garden_size = self.garden.grid.bound().x();
-        let rc = self.garden.start.x() + 1;
-        let rm = (num_steps - rc) / garden_size;
-        let re = num_steps - rc - rm * garden_size + 1;
-        // println!("rc: {}, rm: {}, re: {}", rc, rm, re); // FIXME: Remove
-        assert!(rm >= 1);
-        assert!(re >= (garden_size + 1) / 2);
-        let plot_position_counts = self.plot_count(num_steps);
-        PlotPosition::ALL.iter().map(|pp| {
-            // println!("    {:?} appears {} times and has {} count", pp, pp.times_appearing(rm), plot_position_counts.get(*pp)); // FIXME: Remove
-            pp.times_appearing(rm) * plot_position_counts.get(*pp)
-        }).sum()
+    fn fast_solve(&self, num_steps: usize, layout: Layout) -> usize {
+        if layout == Layout::TooSmall {
+            self.slow_solve(num_steps) // it's small enough that "slow_solve" is fast
+        } else {
+            let garden_size = self.garden.grid.bound().x();
+            let (_rc, rm, _re) = self.garden.find_radii(num_steps);
+            let large_plot_size = garden_size * layout.large_plot_dimensions();
+            let large_bound = Coord(large_plot_size, large_plot_size);
+            let large_spots: Grid<Spot> = Grid::from_function(large_bound, |c| {
+                *self.garden.grid.get(Coord(c.x() % garden_size, c.y() % garden_size))
+            });
+            let large_start_num = large_plot_size / 2;
+            let large_start = Coord(large_start_num, large_start_num);
+            let large_garden = Garden{grid: large_spots, start: large_start};
+            let large_dist = DistanceGrid::from_spots(&large_garden.grid, large_garden.start);
+            let count_locations_in_plot = |pp: PlotPosition| {
+                let (plot_x, plot_y) = layout.standard_position(pp);
+                let reduced_steps = if layout.is_center(pp) { // for edges, bring them in. For center, don't.
+                    num_steps
+                } else {
+                    num_steps - (rm - layout.rm_when_reduced()) * garden_size
+                };
+                let mut count: usize = 0;
+                for y in 0..garden_size {
+                    for x in 0..garden_size {
+                        let center_plot_pos = (layout.large_plot_dimensions() / 2) as i32;
+                        let large_x = ((plot_x + center_plot_pos) as usize) * garden_size + x;
+                        let large_y = ((plot_y + center_plot_pos) as usize) * garden_size + y;
+                        let large_coord = Coord(large_x, large_y);
+                        let is_reachable = match large_dist.dist.get(large_coord) {
+                            None => false, // rocks aren't reachable
+                            Some(n) => {
+                                *n % 2 == reduced_steps % 2 && *n <= reduced_steps
+                            }
+                        };
+                        if is_reachable {
+                            count += 1;
+                        }
+                    }
+                }
+                count
+            };
+            layout.plot_positions().iter()
+                .map(|pp| {
+                    let count = count_locations_in_plot(*pp);
+                    let times_appearing = layout.times_appearing(*pp, rm);
+                    if PRINT_WORK {
+                        println!("With layout {:?}, {:?} has a count of {} and appears {} times.", layout, pp, count, times_appearing);
+                    }
+                    count * times_appearing
+                })
+                .sum()
+        }
     }
 
     /// This performs a "fast_solve" if possible and a "slow_solve" if the "fast_solve" isn't
@@ -410,14 +461,9 @@ impl<'a> MegaGarden<'a> {
         //   the grids given out are MUCH simpler and can be solved without everything we do
         //   here to handle possible rocks on the "edges".)
         let satisfies = self.garden.is_square() && self.garden.is_centered() && self.garden.is_unimpeded();
-        let garden_size = self.garden.grid.bound().x();
-        let rc = self.garden.start.x() + 1;
-        let rm = (num_steps - rc) / garden_size;
-        let re = num_steps - rc - rm * garden_size + 1;
-        let big_enough = rm >= 1;
-        let outer_shaping = re >= (garden_size + 1) / 2;
-        if satisfies && big_enough && outer_shaping { // FIXME: I don't want "outer_shaping" to be part of the condition
-            self.fast_solve(num_steps)
+        if satisfies {
+            let layout = Layout::select(self.garden, num_steps);
+            self.fast_solve(num_steps, layout)
         } else {
             self.slow_solve(num_steps)
         }
@@ -444,16 +490,28 @@ impl<'a> Display for MegaGarden<'a> {
 }
 
 /// A wrapper struct to provide a fancier display.
-struct MegaDist<'a>(&'a MegaGarden<'a>, usize);
+struct MegaDist<'a> {
+    mega_garden: MegaGarden<'a>,
+    num_steps: usize, // needed only to check odds vs evens
+    large_dimensions: usize
+}
+
+impl<'a> MegaDist<'a> {
+    fn new(garden: &'a Garden, num_steps: usize, large_dimensions: usize) -> Self {
+        let mega_garden = MegaGarden::new(garden);
+        MegaDist{mega_garden: mega_garden, num_steps, large_dimensions}
+    }
+}
+
 
 impl<'a> Display for MegaDist<'a> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        const PLOT_RADIUS: usize = 2;
         const NUM_WIDTH: usize = 2; // the number of characters wide each number is printed
 
         // -- create a helper function for lines between plots --
-        fn write_border_line(bound: Coord, f: &mut Formatter<'_>) -> std::fmt::Result {
-            for _plot_x in 0 .. (PLOT_RADIUS * 2 + 1) {
+        fn write_border_line(mega_dist: &MegaDist, f: &mut Formatter<'_>) -> std::fmt::Result {
+            let bound = mega_dist.mega_garden.garden.grid.bound();
+            for _plot_x in 0 .. mega_dist.large_dimensions {
                 write!(f, "[]")?;
                 for _x in 0..bound.x() {
                     write!(f, "{}", "X".repeat(NUM_WIDTH + 1))?;
@@ -463,26 +521,25 @@ impl<'a> Display for MegaDist<'a> {
         }
 
         // -- create distances --
-        let bound = self.0.garden.grid.bound();
+        let bound = self.mega_garden.garden.grid.bound();
         let garden_x = bound.x();
         let garden_y = bound.y();
-        let giant_x_bound = garden_x * (PLOT_RADIUS * 2 + 1);
-        let giant_y_bound = garden_y * (PLOT_RADIUS * 2 + 1);
+        let giant_x_bound = garden_x * self.large_dimensions;
+        let giant_y_bound = garden_y * self.large_dimensions;
         let giant_bound = Coord(giant_x_bound, giant_y_bound);
         let giant_spots: Grid<Spot> = Grid::from_function(giant_bound, |c| {
-            *self.0.garden.grid.get(Coord(c.x() % garden_x, c.y() % garden_y))
+            *self.mega_garden.garden.grid.get(Coord(c.x() % garden_x, c.y() % garden_y))
         });
-        let giant_start_x = (garden_x * PLOT_RADIUS) + self.0.garden.start.x();
-        let giant_start_y = (garden_y * PLOT_RADIUS) + self.0.garden.start.y();
+        let giant_start_x = (garden_x * self.large_dimensions) / 2;
+        let giant_start_y = (garden_y * self.large_dimensions) / 2;
         let giant_start = Coord(giant_start_x, giant_start_y);
         let giant_dist = DistanceGrid::from_spots(&giant_spots, giant_start);
 
         // -- draw it all --
-        let steps = self.1;
-        for plot_y in 0 .. (PLOT_RADIUS * 2 + 1) {
-            write_border_line(bound, f)?;
+        for plot_y in 0 .. self.large_dimensions {
+            write_border_line(self, f)?;
             for y in 0..bound.y() {
-                for plot_x in 0 .. (PLOT_RADIUS * 2 + 1) {
+                for plot_x in 0 .. self.large_dimensions {
                     write!(f, " X")?;
                     for x in 0..bound.x() {
                         let giant_coord = Coord(
@@ -491,7 +548,7 @@ impl<'a> Display for MegaDist<'a> {
                         );
                         match giant_dist.dist.get(giant_coord) {
                             None => write!(f, " {}", "#".repeat(NUM_WIDTH))?,
-                            Some(n) => if n % 2 == steps % 2 {
+                            Some(n) => if n % 2 == self.num_steps % 2 {
                                 write!(f, " {:1$}", n, NUM_WIDTH)?
                             } else {
                                 write!(f, " {}", "-".repeat(NUM_WIDTH))?
@@ -502,7 +559,7 @@ impl<'a> Display for MegaDist<'a> {
                 writeln!(f, " X")?;
             }
         }
-        write_border_line(bound, f)
+        write_border_line(self, f)
     }
 }
 
@@ -533,6 +590,23 @@ impl Garden {
     fn is_square(&self) -> bool {
         self.grid.bound().x() == self.grid.bound().y()
     }
+
+    /// This returns the radii: rc, rm, and re (in that order). If you walk from the start
+    /// point (in the center) to a far corner, then rc will be the number of locations
+    /// (including the starting one) that are located in the starting, central garden;
+    /// rm is the number of entire plots that we pass through, and re is the number of
+    /// locations (including the ending one) that are located in the "edge" plot. Note
+    /// that this equation holds: "rc + garden_size * rm + re = num_steps + 1".
+    ///
+    /// This ONLY works for square, centered gardens.
+    fn find_radii(&self, num_steps: usize) -> (usize, usize, usize) {
+        assert!(self.is_square() && self.is_centered());
+        let garden_size = self.grid.bound().x();
+        let rc = self.start.x() + 1;
+        let rm = (num_steps - rc) / garden_size;
+        let re = num_steps - rc - rm * garden_size + 1;
+        (rc, rm, re)
+    }
 }
 
 // ======= main() =======
@@ -548,33 +622,8 @@ fn part_a(input: &Input) {
 
 fn part_b(input: &Input) {
     println!("\nPart b:");
-    // let dist = DistanceGrid::from_spots(&input.grid, input.start);
-    // let start = input.start;
-    // let dist_if_empty = DistanceGrid{
-    //     start: start,
-    //     dist: Grid::from_function(input.grid.bound(), |coord| {
-    //         let natural_dist = coord.x().abs_diff(start.x()) + coord.y().abs_diff(start.y());
-    //         match dist.dist.get(coord) {
-    //             None => None,
-    //             Some(actual_dist) => {
-    //                 if *actual_dist == natural_dist {None} else {Some(*actual_dist)}
-    //             }
-    //         }
-    //     })
-    // };
-    // println!("{}", dist);
-    // println!("----------------------");
-    // println!("{}", dist_if_empty);
-    // println!("----------------------");
-    assert!(input.is_unimpeded());
     let steps = 28;
     let mega = MegaGarden::new(input);
-    println!("MegaGarden:\n{}", MegaDist(&mega, steps));
-    println!();
-    let slow_count = mega.slow_solve(steps);
-    let fast_count = mega.fast_solve(steps);
-    println!("In exactly {} steps we can reach {} (slow count) or {} (fast count) positions.", steps, slow_count, fast_count);
-    // FIXME: All we REALLY need is below this line:
     mega.smart_solve(steps);
 }
 
@@ -600,7 +649,8 @@ mod test {
         print!("Taking {} steps in a {}x{} garden", num_steps, garden.grid.bound().x(), garden.grid.bound().y());
         let mega = MegaGarden::new(garden);
         let slow_count = mega.slow_solve(num_steps);
-        let fast_count = mega.fast_solve(num_steps);
+        let layout = Layout::select(garden, num_steps);
+        let fast_count = mega.fast_solve(num_steps, layout);
         assert_eq!(slow_count, fast_count);
         println!(" gives {} locations.", slow_count);
     }
@@ -632,7 +682,7 @@ mod test {
     }
 
     #[test]
-    fn try_specific_pattern() {
+    fn try_specific_pattern_1() {
         let grid: Grid<Spot> = vec![
             ".......",
             ".#.....",
@@ -650,26 +700,43 @@ mod test {
         let start_pos = (grid.bound().x() - 1) / 2;
         let start = Coord(start_pos, start_pos);
         let garden = Garden{grid, start};
-        check_solution(&garden, 21);
+        let steps = 21;
+        if PRINT_WORK {
+            println!("{}", MegaDist::new(&garden, steps, 5));
+        }
+        check_solution(&garden, steps);
+    }
+
+    #[test]
+    fn try_specific_pattern_2() {
+        let grid: Grid<Spot> = vec![
+            ".....",
+            ".#.#.",
+            ".....",
+            "...#.",
+            ".....",
+        ].iter()
+            .map(|s| s.chars().map(|c| match c {'.' => Spot::Open, '#' => Spot::Rock, _ => panic!()}).collect_vec())
+            .collect_vec()
+            .try_into()
+            .unwrap();
+        assert!(grid.bound().x() == grid.bound().y());
+        let start_pos = grid.bound().x() / 2;
+        let start = Coord(start_pos, start_pos);
+        let garden = Garden{grid, start};
+        let steps = 13;
+        if PRINT_WORK {
+            println!("{}", MegaDist::new(&garden, steps, 7));
+        }
+        check_solution(&garden, steps);
     }
 
     fn try_random_garden() {
         let mut rng = rand::thread_rng();
-        let size = rng.gen_range(2..15) * 2 + 1;
-        let num_steps = rng.gen_range((size * 3)..(size * 50));
+        let size = rng.gen_range(2..15) * 2 + 1; // odd numbers, 3 to 31
+        let num_steps = rng.gen_range(size..(size * 50));
         let garden = random_garden(size, 0.4);
-        let outer_shaping = {
-            let garden_size = garden.grid.bound().x();
-            let rc = garden.start.x() + 1;
-            let rm = (num_steps - rc) / garden_size;
-            let re = num_steps - rc - rm * garden_size + 1;
-            re >= (garden_size + 1) / 2
-        };
-        if outer_shaping {
-            check_solution(&garden, num_steps);
-        } else {
-            println!("!!! Need to handle inner_shaping !!!");
-        }
+        check_solution(&garden, num_steps);
     }
 
     #[test]
