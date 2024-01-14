@@ -235,7 +235,7 @@ impl Layout {
         assert!(garden.is_square() && garden.is_centered() && garden.is_unimpeded());
         let garden_size = garden.grid.bound().x();
         let (_rc, rm, re) = garden.find_radii(num_steps);
-        let big_enough = rm >= 1;
+        let big_enough = rm >= 2;
         let large_outer = re >= (garden_size + 1) / 2;
         if !big_enough {
             Layout::TooSmall
@@ -499,7 +499,7 @@ struct MegaDist<'a> {
 impl<'a> MegaDist<'a> {
     fn new(garden: &'a Garden, num_steps: usize, large_dimensions: usize) -> Self {
         let mega_garden = MegaGarden::new(garden);
-        MegaDist{mega_garden: mega_garden, num_steps, large_dimensions}
+        MegaDist{mega_garden, num_steps, large_dimensions}
     }
 }
 
@@ -602,10 +602,20 @@ impl Garden {
     fn find_radii(&self, num_steps: usize) -> (usize, usize, usize) {
         assert!(self.is_square() && self.is_centered());
         let garden_size = self.grid.bound().x();
-        let rc = self.start.x() + 1;
-        let rm = (num_steps - rc) / garden_size;
-        let re = num_steps - rc - rm * garden_size + 1;
-        (rc, rm, re)
+        if num_steps <= garden_size / 2 {
+            (num_steps, 0, 0)
+        } else {
+            let rc = self.start.x() + 1;
+            let rm = (num_steps - rc) / garden_size;
+            let re = (num_steps - rc) % garden_size + 1;
+            (rc, rm, re)
+        }
+    }
+}
+
+impl Display for Garden {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.grid)
     }
 }
 
@@ -651,6 +661,11 @@ mod test {
         let slow_count = mega.slow_solve(num_steps);
         let layout = Layout::select(garden, num_steps);
         let fast_count = mega.fast_solve(num_steps, layout);
+        if slow_count != fast_count {
+            // we are about to fail the test. Better print out the test case:
+            println!(" test case will fail!");
+            println!("Garden was: {}", garden);
+        }
         assert_eq!(slow_count, fast_count);
         println!(" gives {} locations.", slow_count);
     }
@@ -681,66 +696,87 @@ mod test {
         Garden{grid, start}
     }
 
-    #[test]
-    fn try_specific_pattern_1() {
-        let grid: Grid<Spot> = vec![
-            ".......",
-            ".#.....",
-            "..#....",
-            ".......",
-            ".##..#.",
-            "..#.##.",
-            ".......",
-        ].iter()
+    fn try_specific_pattern(pattern: Vec<&str>, num_steps: usize) {
+        let grid: Grid<Spot> = pattern.iter()
             .map(|s| s.chars().map(|c| match c {'.' => Spot::Open, '#' => Spot::Rock, _ => panic!()}).collect_vec())
             .collect_vec()
             .try_into()
             .unwrap();
-        assert!(grid.bound().x() == grid.bound().y());
         let start_pos = (grid.bound().x() - 1) / 2;
         let start = Coord(start_pos, start_pos);
         let garden = Garden{grid, start};
-        let steps = 21;
+        assert!(garden.is_square() && garden.is_centered() && garden.is_unimpeded());
         if PRINT_WORK {
-            println!("{}", MegaDist::new(&garden, steps, 5));
+            let layout = Layout::select(&garden, num_steps);
+            println!("{}", MegaDist::new(&garden, num_steps, layout.large_plot_dimensions()));
         }
-        check_solution(&garden, steps);
+        check_solution(&garden, num_steps);
+    }
+
+    #[test]
+    fn try_specific_pattern_1() {
+        try_specific_pattern(
+            vec![
+                ".......",
+                ".#.....",
+                "..#....",
+                ".......",
+                ".##..#.",
+                "..#.##.",
+                ".......",
+            ],
+            21
+        )
     }
 
     #[test]
     fn try_specific_pattern_2() {
-        let grid: Grid<Spot> = vec![
-            ".....",
-            ".#.#.",
-            ".....",
-            "...#.",
-            ".....",
-        ].iter()
-            .map(|s| s.chars().map(|c| match c {'.' => Spot::Open, '#' => Spot::Rock, _ => panic!()}).collect_vec())
-            .collect_vec()
-            .try_into()
-            .unwrap();
-        assert!(grid.bound().x() == grid.bound().y());
-        let start_pos = grid.bound().x() / 2;
-        let start = Coord(start_pos, start_pos);
-        let garden = Garden{grid, start};
-        let steps = 13;
-        if PRINT_WORK {
-            println!("{}", MegaDist::new(&garden, steps, 7));
-        }
-        check_solution(&garden, steps);
+        try_specific_pattern(
+            vec![
+                ".....",
+                ".#.#.",
+                ".....",
+                "...#.",
+                ".....",
+            ],
+            13
+        )
+    }
+
+    #[test]
+    fn try_specific_pattern_3() {
+        try_specific_pattern(
+            vec![
+                "...............",
+                "...............",
+                "...............",
+                "...............",
+                "...............",
+                "...............",
+                "...............",
+                "...............",
+                "....##.........",
+                ".###..#........",
+                ".#...##........",
+                ".#...#.........",
+                "....#..........",
+                "...##..........",
+                "...............",
+            ],
+            46
+        )
     }
 
     fn try_random_garden() {
         let mut rng = rand::thread_rng();
         let size = rng.gen_range(2..15) * 2 + 1; // odd numbers, 3 to 31
-        let num_steps = rng.gen_range(size..(size * 50));
+        let num_steps = rng.gen_range(0..(size * 50));
         let garden = random_garden(size, 0.4);
         check_solution(&garden, num_steps);
     }
 
     #[test]
-    fn try_many_random_gardens() {
+    fn try_several_random_gardens() {
         let num_tests = 8;
         for _ in 0..num_tests {
             try_random_garden();
