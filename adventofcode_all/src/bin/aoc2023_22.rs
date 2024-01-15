@@ -1,5 +1,5 @@
 use std::fmt::{Debug, Display, Formatter};
-use std::collections::HashSet;
+use std::collections::{HashSet,HashMap};
 use anyhow;
 
 
@@ -25,6 +25,7 @@ pub struct Brick {
 #[derive(Debug, Clone)]
 pub struct Pile {
     bricks: Vec<Brick>,
+    occupancy: HashMap<Point3D,usize>, // for each occupied point, which brick occupies it
 }
 
 type Input = Pile;
@@ -48,8 +49,22 @@ impl Brick {
 
 impl Pile {
     /// Construct from a list of bricks.
-    fn new(bricks: Vec<Brick>) -> Self {
-        Self{bricks}
+    fn new(mut bricks: Vec<Brick>) -> Self {
+        // -- sort the bricks by z position before starting --
+        bricks.sort_by_key(|brick| brick.lower.2);
+        // after this we will NOT move the bricks around in the list, so their position
+        // index is a stable reference ID for the life of the Pile.
+
+        // Create a map from occupied points to the index of the brick that occupies it.
+        // This is assuming (and not checking) that the points are all unique to start with.
+        let occupancy: HashMap<Point3D,usize> = bricks.iter()
+            .enumerate()
+            .flat_map(|(i,brick)| {
+                brick.points().map(move |p| (p,i))
+            })
+            .collect();
+
+        Self{bricks, occupancy}
     }
 }
 
@@ -148,15 +163,6 @@ impl Brick {
     fn points(&self) -> BrickPointIterator {
         BrickPointIterator::new(self)
     }
-
-    /// Moves this Brick down dist spaces. It will panic if that brings it below
-    /// zero.
-    fn fall(&mut self, dist: usize) {
-        // println!("Brick {:?} falling by {}", self, dist); // FIXME: Remove
-        assert!(dist <= self.lower.2);
-        self.lower.2 = self.lower.2 - dist;
-        self.upper.2 = self.upper.2 - dist;
-    }
 }
 
 impl Debug for Brick {
@@ -212,7 +218,7 @@ impl Pile {
 
     /// Given a brick (presumably one that is in this Pile!) this returns a Vec of references
     /// to the bricks that hold is up. If it's not being held, it will return an empty Vec.
-    fn supported_by(&self, brick: &Brick) -> Vec<Brick> {
+    fn supported_by(&self, brick: &Brick) -> Vec<Brick> { // FIXME: This version is now inefficient
         let mut result: Vec<Brick> = Vec::new();
         for p in brick.points() {
             if p.2 > 0 {
@@ -233,9 +239,35 @@ impl Pile {
     /// Given a brick (presumably one that is in this Pile!) this returns true if it
     /// can fall at least one space. Bricks can't fall below level 1 onto level 0 because
     /// that's how the problem is written.
-    fn can_fall(&self, brick: &Brick) -> bool {
-        brick.lower.2 > 1 && self.supported_by(brick).is_empty()
+    fn can_fall(&self, brick_id: usize) -> bool {
+        let brick = self.bricks.get(brick_id).unwrap();
+        let above_the_floor = brick.lower.2 > 1;
+        above_the_floor && brick.points().all(|p| {
+            let p_down = Point3D(p.0,p.1,p.2 - 1); // move down one
+            // return true if that's available to use
+            match self.occupancy.get(&p_down) {
+                None => true,
+                Some(i) => *i == brick_id
+            }
+        })
     }
+
+    /// Moves one brick (identified by position ID) down 1 space.
+    fn fall(&mut self, brick_id: usize) {
+        println!("Brick {} {:?} falling by 1", brick_id, self.bricks.get(brick_id)); // FIXME: Remove
+        let brick = self.bricks.get_mut(brick_id).unwrap();
+        for p in brick.points() {
+            let was_occupied = self.occupancy.remove(&p);
+            assert!(was_occupied.is_some());
+        }
+        brick.lower.2 -= 1;
+        brick.upper.2 -= 1;
+        for p in brick.points() {
+            let was_occupied = self.occupancy.insert(p, brick_id);
+            assert!(was_occupied.is_none());
+        }
+    }
+
 
     /// Makes all the bricks fall as far as they can.
     ///
@@ -244,17 +276,15 @@ impl Pile {
     fn collapse(&mut self) {
         loop {
             let mut idx_of_brick_that_can_fall: Option<usize> = None;
-            for (i, brick) in self.bricks.iter().enumerate() {
-                if self.can_fall(brick) {
+            for i in 0..self.bricks.len() {
+                if self.can_fall(i) {
                     idx_of_brick_that_can_fall = Some(i);
                     break
                 }
             }
             match idx_of_brick_that_can_fall {
                 None => return, // nothing could move, so the whole function
-                Some(i) => {
-                    self.bricks.get_mut(i).unwrap().fall(1);
-                }
+                Some(i) => self.fall(i), // drop this brick by 1
             }
         }
     }
